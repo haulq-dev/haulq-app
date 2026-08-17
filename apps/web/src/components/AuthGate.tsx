@@ -31,7 +31,12 @@ import {
   writeSession,
   type Session,
 } from '../lib/api.ts';
-import { CLERK_PUBLISHABLE_KEY, registerTokenGetter, usingClerk } from '../lib/auth.ts';
+import {
+  CLERK_PUBLISHABLE_KEY,
+  misconfigured,
+  registerTokenGetter,
+  usingClerk,
+} from '../lib/auth.ts';
 
 /** Re-reads the stored session when the picker writes one. */
 export function useSession(): Session | null {
@@ -191,6 +196,25 @@ export function AccountMenu() {
  */
 export function AuthGate({ children }: { children: ReactNode }) {
   const [tokenReady, setTokenReady] = useState(false);
+
+  // Built without a Clerk key but pointed at a deployed API. Say so, rather
+  // than letting every request 401 behind a working-looking interface.
+  if (misconfigured) {
+    return (
+      <div className="mx-auto max-w-2xl px-6 py-20">
+        <h1 className="mb-3 text-3xl">This build has no sign-in configured</h1>
+        <p className="mb-4 max-w-prose text-slate">
+          It was built without <code className="num">VITE_CLERK_PUBLISHABLE_KEY</code>,
+          so it falls back to development headers — and the API it is pointed at
+          will refuse every one of them.
+        </p>
+        <p className="max-w-prose text-slate">
+          Set that variable on the static site and <strong>rebuild</strong>.
+          Vite inlines it at build time, so a restart will not pick it up.
+        </p>
+      </div>
+    );
+  }
 
   if (!usingClerk) return <>{children}</>;
 

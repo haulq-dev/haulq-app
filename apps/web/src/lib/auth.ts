@@ -20,6 +20,23 @@ export const CLERK_PUBLISHABLE_KEY =
 /** True when this build is configured for real authentication. */
 export const usingClerk = CLERK_PUBLISHABLE_KEY.length > 0;
 
+/**
+ * The dangerous combination: talking to a deployed API with no real auth.
+ *
+ * A missing publishable key makes the app fall back to dev headers, which a
+ * production API refuses — so every request 401s and the sign-in screen never
+ * appears. That is a broken deploy, but it *looks* like an ordinary bug, and
+ * the cause is a build-time variable nobody thinks to check.
+ *
+ * So it is detected rather than left to be discovered. Pointing at localhost is
+ * fine and stays fine; pointing anywhere else without a key is not.
+ */
+const apiUrl = (import.meta.env['VITE_API_URL'] as string | undefined) ?? '';
+const apiIsRemote =
+  apiUrl.startsWith('http') && !/localhost|127\.0\.0\.1/.test(apiUrl);
+
+export const misconfigured = apiIsRemote && !usingClerk;
+
 type TokenGetter = () => Promise<string | null>;
 
 let getToken: TokenGetter | null = null;
