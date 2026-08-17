@@ -16,6 +16,7 @@ import {
 } from '@tanstack/react-router';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
+import { AuthGate } from './components/AuthGate.tsx';
 import { Shell } from './components/Shell.tsx';
 import { ImportScreen } from './routes/Import.tsx';
 import { OnboardingScreen } from './routes/Onboarding.tsx';
@@ -95,7 +96,11 @@ if (!root) throw new Error('#root missing from index.html');
 createRoot(root).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
-      <RouterProvider router={router} />
+      {/* AuthGate is outside the router: with Clerk configured, an
+          unauthenticated visitor sees the sign-in screen rather than a route. */}
+      <AuthGate>
+        <RouterProvider router={router} />
+      </AuthGate>
     </QueryClientProvider>
   </StrictMode>,
 );

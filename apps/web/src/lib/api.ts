@@ -9,16 +9,19 @@
  * The dev session
  * ---------------------------------------------------------------------------
  *
- * Clerk is written but not configured, so the app currently identifies itself
- * with the same headers `DevAuthenticator` reads. That state lives in
- * `localStorage` and is set by the bar across the top of the screen.
+ * Two auth modes, decided at build time by whether a Clerk publishable key is
+ * present:
  *
- * When Clerk lands, `authHeaders()` below becomes "attach the session token"
- * and `X-HaulQ-Org-Id` keeps working exactly as it does now — the API resolves
- * the tenant from `org_memberships` either way. Nothing else in the app moves.
+ *   clerk — `Authorization: Bearer <session token>`, plus the org header
+ *   dev   — the user/org headers `DevAuthenticator` reads, from localStorage
+ *
+ * **`X-HaulQ-Org-Id` is sent in both.** Clerk answers "which person is this";
+ * the tenant is always HaulQ's, resolved from `org_memberships`. That is why
+ * switching modes touches this file and nothing else.
  */
 
 import type { ApiError } from '@haulq/contracts';
+import { currentToken, usingClerk } from './auth.ts';
 
 const BASE = import.meta.env['VITE_API_URL'] ?? '/api';
 
@@ -50,12 +53,16 @@ export function writeSession(session: Session | null): void {
   window.dispatchEvent(new Event('haulq:session'));
 }
 
-function authHeaders(session: Session | null): Record<string, string> {
+async function authHeaders(session: Session | null): Promise<Record<string, string>> {
+  const org = session?.orgId ? { 'X-HaulQ-Org-Id': session.orgId } : {};
+
+  if (usingClerk) {
+    const token = await currentToken();
+    return { ...org, ...(token ? { Authorization: `Bearer ${token}` } : {}) };
+  }
+
   if (!session) return {};
-  return {
-    'X-HaulQ-User-Id': session.userId,
-    ...(session.orgId ? { 'X-HaulQ-Org-Id': session.orgId } : {}),
-  };
+  return { 'X-HaulQ-User-Id': session.userId, ...org };
 }
 
 /**
@@ -95,7 +102,7 @@ export async function request<T>(
 ): Promise<T> {
   const session = options.session !== undefined ? options.session : readSession();
 
-  const headers: Record<string, string> = { ...authHeaders(session) };
+  const headers: Record<string, string> = { ...(await authHeaders(session)) };
   let body: BodyInit | undefined;
 
   if (options.raw) {

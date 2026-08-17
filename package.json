@@ -3,13 +3,14 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
-  "packageManager": "pnpm@9.12.0",
+  "packageManager": "pnpm@9.15.9",
   "engines": {
     "node": ">=22.6"
   },
   "scripts": {
     "build": "turbo run build",
     "dev": "turbo run dev",
+    "start": "node --experimental-strip-types apps/api/src/index.ts",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test --concurrency=1",
     "lint": "turbo run lint",

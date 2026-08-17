@@ -1,16 +1,18 @@
 /**
- * The frame: brand bar, navigation, and the dev session picker.
+ * The frame: brand bar, navigation, and whichever sign-in the build uses.
  *
- * The session picker exists because Clerk is written but not configured. It is
- * visibly a development affordance — striped, labelled, and impossible to
- * mistake for product chrome — because the worst outcome would be someone
- * demoing this and taking it for a real account switcher.
+ * With a Clerk publishable key the dev bar disappears entirely and Clerk's
+ * account menu takes its place. Without one it stays — striped, labelled, and
+ * impossible to mistake for product chrome, because the worst outcome would be
+ * someone demoing this and taking it for a real account switcher.
  */
 
 import { Link, useRouterState } from '@tanstack/react-router';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useState, type ReactNode } from 'react';
-import { readSession, request, writeSession, type Session } from '../lib/api.ts';
+import { useQueryClient } from '@tanstack/react-query';
+import { useState, type ReactNode } from 'react';
+import { request, writeSession } from '../lib/api.ts';
+import { usingClerk } from '../lib/auth.ts';
+import { AccountMenu, OrgPicker, useOrgs, useSession } from './AuthGate.tsx';
 
 const NAV = [
   { to: '/', label: 'Setup' },
@@ -20,28 +22,13 @@ const NAV = [
   { to: '/timeline', label: 'Activity' },
 ] as const;
 
-/** Re-reads the session when the picker writes one. */
-export function useSession(): Session | null {
-  const [session, setSession] = useState<Session | null>(() => readSession());
-  useEffect(() => {
-    const listener = () => setSession(readSession());
-    window.addEventListener('haulq:session', listener);
-    return () => window.removeEventListener('haulq:session', listener);
-  }, []);
-  return session;
-}
-
 function DevSessionBar() {
   const session = useSession();
   const queryClient = useQueryClient();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const orgs = useQuery({
-    queryKey: ['orgs', session?.userId],
-    enabled: Boolean(session?.userId),
-    queryFn: () => request<{ items: Array<{ id: string; name: string; role: string }> }>('/v1/orgs'),
-  });
+  const orgs = useOrgs();
 
   /**
    * Start a session as a brand-new person.
@@ -146,7 +133,7 @@ export function Shell({ children }: { children: ReactNode }) {
 
   return (
     <div className="min-h-screen bg-white">
-      <DevSessionBar />
+      {!usingClerk && <DevSessionBar />}
 
       <header className="border-b border-line">
         <div className="mx-auto flex max-w-6xl items-center gap-6 px-6 py-4">
@@ -177,22 +164,15 @@ export function Shell({ children }: { children: ReactNode }) {
               );
             })}
           </nav>
+
+          <div className="ml-auto">
+            <AccountMenu />
+          </div>
         </div>
       </header>
 
       <main className="mx-auto max-w-6xl px-6 py-8">
-        {!session?.orgId ? (
-          <div className="border border-line bg-wash p-8">
-            <h1 className="mb-2 text-2xl">Pick a carrier to get started</h1>
-            <p className="max-w-prose text-slate">
-              Use the dev session bar above: start as a new person, then create a
-              carrier. That runs the real signup — org, carrier profile, owner
-              membership and both timeline entries, in one transaction.
-            </p>
-          </div>
-        ) : (
-          children
-        )}
+        {session?.orgId ? children : <OrgPicker />}
       </main>
     </div>
   );

@@ -51,15 +51,31 @@ services:
         - pnpm-workspace.yaml
         - tsconfig.base.json
 
-    buildCommand: corepack enable && pnpm install --frozen-lockfile
+    # `npm i -g pnpm`, not `corepack enable`.
+    #
+    # Corepack verifies the package manager's registry signature against keys
+    # baked into the Node build. Older Node 22 images ship stale keys, and the
+    # failure is `Cannot find matching keyid` during `corepack enable` — before
+    # a single dependency is fetched. Installing pnpm from npm skips that
+    # machinery entirely and pins the exact version that generated the lockfile.
+    buildCommand: npm i -g pnpm@9.15.9 && pnpm install --frozen-lockfile
 
     # Migrations run after the build and before the new version takes traffic,
     # so a deploy that cannot migrate never serves. REQUIRES A PAID INSTANCE —
     # on free, run migrations by hand (see the runbook).
     preDeployCommand: pnpm --filter @haulq/db migrate
 
-    # No build step: Node strips the types. `--experimental-strip-types` is
-    # required on Node 22; it becomes the default on 23+. See .node-version.
+    # No build step: Node strips the types on load. The flag is required on
+    # Node 22 and becomes the default on 23+. `.node-version` pins 22.22.3,
+    # which is the version this was tested against and late enough in the 22
+    # line that type stripping no longer prints an ExperimentalWarning.
+    #
+    # `node` directly, NOT `pnpm --filter @haulq/api start`. Measured: Render
+    # sends SIGTERM on shutdown, and with pnpm in front the signal stops at the
+    # pnpm process — the Fastify `onClose` hook never runs, the Postgres pool is
+    # never drained, and the orphaned child keeps answering requests. Invoking
+    # node directly makes the process that handles SIGTERM the one that receives
+    # it.
     startCommand: node --experimental-strip-types apps/api/src/index.ts
 
     envVars:
@@ -119,7 +135,14 @@ services:
         - pnpm-workspace.yaml
         - tsconfig.base.json
 
-    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm --filter @haulq/web build
+    # `npm i -g pnpm`, not `corepack enable`.
+    #
+    # Corepack verifies the package manager's registry signature against keys
+    # baked into the Node build. Older Node 22 images ship stale keys, and the
+    # failure is `Cannot find matching keyid` during `corepack enable` — before
+    # a single dependency is fetched. Installing pnpm from npm skips that
+    # machinery entirely and pins the exact version that generated the lockfile.
+    buildCommand: npm i -g pnpm@9.15.9 && pnpm install --frozen-lockfile && pnpm --filter @haulq/web build
     staticPublishPath: apps/web/dist
 
     envVars:
@@ -131,6 +154,17 @@ services:
       # request URLs against it that go nowhere.
       - key: VITE_API_URL
         value: https://api.haulq.ai
+
+      # Clerk's publishable key. Not a secret — it ships to the browser — but it
+      # is read at BUILD time like everything VITE_-prefixed, so setting it
+      # requires a rebuild, not a restart.
+      #
+      # If this is absent the app builds in dev-auth mode and the sign-in screen
+      # never appears. That combination against a production API is a web app
+      # that 401s on every request, so treat a missing key here as a broken
+      # deploy rather than a degraded one.
+      - key: VITE_CLERK_PUBLISHABLE_KEY
+        sync: false
 
     routes:
       # Client-side routing. Without this, loading /import directly returns 404
