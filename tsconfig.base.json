@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitOverride": true,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "forceConsistentCasingInFileNames": true,
+
+    /**
+     * Imports carry the `.ts` extension because Node 22 strips types natively
+     * and there is no build step for the server packages — the file that runs
+     * is the file on disk. So tsc is a checker here, never an emitter, which is
+     * what `noEmit` says and what `allowImportingTsExtensions` requires.
+     *
+     * This is the same property that makes `ai-load-dispatcher/packages/core`
+     * run with no install. Keeping both codebases on it means one mental model
+     * for how a TypeScript file becomes a running process.
+     *
+     * apps/web overrides this: Vite builds it, and the browser needs a bundle.
+     */
+    "allowImportingTsExtensions": true,
+    "noEmit": true
+  },
+  "exclude": ["node_modules", "dist"]
+}

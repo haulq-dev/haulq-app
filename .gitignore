@@ -1,0 +1,20 @@
+node_modules/
+dist/
+.output/
+.turbo/
+*.tsbuildinfo
+
+# secrets — Doppler is the source of truth, nothing real lands on disk
+.env
+.env.*
+!.env.example
+
+# never commit key material. See build plan section 15.
+*.pem
+id_*
+*.key
+y
+y.pub
+
+.DS_Store
+coverage/

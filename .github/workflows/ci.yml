@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  app:
+    name: haulq-app
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: haulq
+          POSTGRES_PASSWORD: haulq
+          POSTGRES_DB: haulq_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgres://haulq:haulq@localhost:5432/haulq_test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with: { version: 9 }
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: haulq-app/pnpm-lock.yaml
+
+      - name: Install
+        working-directory: haulq-app
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        working-directory: haulq-app
+        run: pnpm typecheck
+
+      # The migration must run against a real Postgres, not be assumed valid.
+      # Trigger and constraint errors in sql/post are invisible to typecheck and
+      # to drizzle-kit, and they are exactly the parts carrying the guardrails.
+      - name: Migrate
+        working-directory: haulq-app
+        run: pnpm db:migrate
+
+      # Applying twice proves idempotency. sql/pre and sql/post run on every
+      # deploy, so a non-idempotent statement breaks the second deploy, not the
+      # one that introduced it.
+      - name: Migrate again (idempotency)
+        working-directory: haulq-app
+        run: pnpm db:migrate
+
+      - name: Test
+        working-directory: haulq-app
+        run: pnpm test
+
+  # packages/core stays dependency-free with no build step (ADR-0001), so it
+  # tests on bare Node with no install at all. Separate job because it has a
+  # separate lifecycle and must not gain a pnpm dependency by accident.
+  iq-core:
+    name: ai-load-dispatcher core
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: Test core
+        working-directory: ai-load-dispatcher
+        run: npm test --workspaces --if-present

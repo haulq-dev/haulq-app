@@ -1,0 +1,24 @@
+{
+  "name": "haulq",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "packageManager": "pnpm@9.12.0",
+  "engines": {
+    "node": ">=22.6"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test --concurrency=1",
+    "lint": "turbo run lint",
+    "db:generate": "pnpm --filter @haulq/db generate",
+    "db:migrate": "pnpm --filter @haulq/db migrate",
+    "iq:test": "npm --prefix ../ai-load-dispatcher test"
+  },
+  "devDependencies": {
+    "turbo": "^2.3.0",
+    "typescript": "^5.7.0"
+  }
+}

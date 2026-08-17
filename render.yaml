@@ -1,0 +1,154 @@
+# Render Blueprint for haulq-app.
+#
+# Two services and a database:
+#
+#   haulq-api   web service   api.haulq.ai   Fastify, no build step
+#   haulq-web   static site   app.haulq.ai   Vite build, served from CDN
+#   haulq-db    Postgres 16
+#
+# Marketing (haulq.ai) is NOT here — it stays an Astro site on a Cloudflare
+# Worker. Build plan section 6 keeps them apart deliberately: a copy fix must
+# not be able to break the app, and the two want opposite caching.
+#
+# Apply with: Render Dashboard → Blueprints → New Blueprint Instance.
+# Read docs/deploy-render.md first — three things in here need a paid plan.
+
+databases:
+  - name: haulq-db
+    databaseName: haulq
+    user: haulq
+    # Postgres 16 is what the schema is written and tested against.
+    postgresMajorVersion: "16"
+    region: oregon
+    # Free expires after 30 days, then 14 days' grace before the data is
+    # deleted. Fine for a demo, not for a pilot carrier's records — see the
+    # runbook.
+    plan: free
+    ipAllowList: []   # no external connections; services connect internally
+
+services:
+  # --------------------------------------------------------------------------
+  # API
+  # --------------------------------------------------------------------------
+  - type: web
+    name: haulq-api
+    runtime: node
+    region: oregon
+    plan: starter
+    # Root of the pnpm workspace, not apps/api. The lockfile and the shared
+    # packages live here, and pnpm needs to see all of them.
+    rootDir: .
+    healthCheckPath: /health
+
+    # Only rebuild when something the API depends on changes. Without this every
+    # CSS tweak in apps/web redeploys the API.
+    buildFilter:
+      paths:
+        - apps/api/**
+        - packages/**
+        - package.json
+        - pnpm-lock.yaml
+        - pnpm-workspace.yaml
+        - tsconfig.base.json
+
+    buildCommand: corepack enable && pnpm install --frozen-lockfile
+
+    # Migrations run after the build and before the new version takes traffic,
+    # so a deploy that cannot migrate never serves. REQUIRES A PAID INSTANCE —
+    # on free, run migrations by hand (see the runbook).
+    preDeployCommand: pnpm --filter @haulq/db migrate
+
+    # No build step: Node strips the types. `--experimental-strip-types` is
+    # required on Node 22; it becomes the default on 23+. See .node-version.
+    startCommand: node --experimental-strip-types apps/api/src/index.ts
+
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: LOG_LEVEL
+        value: info
+
+      # From the database below. Internal URL — same region, private network,
+      # lower latency, and never exposed publicly.
+      #
+      # Do NOT also define DATABASE_URL in Doppler. The Doppler→Render sync
+      # would overwrite this with whatever it holds, and the failure looks like
+      # an intermittently wrong database rather than a configuration mistake.
+      - key: DATABASE_URL
+        fromDatabase:
+          name: haulq-db
+          property: connectionString
+
+      # Where the browser calls from. CORS is scoped to exactly this origin.
+      #
+      # A literal rather than `fromService … property: host`, because that
+      # yields a bare hostname with no scheme — and `WEB_ORIGIN` is validated
+      # as a URL, so the API would refuse to boot. Update this when the custom
+      # domain is attached; until then use the onrender.com URL, with https://.
+      - key: WEB_ORIGIN
+        value: https://app.haulq.ai
+
+      # Auth. `dev` is header-trusting and DevAuthenticator refuses to
+      # construct when NODE_ENV=production, so leaving this wrong fails the
+      # boot rather than exposing the API.
+      - key: AUTH_PROVIDER
+        value: clerk
+      - key: CLERK_SECRET_KEY
+        sync: false          # set in Doppler, or the dashboard
+      - key: CLERK_WEBHOOK_SECRET
+        sync: false
+
+      # Ephemeral. Anything written here is gone on the next deploy — attach a
+      # Disk or move to R2 before a carrier's uploads matter. See the runbook.
+      - key: STORAGE_DIR
+        value: /var/data/haulq-storage
+
+  # --------------------------------------------------------------------------
+  # Web
+  # --------------------------------------------------------------------------
+  - type: web
+    runtime: static
+    name: haulq-web
+    rootDir: .
+    buildFilter:
+      paths:
+        - apps/web/**
+        - packages/contracts/**
+        - package.json
+        - pnpm-lock.yaml
+        - pnpm-workspace.yaml
+        - tsconfig.base.json
+
+    buildCommand: corepack enable && pnpm install --frozen-lockfile && pnpm --filter @haulq/web build
+    staticPublishPath: apps/web/dist
+
+    envVars:
+      # Vite inlines this at BUILD time. Changing it needs a rebuild, not a
+      # restart — a restart of a static site does nothing.
+      #
+      # Literal for the same reason as WEB_ORIGIN: `property: host` gives
+      # `haulq-api.onrender.com` with no scheme, and the client would build
+      # request URLs against it that go nowhere.
+      - key: VITE_API_URL
+        value: https://api.haulq.ai
+
+    routes:
+      # Client-side routing. Without this, loading /import directly returns 404
+      # because there is no such file — the router only exists once index.html
+      # has booted.
+      - type: rewrite
+        source: /*
+        destination: /index.html
+
+    headers:
+      - path: /*
+        name: X-Frame-Options
+        value: DENY
+      - path: /*
+        name: X-Content-Type-Options
+        value: nosniff
+      # Fonts and CSS are content-hashed by Vite, so they can be cached hard.
+      # index.html must not be, or a deploy takes an hour to reach anyone.
+      - path: /assets/*
+        name: Cache-Control
+        value: public, max-age=31536000, immutable
