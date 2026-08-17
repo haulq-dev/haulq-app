@@ -23,6 +23,7 @@ import { sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 import * as schema from './schema/index.ts';
+import { sslFor } from './ssl.ts';
 
 export type Database = ReturnType<typeof createDatabase>;
 
@@ -46,6 +47,10 @@ const connections = new WeakMap<object, postgres.Sql>();
 export function createDatabase(options: DatabaseOptions) {
   const sql = postgres(options.url, {
     max: options.max ?? 10,
+    // Render requires TLS externally and uses none internally. Derived from the
+    // URL rather than configured, so a connection string copied from either tab
+    // of the dashboard just works. See ssl.ts.
+    ssl: sslFor(options.url),
     // Postgres `timestamptz` comes back as a JS Date; leave it that way.
     // Anything that needs a wall-clock local time uses the user's `timezone`
     // column rather than the server's, which is UTC everywhere.

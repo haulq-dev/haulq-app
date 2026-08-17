@@ -17,10 +17,16 @@ const USER = '66666666-7777-8888-9999-000000000000';
 
 describe('DevAuthenticator', () => {
   it('refuses to exist in production', () => {
-    assert.throws(
-      () => new DevAuthenticator('production'),
-      /cannot run in production/,
-    );
+    assert.throws(() => new DevAuthenticator('production'), (err: unknown) => {
+      assert.ok(err instanceof Error);
+      assert.match(err.message, /Refusing to start/);
+      // The message must name the settings to change. Whoever reads it is
+      // looking at a deploy log, not this file — and getting that wrong cost
+      // three deploy cycles once already.
+      assert.match(err.message, /AUTH_PROVIDER=clerk/);
+      assert.match(err.message, /CLERK_SECRET_KEY/);
+      return true;
+    });
   });
 
   it('builds in development and test', () => {

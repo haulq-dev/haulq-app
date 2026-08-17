@@ -25,6 +25,7 @@ import { fileURLToPath } from 'node:url';
 import { migrate } from 'drizzle-orm/postgres-js/migrator';
 import postgres from 'postgres';
 import { drizzle } from 'drizzle-orm/postgres-js';
+import { sslFor } from './ssl.ts';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const packageRoot = join(here, '..');
@@ -42,7 +43,9 @@ async function main() {
   // guard is `drop ... if exists` then create, and Postgres emits a NOTICE for
   // each one that was not there. On a fresh database that is ~30 lines of noise
   // burying the one line that matters.
-  const sql = postgres(url, { max: 1, onnotice: () => {} });
+  // TLS derived from the URL — running migrations from a laptop against
+  // Render's external host needs it, and the internal host must not have it.
+  const sql = postgres(url, { max: 1, onnotice: () => {}, ssl: sslFor(url) });
   const db = drizzle(sql);
 
   const applyDir = async (label: string, dir: string) => {

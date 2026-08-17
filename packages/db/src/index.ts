@@ -1,4 +1,5 @@
 export * from './client.ts';
+export * from './ssl.ts';
 export * from './context.ts';
 export * from './transaction.ts';
 export * from './types.ts';
