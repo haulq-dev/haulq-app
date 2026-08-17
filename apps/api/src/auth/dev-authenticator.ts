@@ -44,9 +44,16 @@ export class DevAuthenticator implements Authenticator {
 
   constructor(nodeEnv: string, db?: Database) {
     if (nodeEnv === 'production') {
+      // The message names the variables on purpose. Whoever reads this is
+      // looking at a deploy log, not the source, and "configure Clerk instead"
+      // does not tell them which two settings are missing.
       throw new Error(
-        'DevAuthenticator cannot run in production: it trusts request headers, ' +
-          'so anyone could name any tenant. Configure Clerk instead.',
+        'Refusing to start: AUTH_PROVIDER is "dev", which trusts request ' +
+          'headers — anyone could name any tenant.\n\n' +
+          'Set these on this service:\n' +
+          '  AUTH_PROVIDER=clerk\n' +
+          '  CLERK_SECRET_KEY=sk_live_...   (Clerk dashboard → API Keys)\n\n' +
+          'See docs/clerk-setup.md. This is a deliberate guard, not a bug.',
       );
     }
     this.#db = db;
