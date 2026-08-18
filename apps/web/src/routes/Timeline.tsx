@@ -52,17 +52,35 @@ export function TimelineScreen() {
 
         <ol className="divide-y divide-line">
           {timeline.data?.items.map((entry) => (
-            <li key={entry.seq} className="flex items-baseline gap-4 py-3 first:pt-0">
+            <li
+              key={entry.seq}
+              className="flex flex-wrap items-baseline gap-x-4 gap-y-1 py-3 first:pt-0"
+            >
               <span className="num w-20 shrink-0 text-xs text-mute">
                 {when(entry.occurredAt)}
               </span>
-              <span className="flex-1 text-sm">{entry.explanation}</span>
+
+              {/*
+                `min-w-0` and `break-words` together are what keep an
+                explanation inside the card. A flex child defaults to
+                min-width:auto, so it refuses to shrink below its longest
+                unbreakable run — and these sentences embed email addresses and
+                ids, which have no spaces to wrap at. Without both, a single
+                long address widens the row past the container and takes the
+                whole page's horizontal scroll with it.
+              */}
+              <span className="min-w-0 flex-1 break-words text-sm">
+                {entry.explanation}
+              </span>
+
               {/* Agent actions are called out. A model's action must never be
                   indistinguishable from a person's — guardrail 5. */}
               {entry.actorType === 'agent' ? (
-                <Pill tone="warn">HaulQ · {entry.actorId}</Pill>
+                <span className="ml-20 shrink-0 sm:ml-0">
+                  <Pill tone="warn">HaulQ · {entry.actorId}</Pill>
+                </span>
               ) : (
-                <span className="field-label shrink-0 text-mute">
+                <span className="field-label ml-20 shrink-0 text-mute sm:ml-0">
                   {ACTOR_LABEL[entry.actorType] ?? entry.actorType}
                 </span>
               )}

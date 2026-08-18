@@ -227,6 +227,78 @@ export interface HistorySummary {
   revenuePerMileCents: number | null;
 }
 
+/**
+ * Roles, in the order they are offered.
+ *
+ * The repository enforces two rules this UI can only reflect, never replace:
+ * an org always keeps at least one owner, and only an owner can create one.
+ * Disabling a control is a courtesy; the API is what actually refuses.
+ */
+export const ROLES = ['owner', 'dispatcher', 'driver', 'accountant'] as const;
+export type Role = (typeof ROLES)[number];
+
+export interface Member {
+  userId: string;
+  email: string;
+  fullName: string | null;
+  role: Role;
+  acceptedAt: string | null;
+}
+
+export interface Invitation {
+  id: string;
+  email: string;
+  role: Role;
+  expiresAt: string;
+  createdAt: string;
+  invitedByUserId: string | null;
+}
+
+export interface MembersResponse {
+  members: Member[];
+  invitations: Invitation[];
+}
+
+/**
+ * True for an address the API minted rather than received.
+ *
+ * Duplicated from `identity.ts` rather than imported: `@haulq/db` is a server
+ * package and must not reach the browser bundle. Fourteen characters of
+ * duplication is a better trade than a dependency edge from web to db.
+ */
+export function isPlaceholderEmail(email: string): boolean {
+  return email.endsWith('@users.clerk.invalid');
+}
+
+export const ENDORSEMENTS = [
+  'hazmat',
+  'tanker',
+  'doubles_triples',
+  'twic',
+  'passenger',
+] as const;
+export type Endorsement = (typeof ENDORSEMENTS)[number];
+
+export interface Driver {
+  id: string;
+  fullName: string;
+  phone: string | null;
+  email: string | null;
+  cdlNumber: string | null;
+  cdlState: string | null;
+  /** ISO 8601. Null when the carrier has not recorded one. */
+  cdlExpiresAt: string | null;
+  medicalCardExpiresAt: string | null;
+  endorsements: string[];
+  defaultTruckId: string | null;
+}
+
+export interface ExpiringCredential {
+  driverId: string;
+  driverName: string;
+  what: 'cdl' | 'medical_card';
+  expiresAt: string;
+}
 export interface TimelineEntry {
   seq: string;
   occurredAt: string;

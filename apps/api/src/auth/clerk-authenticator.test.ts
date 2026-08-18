@@ -20,6 +20,7 @@ import {
   destroyTestOrg,
   destroyTestUser,
   getTestUser,
+  isPlaceholderEmail,
   membershipsFor,
   setTestMembershipRole,
   setTestUserEmail,
@@ -216,5 +217,51 @@ suite('ClerkAuthenticator', () => {
     assert.match(result!.actor.email!, /clerk\.invalid$/);
 
     await destroyTestUser(db, result!.actor.id);
+  });
+
+  it('does not overwrite a stored address when the claims carry none', async () => {
+    // The regression. The authenticator used to synthesize
+    // `<sub>@users.clerk.invalid` and hand it over as if it were real, so the
+    // first authenticated request after sign-up clobbered the address the
+    // webhook had just written. The placeholder then reached member event
+    // sentences, which are append-only and cannot be corrected in place.
+    const sub = `user_keepemail_${Date.now()}`;
+
+    // The webhook lands first, with the verified address.
+    const seeded = await upsertUserFromIdentity(db, {
+      externalAuthId: sub,
+      email: 'owner@prairiefreight.example',
+    });
+
+    // Then a request arrives on a session token with no email claim.
+    const result = await auth().authenticateUser(bearer({ sub }));
+
+    assert.equal(result!.actor.id, seeded.id);
+    assert.equal(result!.actor.email, 'owner@prairiefreight.example');
+
+    const stored = await getTestUser(db, seeded.id);
+    assert.equal(stored!.email, 'owner@prairiefreight.example');
+
+    await destroyTestUser(db, seeded.id);
+  });
+
+  it('upgrades a placeholder once a real address arrives', async () => {
+    // The other direction: a person who reaches the API before the webhook
+    // does gets a placeholder, and it must not be sticky.
+    const sub = `user_upgrade_${Date.now()}`;
+
+    const first = await auth().authenticateUser(bearer({ sub }));
+    assert.ok(isPlaceholderEmail(first!.actor.email!));
+
+    await upsertUserFromIdentity(db, {
+      externalAuthId: sub,
+      email: 'late@webhook.example',
+    });
+
+    const stored = await getTestUser(db, first!.actor.id);
+    assert.equal(stored!.email, 'late@webhook.example');
+    assert.equal(isPlaceholderEmail(stored!.email), false);
+
+    await destroyTestUser(db, first!.actor.id);
   });
 });

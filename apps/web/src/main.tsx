@@ -18,7 +18,9 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { AuthGate } from './components/AuthGate.tsx';
 import { Shell } from './components/Shell.tsx';
+import { DriversScreen } from './routes/Drivers.tsx';
 import { ImportScreen } from './routes/Import.tsx';
+import { MembersScreen } from './routes/Members.tsx';
 import { OnboardingScreen } from './routes/Onboarding.tsx';
 import { ProfileScreen } from './routes/Profile.tsx';
 import { TimelineScreen } from './routes/Timeline.tsx';
@@ -63,6 +65,16 @@ const trucksRoute = createRoute({
   path: '/trucks',
   component: TrucksScreen,
 });
+const driversRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/drivers',
+  component: DriversScreen,
+});
+const membersRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/members',
+  component: MembersScreen,
+});
 const importRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/import',
@@ -78,6 +90,8 @@ const routeTree = rootRoute.addChildren([
   indexRoute,
   profileRoute,
   trucksRoute,
+  driversRoute,
+  membersRoute,
   importRoute,
   timelineRoute,
 ]);

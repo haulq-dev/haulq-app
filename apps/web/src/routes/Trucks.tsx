@@ -187,50 +187,54 @@ export function TrucksScreen() {
         )}
 
         {trucks.data && trucks.data.items.length > 0 && (
-          <table className="hq-table">
-            <thead>
-              <tr>
-                <th className="field-label">Label</th>
-                <th className="field-label">Equipment</th>
-                <th className="field-label">Max weight</th>
-                <th className="field-label">Can do</th>
-              </tr>
-            </thead>
-            <tbody>
-              {trucks.data.items.map((truck) => {
-                const enabled = Object.entries(truck.capabilities ?? {})
-                  .filter(([, on]) => on)
-                  .map(([k]) => CAPABILITIES.find((c) => c.key === k)?.label ?? k);
-
-                return (
-                  <tr key={truck.id}>
-                    <td className="font-medium">{truck.label}</td>
-                    <td className="text-slate">{pretty(truck.equipment)}</td>
-                    <td>
-                      {truck.maxWeightLbs ? (
-                        <Num value={truck.maxWeightLbs} />
-                      ) : (
-                        <span className="text-mute">—</span>
-                      )}
-                    </td>
-                    <td>
-                      {enabled.length ? (
-                        <span className="flex flex-wrap gap-1.5">
-                          {enabled.map((label) => (
-                            <Pill key={label}>{label}</Pill>
-                          ))}
-                        </span>
-                      ) : (
-                        <span className="text-sm text-warn">
-                          Nothing set — loads needing equipment may be hidden
-                        </span>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+          <div className="overflow-x-auto">
+            {/* A load grid has more columns than a phone has width. Scroll it
+                inside its own box rather than letting it widen the page. */}
+            <table className="hq-table">
+              <thead>
+                <tr>
+                  <th className="field-label">Label</th>
+                  <th className="field-label">Equipment</th>
+                  <th className="field-label">Max weight</th>
+                  <th className="field-label">Can do</th>
+                </tr>
+              </thead>
+              <tbody>
+                {trucks.data.items.map((truck) => {
+                  const enabled = Object.entries(truck.capabilities ?? {})
+                    .filter(([, on]) => on)
+                    .map(([k]) => CAPABILITIES.find((c) => c.key === k)?.label ?? k);
+  
+                  return (
+                    <tr key={truck.id}>
+                      <td className="font-medium">{truck.label}</td>
+                      <td className="text-slate">{pretty(truck.equipment)}</td>
+                      <td>
+                        {truck.maxWeightLbs ? (
+                          <Num value={truck.maxWeightLbs} />
+                        ) : (
+                          <span className="text-mute">—</span>
+                        )}
+                      </td>
+                      <td>
+                        {enabled.length ? (
+                          <span className="flex flex-wrap gap-1.5">
+                            {enabled.map((label) => (
+                              <Pill key={label}>{label}</Pill>
+                            ))}
+                          </span>
+                        ) : (
+                          <span className="text-sm text-warn">
+                            Nothing set — loads needing equipment may be hidden
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         )}
       </Card>
     </div>

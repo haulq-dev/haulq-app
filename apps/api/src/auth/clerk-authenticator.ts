@@ -122,15 +122,18 @@ export class ClerkAuthenticator implements Authenticator {
       );
     }
 
-    // Clerk can be configured without email in the session claims. Rather than
-    // fail, fall back to a placeholder derived from the id — the webhook fills
-    // in the real address, and blocking sign-in over a display field would be a
-    // poor trade.
-    const email = claims.email ?? `${claims.sub}@users.clerk.invalid`;
-
+    // Clerk can be configured without email in the session claims, so pass it
+    // through ONLY when present. Do not substitute anything.
+    //
+    // This used to synthesize `<sub>@users.clerk.invalid` and pass that as if
+    // it were real. The repository wrote whatever it was given, so every
+    // authenticated request overwrote the address the webhook had just stored,
+    // and the placeholder leaked into member event sentences — which are
+    // append-only and cannot be corrected in place. Absent now stays absent,
+    // and the repository leaves the stored address alone.
     const user = await upsertUserFromIdentity(this.#db, {
       externalAuthId: claims.sub,
-      email,
+      ...(claims.email !== undefined ? { email: claims.email } : {}),
       fullName: claims.name,
       phone: claims.phone,
     });

@@ -254,30 +254,34 @@ function ReviewStep({
             Fix these in your file and upload again, or import the rest now and
             add them by hand later.
           </p>
-          <table className="hq-table mb-6">
-            <thead>
-              <tr>
-                <th className="field-label">Row</th>
-                <th className="field-label">Problem</th>
-              </tr>
-            </thead>
-            <tbody>
-              {invalidRows.slice(0, 20).map((row) => (
-                <tr key={row.rowNumber}>
-                  <td className="num align-top">{row.rowNumber}</td>
-                  <td>
-                    {row.errors
-                      .filter((e) => e.severity === 'error')
-                      .map((e, n) => (
-                        <span key={n} className="block text-sm text-bad">
-                          {e.message}
-                        </span>
-                      ))}
-                  </td>
+          <div className="overflow-x-auto">
+            {/* A load grid has more columns than a phone has width. Scroll it
+                inside its own box rather than letting it widen the page. */}
+            <table className="hq-table mb-6">
+              <thead>
+                <tr>
+                  <th className="field-label">Row</th>
+                  <th className="field-label">Problem</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {invalidRows.slice(0, 20).map((row) => (
+                  <tr key={row.rowNumber}>
+                    <td className="num align-top">{row.rowNumber}</td>
+                    <td>
+                      {row.errors
+                        .filter((e) => e.severity === 'error')
+                        .map((e, n) => (
+                          <span key={n} className="block text-sm text-bad">
+                            {e.message}
+                          </span>
+                        ))}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </>
       )}
 
@@ -487,30 +491,34 @@ export function ImportScreen() {
       <Card title="Previous imports">
         {batches.data?.items.length === 0 && <Empty>Nothing imported yet.</Empty>}
         {batches.data && batches.data.items.length > 0 && (
-          <table className="hq-table">
-            <thead>
-              <tr>
-                <th className="field-label">File</th>
-                <th className="field-label">Status</th>
-                <th className="field-label">Imported</th>
-                <th className="field-label">Skipped</th>
-              </tr>
-            </thead>
-            <tbody>
-              {batches.data.items.map((b) => (
-                <tr key={b.id}>
-                  <td className="font-medium">{b.filename}</td>
-                  <td>
-                    <Pill tone={b.status === 'committed' ? 'ok' : 'neutral'}>
-                      {b.status}
-                    </Pill>
-                  </td>
-                  <td className="num">{b.committedRows}</td>
-                  <td className="num">{b.invalidRows}</td>
+          <div className="overflow-x-auto">
+            {/* A load grid has more columns than a phone has width. Scroll it
+                inside its own box rather than letting it widen the page. */}
+            <table className="hq-table">
+              <thead>
+                <tr>
+                  <th className="field-label">File</th>
+                  <th className="field-label">Status</th>
+                  <th className="field-label">Imported</th>
+                  <th className="field-label">Skipped</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {batches.data.items.map((b) => (
+                  <tr key={b.id}>
+                    <td className="font-medium">{b.filename}</td>
+                    <td>
+                      <Pill tone={b.status === 'committed' ? 'ok' : 'neutral'}>
+                        {b.status}
+                      </Pill>
+                    </td>
+                    <td className="num">{b.committedRows}</td>
+                    <td className="num">{b.invalidRows}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </Card>
     </div>

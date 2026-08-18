@@ -31,9 +31,40 @@ export type User = typeof users.$inferSelect;
 export interface ExternalIdentity {
   /** Clerk `user_...`. */
   externalAuthId: string;
-  email: string;
+  /**
+   * A REAL address, or omitted.
+   *
+   * Optional because the two callers know different amounts. The webhook always
+   * has the verified primary address; a session token only carries one if the
+   * Clerk instance is configured to include the claim, and often does not.
+   *
+   * Never pass a synthesized placeholder here. An earlier version had the
+   * authenticator substitute `<sub>@users.clerk.invalid` when the claim was
+   * missing, and because this function wrote whatever it was given, every
+   * authenticated request overwrote the real address the webhook had just
+   * stored. The placeholder then surfaced in member event sentences, which are
+   * append-only and cannot be corrected in place.
+   */
+  email?: string | undefined;
   fullName?: string | undefined;
   phone?: string | undefined;
+}
+
+/**
+ * The address a brand-new row gets when the caller has none.
+ *
+ * `users.email` is NOT NULL, and a person can reach the API before the webhook
+ * carrying their address arrives. `.invalid` is reserved by RFC 2606 precisely
+ * so a placeholder can never collide with, or be mistaken for, a deliverable
+ * address. It is replaced by the first caller that knows better.
+ */
+function placeholderEmail(externalAuthId: string): string {
+  return `${externalAuthId}@users.clerk.invalid`;
+}
+
+/** True for an address this module minted rather than received. */
+export function isPlaceholderEmail(email: string): boolean {
+  return email.endsWith('@users.clerk.invalid');
 }
 
 /**
@@ -59,8 +90,11 @@ export async function upsertUserFromIdentity(
     .where(eq(users.externalAuthId, identity.externalAuthId));
 
   if (existing) {
+    // Every field is only written when the caller actually supplied it. Absent
+    // is not the same as empty: a session token with no email claim knows
+    // nothing about the address, and must not erase what the webhook stored.
     const changed =
-      existing.email !== identity.email ||
+      (identity.email !== undefined && existing.email !== identity.email) ||
       (identity.fullName !== undefined && existing.fullName !== identity.fullName) ||
       (identity.phone !== undefined && existing.phone !== identity.phone);
 
@@ -69,7 +103,7 @@ export async function upsertUserFromIdentity(
     const [updated] = await db
       .update(users)
       .set({
-        email: identity.email,
+        ...(identity.email !== undefined ? { email: identity.email } : {}),
         ...(identity.fullName !== undefined ? { fullName: identity.fullName } : {}),
         ...(identity.phone !== undefined ? { phone: identity.phone } : {}),
       })
@@ -78,20 +112,37 @@ export async function upsertUserFromIdentity(
     return updated!;
   }
 
+  const emailForInsert = identity.email ?? placeholderEmail(identity.externalAuthId);
+
   const [created] = await db
     .insert(users)
     .values({
       externalAuthId: identity.externalAuthId,
-      email: identity.email,
+      email: emailForInsert,
       fullName: identity.fullName ?? null,
       phone: identity.phone ?? null,
     })
-    // A second concurrent request for the same new user — Clerk's redirect and
-    // the webhook arriving together — must not fail. Whichever loses the race
-    // reads the winner's row.
+    /*
+     * A second concurrent request for the same new user — Clerk's redirect and
+     * the webhook arriving together — must not fail. Whichever loses the race
+     * reads the winner's row.
+     *
+     * With a real address, write it: if we lost to a request that only had a
+     * placeholder, this upgrades it. With no address of our own, update the
+     * conflict key to itself — a deliberate no-op write, not a mistake. It
+     * must stay `DO UPDATE` rather than `DO NOTHING`, because `DO NOTHING`
+     * returns no row and `created!` would then be undefined at runtime while
+     * typechecking perfectly.
+     *
+     * Both orderings converge on the real address, which is the property that
+     * matters.
+     */
     .onConflictDoUpdate({
       target: users.externalAuthId,
-      set: { email: identity.email },
+      set:
+        identity.email !== undefined
+          ? { email: identity.email }
+          : { externalAuthId: identity.externalAuthId },
     })
     .returning();
 
