@@ -12,12 +12,14 @@
 
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
-import Fastify, { type FastifyInstance } from 'fastify';
+import Fastify, { type FastifyBaseLogger, type FastifyInstance } from 'fastify';
 import {
   closeDatabase,
   createDatabase,
   FilesystemObjectStore,
   ping,
+  r2FromEnv,
+  R2ObjectStore,
   type Database,
   type ObjectStore,
 } from '@haulq/db';
@@ -42,11 +44,46 @@ declare module 'fastify' {
   }
 }
 
+/**
+ * R2 in production, the local filesystem otherwise.
+ *
+ * Decided by whether the R2 variables are present, not by NODE_ENV, so a
+ * staging deploy or a laptop holding real credentials behaves exactly like
+ * production without a second switch to keep in step.
+ *
+ * **It logs which one it chose.** Without that line, "the carrier's upload
+ * disappeared" and "the R2 secrets never reached this deploy" are the same
+ * symptom, and the import pipeline is staged across requests so the gap
+ * between them is hours.
+ */
+function buildStorage(env: Env, log: FastifyBaseLogger): ObjectStore {
+  const r2 = r2FromEnv(env);
+  if (r2) {
+    log.info({ store: 'r2', bucket: env.R2_BUCKET }, 'object storage ready');
+    return r2;
+  }
+
+  if (env.NODE_ENV === 'production') {
+    // Render's disk does not survive a deploy or a restart. An import is
+    // uploaded in one request and committed in another, often an hour later
+    // while the carrier checks the column mapping — so this is not a
+    // theoretical risk, it is the normal path.
+    log.warn(
+      { store: 'filesystem', dir: env.STORAGE_DIR },
+      'object storage is the local disk IN PRODUCTION — uploads will not survive a deploy. Set R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY and R2_BUCKET.',
+    );
+  } else {
+    log.info({ store: 'filesystem', dir: env.STORAGE_DIR }, 'object storage ready');
+  }
+
+  return new FilesystemObjectStore(env.STORAGE_DIR);
+}
+
 export interface BuildOptions {
   /**
-   * Override object storage. Tests inject an in-memory store; production will
-   * inject R2 once the bucket and Doppler secrets exist. Defaults to the local
-   * filesystem — see the note in `packages/db/src/storage.ts`.
+   * Override object storage. Tests inject an in-memory store. Left unset, the
+   * server picks R2 when the `R2_*` variables are present and the local
+   * filesystem when they are not — see `buildStorage`.
    */
   storage?: ObjectStore;
 
@@ -105,10 +142,15 @@ export async function buildServer(
     'authenticator',
     options.authenticator ?? buildAuthenticator(env, db),
   );
-  app.decorate(
-    'storage',
-    options.storage ?? new FilesystemObjectStore(env.STORAGE_DIR),
-  );
+  const storage = options.storage ?? buildStorage(env, app.log);
+  app.decorate('storage', storage);
+
+  // R2 holds HTTP sockets open. Same reasoning as the database pool above: a
+  // process that exits without releasing them leaves the runner hanging on an
+  // open handle, which reads like a deadlock in whatever was under test.
+  app.addHook('onClose', async () => {
+    if (storage instanceof R2ObjectStore) storage.destroy();
+  });
 
   await app.register(helmet);
   // Marketing (haulq.ai) and the app (app.haulq.ai) are separate origins by

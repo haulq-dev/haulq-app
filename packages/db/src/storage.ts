@@ -142,17 +142,9 @@ export class MemoryObjectStore implements ObjectStore {
 }
 
 /**
- * What the R2 implementation will look like, for whoever writes it.
+ * R2 lives in `storage-r2.ts`, not here.
  *
- * R2 is S3-compatible, so this is `@aws-sdk/client-s3` pointed at
- * `https://<account>.r2.cloudflarestorage.com` with region `auto`. Two things
- * that are easy to get wrong and expensive to discover later:
- *
- *  - **Do not enable public bucket access.** Every read goes through the API
- *    with a tenant check. A rate confirmation is a commercial document with a
- *    carrier's rates in it.
- *  - **Set a lifecycle rule per `kind` prefix**, not one for the bucket.
- *    Imports can expire; documents attached to an invoice cannot, and guardrail
- *    4's retention rules for board-sourced data are different again.
+ * This file stays on node builtins only. CI, the test suites and a fresh clone
+ * all run on the two stores above, and none of them should need the AWS SDK on
+ * the import path to do it.
  */
-export const R2_NOTES = undefined;
