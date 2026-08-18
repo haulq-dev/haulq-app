@@ -13,6 +13,7 @@ import { useState, type ReactNode } from 'react';
 import { request, writeSession } from '../lib/api.ts';
 import { usingClerk } from '../lib/auth.ts';
 import { AccountMenu, OrgPicker, useOrgs, useSession } from './AuthGate.tsx';
+import { Logo } from './Logo.tsx';
 
 const NAV = [
   { to: '/', label: 'Setup' },
@@ -137,8 +138,8 @@ export function Shell({ children }: { children: ReactNode }) {
 
       <header className="border-b border-line">
         <div className="mx-auto flex max-w-6xl items-center gap-6 px-6 py-4">
-          <div className="flex items-baseline gap-2">
-            <span className="display text-2xl font-semibold tracking-tight">HaulQ</span>
+          <div className="flex items-center gap-2">
+            <Logo className="h-7" />
             <span className="hq-slash h-4 w-px" aria-hidden />
             <span className="field-label text-mute">
               {session?.orgName ?? 'no carrier'}

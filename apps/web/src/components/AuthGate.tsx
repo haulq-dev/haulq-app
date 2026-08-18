@@ -37,6 +37,7 @@ import {
   registerTokenGetter,
   usingClerk,
 } from '../lib/auth.ts';
+import { Logo } from './Logo.tsx';
 
 /** Re-reads the stored session when the picker writes one. */
 export function useSession(): Session | null {
@@ -83,8 +84,8 @@ function TokenBridge({ onReady }: { onReady: () => void }) {
 function SignInScreen() {
   return (
     <div className="flex min-h-screen flex-col items-center justify-center gap-8 bg-wash px-6">
-      <div className="flex items-baseline gap-2">
-        <span className="display text-3xl font-semibold tracking-tight">HaulQ</span>
+      <div className="flex items-center gap-3">
+        <Logo className="h-9" />
         <span className="hq-slash h-5 w-px" aria-hidden />
         <span className="field-label text-mute">Run every load</span>
       </div>
