@@ -98,6 +98,34 @@ export async function recordEvent<V extends EventVerb>(
 // Reading
 // ---------------------------------------------------------------------------
 
+/**
+ * The subject and correlation of one logged event.
+ *
+ * An outbox message carries its topic and payload but not what the event was
+ * about — `event_log.subject_id` holds that. A handler could be spared the
+ * lookup by duplicating the id into every payload, but a payload that repeats a
+ * column is a payload that will disagree with it, and `scrubPayloadOnSuccess`
+ * blanks payloads anyway.
+ *
+ * `correlationId` comes back too so work done in response to a request can be
+ * logged under the same id as the request, rather than starting a new thread
+ * nobody can join to the upload that caused it.
+ */
+export async function eventSubject(
+  s: Scope,
+  eventSeq: bigint,
+): Promise<{ subjectId: string | null; correlationId: string | null } | undefined> {
+  const [row] = await s.db
+    .select({
+      subjectId: eventLog.subjectId,
+      correlationId: eventLog.correlationId,
+    })
+    .from(eventLog)
+    .where(and(eq(eventLog.orgId, s.ctx.orgId), eq(eventLog.seq, eventSeq)))
+    .limit(1);
+  return row;
+}
+
 export interface TimelineEntry {
   seq: bigint;
   occurredAt: Date;

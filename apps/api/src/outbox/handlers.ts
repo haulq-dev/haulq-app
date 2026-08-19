@@ -10,14 +10,28 @@
  * comes from the mailer: a rejected recipient is permanent, a rate limit is not.
  */
 
-import type { OutboxHandler, OutboxMessage } from '@haulq/db';
+import { randomUUID } from 'node:crypto';
+import {
+  eventSubject,
+  scope,
+  type Database,
+  type ObjectStore,
+  type OutboxHandler,
+  type OutboxMessage,
+} from '@haulq/db';
 import { inviteEmail, type InvitePayload } from '../email/invite-email.ts';
 import { MailerError, type Mailer } from '../email/postmark.ts';
+import { processDocument } from '../documents/pipeline.ts';
+import type { DocumentReader } from '../documents/reader.ts';
 
 export interface HandlerDeps {
   mailer: Mailer;
   /** The app origin the invite link points at. */
   webOrigin: string;
+  /** Needed by the document pipeline: the row says where the bytes are, not what they are. */
+  db: Database;
+  storage: ObjectStore;
+  reader: DocumentReader;
   log: {
     info: (o: unknown, msg: string) => void;
     warn: (o: unknown, msg: string) => void;
@@ -92,14 +106,103 @@ function inviteHandler(deps: HandlerDeps): OutboxHandler {
 }
 
 /**
+ * Read a document that has just arrived.
+ *
+ * Off the request path on purpose. Even the cheap path inflates every stream in
+ * a PDF, and the expensive path — once OCR and a model are wired in — takes
+ * seconds per page. One carrier uploading a forty-page packet must not be
+ * something another carrier feels.
+ *
+ * The actor is an **agent**, not the person who uploaded the file. Guardrail 5
+ * turns on being able to ask "what did a model decide, and which one" months
+ * later, and attributing a machine's reading to whoever happened to click
+ * upload destroys exactly that. The reader's own version is the model
+ * identifier, so a bad extractor is findable in the log by name.
+ */
+function documentHandler(deps: HandlerDeps): OutboxHandler {
+  return async (message) => {
+    // `subject_id` on the event is the document. The payload deliberately does
+    // not repeat it — see the note on `eventSubject`.
+    const lookup = scope(deps.db, {
+      orgId: message.orgId,
+      actor: { type: 'system', name: 'outbox-consumer' },
+      correlationId: randomUUID(),
+    });
+    // `event_seq` is nullable: a row can be queued without a logged event. A
+    // document read has no subject in that case, and no way to find one.
+    const event = message.eventSeq
+      ? await eventSubject(lookup, message.eventSeq)
+      : undefined;
+
+    if (!event?.subjectId) {
+      // Cannot ever succeed, so returning rather than throwing. Retrying eight
+      // times only delays the moment somebody looks at the log.
+      deps.log.warn(
+        { seq: message.seq.toString(), eventSeq: message.eventSeq?.toString() ?? null },
+        'document.received has no subject — nothing to read',
+      );
+      return;
+    }
+
+    const documentId = event.subjectId;
+    const s = scope(deps.db, {
+      orgId: message.orgId,
+      actor: { type: 'agent', model: deps.reader.name },
+      // Same correlation as the upload that caused it, so the reading and the
+      // request that triggered it are one thread in the log rather than two.
+      correlationId: event.correlationId ?? randomUUID(),
+    });
+
+    const outcome = await processDocument(s, documentId, {
+      reader: deps.reader,
+      storage: deps.storage,
+    });
+
+    const base = { seq: message.seq.toString(), documentId, reader: deps.reader.name };
+
+    switch (outcome.status) {
+      case 'skipped':
+        deps.log.info({ ...base, why: outcome.why }, 'document not read');
+        return;
+
+      case 'needs':
+        // Not a failure and not retryable: the rules did their job and declined.
+        // It stays `received`, so it stays in the inbox as work to be done, and
+        // it is the queue whatever OCR or model pass lands next will drain.
+        deps.log.info(
+          {
+            ...base,
+            needs: outcome.needs,
+            ...(outcome.needs === 'model' ? { guess: outcome.guess?.kind ?? null } : {}),
+          },
+          `document needs ${outcome.needs}`,
+        );
+        return;
+
+      case 'read':
+        deps.log.info(
+          {
+            ...base,
+            kind: outcome.classification.kind,
+            confidence: outcome.classification.confidence,
+            fields: outcome.fieldCount,
+            missing: outcome.missing,
+          },
+          'document read without a model call',
+        );
+        return;
+    }
+  };
+}
+
+/**
  * The topic map the runner drains.
  *
- * Only topics in here are claimed. Anything else stays queued untouched, which
- * is what lets `document.received` accumulate now and be picked up by whatever
- * handles it later — see the note in `@haulq/db`'s outbox module.
+ * Only topics in here are claimed. Anything else stays queued untouched.
  */
 export function buildOutboxHandlers(deps: HandlerDeps): Record<string, OutboxHandler> {
   return {
     'member.invite_email': inviteHandler(deps),
+    'document.received': documentHandler(deps),
   };
 }

@@ -30,6 +30,7 @@ import type { Env } from './env.ts';
 import { LogMailer, PostmarkMailer, type Mailer } from './email/postmark.ts';
 import { buildOutboxHandlers } from './outbox/handlers.ts';
 import { startOutboxRunner } from './outbox/runner.ts';
+import { LocalDocumentReader, type DocumentReader } from './documents/reader.ts';
 import { requestContextPlugin } from './plugins/request-context.ts';
 import { documentRoutes } from './routes/documents.ts';
 import { driverRoutes } from './routes/drivers.ts';
@@ -131,6 +132,14 @@ export interface BuildOptions {
    * through Postmark when a token is configured and logs when it is not.
    */
   mailer?: Mailer;
+
+  /**
+   * Override the document reader. Tests inject a fake. Left unset this is the
+   * text-layer reader, which handles digital PDFs at no cost and declines
+   * everything else — see `documents/reader.ts` for why that is the production
+   * default and not a placeholder.
+   */
+  reader?: DocumentReader;
 }
 
 /**
@@ -191,10 +200,16 @@ export async function buildServer(
   });
 
   const mailer = options.mailer ?? buildMailer(env, app.log);
+  const reader = options.reader ?? new LocalDocumentReader();
+  app.log.info({ reader: reader.name }, 'document reader ready');
+
   startOutboxRunner(app, {
     handlers: buildOutboxHandlers({
       mailer,
       webOrigin: env.WEB_ORIGIN,
+      db,
+      storage,
+      reader,
       log: {
         info: (o, msg) => app.log.info(o, msg),
         warn: (o, msg) => app.log.warn(o, msg),

@@ -326,6 +326,35 @@ export async function attachToLoad(
   });
 }
 
+/**
+ * Record what a classifier decided, without claiming the document was read.
+ *
+ * Used for the case the threshold exists for: the rules found something, but not
+ * confidently enough to route on. The kind and the confidence are written so a
+ * person opening the inbox sees HaulQ's best guess and how much it trusts it,
+ * and the status stays `received` so the document remains work to be done.
+ *
+ * No event. Nothing happened that a carrier needs told — the document arrived,
+ * which was already recorded, and HaulQ having an opinion about it is not a
+ * business fact. When a model makes the call instead, that is a model write and
+ * `recordExtraction` records it as one.
+ */
+export async function recordClassification(
+  s: Scope,
+  documentId: string,
+  input: { kind: DocumentKind; kindConfidence: number },
+): Promise<Document> {
+  await forUpdate(s, documentId, 'classify');
+
+  const [row] = await s.db
+    .update(documents)
+    .set({ kind: input.kind, kindConfidence: input.kindConfidence })
+    .where(and(eq(documents.orgId, s.ctx.orgId), eq(documents.id, documentId)))
+    .returning();
+  if (!row) throw new Error('document classification returned nothing');
+  return row;
+}
+
 export interface RecordExtractionInput {
   /** Whatever the model read. Shape is per document kind, deliberately open. */
   extracted: Record<string, unknown>;

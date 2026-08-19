@@ -14,8 +14,10 @@
 import { z } from 'zod';
 
 export * from './coerce.ts';
+export * from './classify.ts';
 export * from './csv.ts';
 export * from './documents.ts';
+export * from './extract.ts';
 export * from './import-mapping.ts';
 export * from './operating-facts.ts';
 

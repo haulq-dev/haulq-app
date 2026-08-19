@@ -173,6 +173,29 @@ export async function expireInvitationForTest(
 }
 
 /** Topics queued but not yet consumed, for asserting on the outbox. */
+/**
+ * Put a drained message back on the queue.
+ *
+ * Simulates the one delivery guarantee that is hard to test any other way: the
+ * outbox is at-least-once, so a lease that expires mid-handling causes the same
+ * message to arrive twice. A handler that is not idempotent looks perfectly
+ * correct until that happens in production at 3am.
+ *
+ * Lives here rather than in the suite so test files do not import drizzle-orm —
+ * same rule as the helpers above.
+ */
+export async function requeueOutboxForTest(
+  db: Database,
+  args: { orgId: string; topic: string },
+): Promise<number> {
+  const rows = await db
+    .update(eventOutbox)
+    .set({ processedAt: null, availableAt: new Date(), attempts: 0 })
+    .where(and(eq(eventOutbox.orgId, args.orgId), eq(eventOutbox.topic, args.topic)))
+    .returning({ seq: eventOutbox.seq });
+  return rows.length;
+}
+
 export async function pendingOutboxTopics(
   db: Database,
   orgId: string,
