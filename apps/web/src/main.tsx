@@ -19,6 +19,7 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { AuthGate } from './components/AuthGate.tsx';
 import { Shell } from './components/Shell.tsx';
+import { DocumentsScreen } from './routes/Documents.tsx';
 import { DriversScreen } from './routes/Drivers.tsx';
 import { ImportScreen } from './routes/Import.tsx';
 import { InviteScreen } from './routes/Invite.tsx';
@@ -96,6 +97,11 @@ const loadsRoute = createRoute({
   path: '/loads',
   component: LoadsScreen,
 });
+const documentsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/documents',
+  component: DocumentsScreen,
+});
 const driversRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/drivers',
@@ -128,6 +134,7 @@ const routeTree = rootRoute.addChildren([
   trucksRoute,
   loadsRoute,
   insightsRoute,
+  documentsRoute,
   driversRoute,
   membersRoute,
   importRoute,

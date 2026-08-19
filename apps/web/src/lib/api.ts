@@ -134,6 +134,36 @@ export async function request<T>(
   return parsed as T;
 }
 
+/**
+ * Fetch bytes rather than JSON.
+ *
+ * A document preview cannot be an `<img src>` pointing at the API: the request
+ * needs the tenant header and, under Clerk, a bearer token, and neither travels
+ * on a plain element load. So the bytes come through here and the caller turns
+ * them into an object URL.
+ *
+ * Errors still arrive as JSON — the API's envelope applies to failures on this
+ * endpoint too — so a non-OK response is parsed as one rather than handed back
+ * as a blob nobody can read.
+ */
+export async function requestBlob(
+  path: string,
+  options: { session?: Session | null } = {},
+): Promise<Blob> {
+  const session = options.session !== undefined ? options.session : readSession();
+  const response = await fetch(`${BASE}${path}`, {
+    headers: await authHeaders(session),
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    const parsed = text ? (JSON.parse(text) as Partial<ApiError>) : {};
+    throw new ApiRequestError(response.status, parsed);
+  }
+
+  return response.blob();
+}
+
 // ---------------------------------------------------------------------------
 // Shapes the API returns
 // ---------------------------------------------------------------------------
