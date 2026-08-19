@@ -39,6 +39,23 @@ const EnvSchema = z.object({
    */
   STORAGE_DIR: z.string().default('/tmp/haulq-storage'),
 
+  /**
+   * Postmark. Optional: with no token the mailer logs instead of sending, which
+   * is what makes the invite flow walkable locally with no account.
+   */
+  POSTMARK_SERVER_TOKEN: z.string().optional(),
+  /** Must be on a Postmark-verified domain, or every send is rejected. */
+  EMAIL_FROM: z.string().email().default('hello@haulq.ai'),
+
+  /**
+   * How often the in-process outbox consumer polls, in milliseconds. 0 is off.
+   *
+   * Off by default on purpose. A poller that starts itself runs in every test
+   * and every local `pnpm dev`, quietly draining rows something was about to
+   * assert on. Render sets it; nothing else does.
+   */
+  OUTBOX_POLL_MS: z.coerce.number().int().min(0).default(0),
+
   WEB_ORIGIN: z.string().url().default('http://localhost:5173'),
 });
 

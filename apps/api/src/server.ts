@@ -27,6 +27,9 @@ import type { Authenticator } from './auth/authenticator.ts';
 import { ClerkAuthenticator } from './auth/clerk-authenticator.ts';
 import { DevAuthenticator } from './auth/dev-authenticator.ts';
 import type { Env } from './env.ts';
+import { LogMailer, PostmarkMailer, type Mailer } from './email/postmark.ts';
+import { buildOutboxHandlers } from './outbox/handlers.ts';
+import { startOutboxRunner } from './outbox/runner.ts';
 import { requestContextPlugin } from './plugins/request-context.ts';
 import { driverRoutes } from './routes/drivers.ts';
 import { importRoutes } from './routes/imports.ts';
@@ -79,6 +82,32 @@ function buildStorage(env: Env, log: FastifyBaseLogger): ObjectStore {
   return new FilesystemObjectStore(env.STORAGE_DIR);
 }
 
+/**
+ * Postmark when a token exists, a logger when it does not.
+ *
+ * Same shape as `buildStorage`, and the same reason for the warning: a
+ * production deploy quietly not sending mail looks exactly like a deploy whose
+ * secret never arrived, and the first symptom is an invitation nobody receives.
+ */
+function buildMailer(env: Env, log: FastifyBaseLogger): Mailer {
+  if (env.POSTMARK_SERVER_TOKEN) {
+    log.info({ mailer: 'postmark', from: env.EMAIL_FROM }, 'mailer ready');
+    return new PostmarkMailer({
+      token: env.POSTMARK_SERVER_TOKEN,
+      from: env.EMAIL_FROM,
+    });
+  }
+
+  const message =
+    env.NODE_ENV === 'production'
+      ? 'no POSTMARK_SERVER_TOKEN — invitations WILL NOT BE SENT, only logged'
+      : 'mailer ready';
+  const level = env.NODE_ENV === 'production' ? 'warn' : 'info';
+  log[level]({ mailer: 'log' }, message);
+
+  return new LogMailer((o, msg) => log.info(o, msg));
+}
+
 export interface BuildOptions {
   /**
    * Override object storage. Tests inject an in-memory store. Left unset, the
@@ -93,6 +122,12 @@ export interface BuildOptions {
    * development.
    */
   authenticator?: Authenticator;
+
+  /**
+   * Override the mailer. Tests inject a recorder. Left unset, the server sends
+   * through Postmark when a token is configured and logs when it is not.
+   */
+  mailer?: Mailer;
 }
 
 /**
@@ -150,6 +185,19 @@ export async function buildServer(
   // open handle, which reads like a deadlock in whatever was under test.
   app.addHook('onClose', async () => {
     if (storage instanceof R2ObjectStore) storage.destroy();
+  });
+
+  const mailer = options.mailer ?? buildMailer(env, app.log);
+  startOutboxRunner(app, {
+    handlers: buildOutboxHandlers({
+      mailer,
+      webOrigin: env.WEB_ORIGIN,
+      log: {
+        info: (o, msg) => app.log.info(o, msg),
+        warn: (o, msg) => app.log.warn(o, msg),
+      },
+    }),
+    intervalMs: env.OUTBOX_POLL_MS,
   });
 
   await app.register(helmet);

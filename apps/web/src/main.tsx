@@ -13,6 +13,7 @@ import {
   createRouter,
   Outlet,
   RouterProvider,
+  useRouterState,
 } from '@tanstack/react-router';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -20,6 +21,7 @@ import { AuthGate } from './components/AuthGate.tsx';
 import { Shell } from './components/Shell.tsx';
 import { DriversScreen } from './routes/Drivers.tsx';
 import { ImportScreen } from './routes/Import.tsx';
+import { InviteScreen } from './routes/Invite.tsx';
 import { MembersScreen } from './routes/Members.tsx';
 import { OnboardingScreen } from './routes/Onboarding.tsx';
 import { ProfileScreen } from './routes/Profile.tsx';
@@ -39,13 +41,30 @@ const queryClient = new QueryClient({
   },
 });
 
-const rootRoute = createRootRoute({
-  component: () => (
+/**
+ * The frame, except where there is no frame yet.
+ *
+ * `Shell` is chrome for someone already inside a carrier — it shows the nav and
+ * falls back to the account picker when no carrier is selected. An invitation is
+ * opened by someone who is in neither state, so wrapping it would hand them the
+ * picker instead of the invitation they clicked.
+ *
+ * Kept as a pathname check rather than a second route tree: one screen does not
+ * justify a layout hierarchy, and this is the only place that has to know.
+ */
+const CHROMELESS = ['/invite/'];
+
+function RootLayout() {
+  const pathname = useRouterState({ select: (s) => s.location.pathname });
+  if (CHROMELESS.some((p) => pathname.startsWith(p))) return <Outlet />;
+  return (
     <Shell>
       <Outlet />
     </Shell>
-  ),
-});
+  );
+}
+
+const rootRoute = createRootRoute({ component: RootLayout });
 
 // Declared one by one rather than mapped over an array: TanStack infers the
 // route tree's types from these literals, and a `.map()` widens `path` to
@@ -85,6 +104,11 @@ const timelineRoute = createRoute({
   path: '/timeline',
   component: TimelineScreen,
 });
+const inviteRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/invite/$token',
+  component: InviteScreen,
+});
 
 const routeTree = rootRoute.addChildren([
   indexRoute,
@@ -94,6 +118,7 @@ const routeTree = rootRoute.addChildren([
   membersRoute,
   importRoute,
   timelineRoute,
+  inviteRoute,
 ]);
 
 const router = createRouter({ routeTree });

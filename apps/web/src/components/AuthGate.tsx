@@ -24,7 +24,7 @@ import {
   UserButton,
 } from '@clerk/clerk-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import {
   readSession,
   request,
@@ -38,6 +38,38 @@ import {
   usingClerk,
 } from '../lib/auth.ts';
 import { Logo } from './Logo.tsx';
+
+/**
+ * Paths that render for a signed-out visitor.
+ *
+ * Only one so far, and it earns it: an invitation link is opened by someone who
+ * has no HaulQ account yet — that is the normal case, not the edge one. Bouncing
+ * them to a sign-in screen with no explanation of what they are signing in to
+ * is how an invitation gets ignored.
+ *
+ * The preview endpoint behind it is unauthenticated for the same reason, and
+ * discloses nothing the holder of the token does not already have.
+ */
+const PUBLIC_PREFIXES = ['/invite/'] as const;
+
+function isPublicPath(pathname: string): boolean {
+  return PUBLIC_PREFIXES.some((p) => pathname.startsWith(p));
+}
+
+/**
+ * Whether there is a person behind this session.
+ *
+ * A context rather than a hook that inspects Clerk, because the answer is
+ * different in the two auth modes and a screen should not have to know which
+ * one it is running under. `AuthGate` is the only thing that knows, so it is
+ * the only thing that decides.
+ */
+const SignedInContext = createContext(false);
+
+/** True when someone is signed in. Safe to call in either auth mode. */
+export function useSignedIn(): boolean {
+  return useContext(SignedInContext);
+}
 
 /** Re-reads the stored session when the picker writes one. */
 export function useSession(): Session | null {
@@ -197,6 +229,7 @@ export function AccountMenu() {
  */
 export function AuthGate({ children }: { children: ReactNode }) {
   const [tokenReady, setTokenReady] = useState(false);
+  const devSession = useSession();
 
   // Built without a Clerk key but pointed at a deployed API. Say so, rather
   // than letting every request 401 behind a working-looking interface.
@@ -217,18 +250,39 @@ export function AuthGate({ children }: { children: ReactNode }) {
     );
   }
 
-  if (!usingClerk) return <>{children}</>;
+  if (!usingClerk) {
+    // Dev mode: the header session in localStorage is the only notion of
+    // "signed in" there is.
+    return (
+      <SignedInContext.Provider value={devSession !== null}>
+        {children}
+      </SignedInContext.Provider>
+    );
+  }
+
+  const publicPath = isPublicPath(window.location.pathname);
 
   return (
     <ClerkProvider publishableKey={CLERK_PUBLISHABLE_KEY} afterSignOutUrl="/">
       <SignedOut>
-        <SignInScreen />
+        {/* A public path renders inside the provider, not instead of it, so the
+            screen can offer Clerk's own sign-in once the visitor has seen what
+            they are being invited to. */}
+        {publicPath ? (
+          <SignedInContext.Provider value={false}>{children}</SignedInContext.Provider>
+        ) : (
+          <SignInScreen />
+        )}
       </SignedOut>
       <SignedIn>
         <TokenBridge onReady={() => setTokenReady(true)} />
         {/* Nothing renders until the token getter is registered, or the first
             burst of queries fires unauthenticated and 401s. */}
-        {tokenReady ? children : <p className="p-8 text-mute">Signing you in…</p>}
+        {tokenReady ? (
+          <SignedInContext.Provider value={true}>{children}</SignedInContext.Provider>
+        ) : (
+          <p className="p-8 text-mute">Signing you in…</p>
+        )}
       </SignedIn>
     </ClerkProvider>
   );

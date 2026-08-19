@@ -74,7 +74,32 @@ export async function destroyTestOrg(db: Database, orgId: string): Promise<void>
   await db.delete(orgs).where(eq(orgs.id, orgId));
 }
 
+/**
+ * Delete a test user, including any events they authored.
+ *
+ * The trigger dance is not optional, and the reason is not obvious.
+ * `event_log.actor_user_id` is ON DELETE SET NULL, so deleting a user makes
+ * Postgres UPDATE the log — and the append-only trigger rejects UPDATEs. The
+ * failure surfaces as:
+ *
+ *     event_log is append-only (attempted UPDATE)
+ *
+ * …from a line that only says `destroyTestUser`, which reads like the guardrail
+ * is broken rather than like a helper that cannot clean up after itself. It
+ * only bites once a user has actually acted, so it stayed hidden while the
+ * suites destroyed users who had merely authenticated.
+ *
+ * Same global-trigger caveat as `destroyTestOrg` above: for this moment no
+ * connection anywhere has the append-only guarantee, which is why the root
+ * `test` script pins turbo to `--concurrency=1`.
+ */
 export async function destroyTestUser(db: Database, userId: string): Promise<void> {
+  await db.execute(sql`alter table event_log disable trigger event_log_no_delete_trg`);
+  try {
+    await db.delete(eventLog).where(eq(eventLog.actorUserId, userId));
+  } finally {
+    await db.execute(sql`alter table event_log enable trigger event_log_no_delete_trg`);
+  }
   await db.delete(users).where(eq(users.id, userId));
 }
 

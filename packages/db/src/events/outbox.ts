@@ -121,6 +121,18 @@ export interface DrainOptions {
   backoffSeconds?: (attempts: number) => number;
   /** Injectable clock. Tests need to reach across a backoff without sleeping. */
   now?: () => Date;
+  /**
+   * Blank the payload when a message succeeds. Default false.
+   *
+   * For queues carrying something that should not outlive its delivery. The
+   * invitation email is the case this exists for: its payload holds the raw
+   * token, and once the mail is away there is no reason for that to sit in a
+   * processed row waiting for a pruner that does not exist yet.
+   *
+   * Only on success. A failed message keeps its payload or it could never be
+   * retried.
+   */
+  scrubPayloadOnSuccess?: boolean;
   /** Observation hook. Errors are recorded on the row regardless. */
   onError?: (message: OutboxMessage, error: unknown) => void;
 }
@@ -167,6 +179,7 @@ export async function drainOutbox(
     leaseSeconds = DEFAULT_LEASE_SECONDS,
     backoffSeconds = defaultBackoff,
     now = () => new Date(),
+    scrubPayloadOnSuccess = false,
     onError,
   } = options;
 
@@ -247,7 +260,11 @@ export async function drainOutbox(
       await handler(message);
       await db
         .update(eventOutbox)
-        .set({ processedAt: now(), lastError: null })
+        .set({
+          processedAt: now(),
+          lastError: null,
+          ...(scrubPayloadOnSuccess ? { payload: {} } : {}),
+        })
         .where(inArray(eventOutbox.seq, [message.seq]));
       result.processed += 1;
     } catch (error) {

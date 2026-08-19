@@ -233,9 +233,13 @@ suite('outbox consumer', () => {
       correlationId: randomUUID(),
     });
 
+    // `import.committed` rather than `member.invited`: the invitation email is
+    // no longer queued by the catalogue at all. Its payload has to carry the
+    // raw token, and the audit log — which shares that payload — must never
+    // hold a live credential, so `inviteMember` enqueues that one by hand.
     await withTransaction(s, async (tx) => {
-      await recordEvent(tx, 'member.invited', {
-        payload: { email: 'invited@example.test', role: 'dispatcher' },
+      await recordEvent(tx, 'import.committed', {
+        payload: { filename: 'loads.csv', committed: 42, skipped: 0 },
       });
     });
 
@@ -245,14 +249,15 @@ suite('outbox consumer', () => {
     // frozen 12:00 clock would find this row not yet due, which is the consumer
     // behaving correctly and the test lying.
     const result = await drainOutbox(db, {
-      handlers: { 'member.invite_email': collect(seen) },
+      handlers: { 'import.committed': collect(seen) },
     });
 
     assert.equal(result.processed, 1);
-    assert.equal(seen[0]!.topic, 'member.invite_email');
+    assert.equal(seen[0]!.topic, 'import.committed');
     assert.deepEqual(seen[0]!.payload, {
-      email: 'invited@example.test',
-      role: 'dispatcher',
+      filename: 'loads.csv',
+      committed: 42,
+      skipped: 0,
     });
     assert.ok(seen[0]!.eventSeq, 'ties back to the logged event');
   });

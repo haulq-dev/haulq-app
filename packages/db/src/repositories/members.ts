@@ -18,6 +18,7 @@ import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { and, asc, count, eq, isNull, sql } from 'drizzle-orm';
 import type { Database } from '../client.ts';
 import type { Scope } from '../context.ts';
+import { eventOutbox } from '../schema/events.ts';
 import { recordEvent } from '../events/record.ts';
 import { orgInvitations, orgMemberships, orgs, users } from '../schema/tenancy.ts';
 import { withTransaction } from '../transaction.ts';
@@ -198,11 +199,42 @@ export async function inviteMember(
 
     if (!row) throw new Error('invitation insert returned nothing');
 
-    // Has an outbox topic, so the email send is queued in this transaction and
-    // never fires for an invitation that rolled back.
     await recordEvent(tx, 'member.invited', {
       subjectId: tx.ctx.orgId,
       payload: { email, role: input.role },
+    });
+
+    /**
+     * The email, queued by hand rather than by the event catalogue.
+     *
+     * `member.invited` deliberately has no `topic`, because the audit payload
+     * cannot carry the token and the email is useless without it. So the
+     * message is enqueued here — still inside this transaction, so it is never
+     * sent for an invitation that rolled back and never lost for one that
+     * committed, which is the whole point of the outbox.
+     *
+     * **This row holds a live credential.** That is the accepted cost of
+     * sending asynchronously, and it is bounded three ways: the consumer scrubs
+     * the payload the moment the send succeeds, the token expires in
+     * INVITE_TTL_DAYS regardless, and revoking the invitation invalidates it
+     * immediately. The audit log — the thing kept forever — never sees it.
+     */
+    const [org] = await tx.db
+      .select({ name: orgs.name })
+      .from(orgs)
+      .where(eq(orgs.id, tx.ctx.orgId));
+
+    await tx.db.insert(eventOutbox).values({
+      orgId: tx.ctx.orgId,
+      topic: 'member.invite_email',
+      payload: {
+        email,
+        role: input.role,
+        token,
+        orgName: org?.name ?? 'your carrier',
+        expiresAt: row.expiresAt.toISOString(),
+        invitedByEmail: tx.ctx.actor.type === 'user' ? (tx.ctx.actor.email ?? null) : null,
+      },
     });
 
     const { tokenHash: _hash, ...invitation } = row;

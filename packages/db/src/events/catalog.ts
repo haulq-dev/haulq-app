@@ -110,10 +110,22 @@ export const eventCatalog = {
       `${p.periodDays} days. Scoring now uses measured figures rather than estimates.`,
   }),
 
+  /**
+   * No `topic` here, deliberately.
+   *
+   * The email has to contain the invitation link, and the link is the raw
+   * token — which this payload does not have and must not have. `event_log` is
+   * append-only and kept forever; a live credential written into it could never
+   * be removed, only expired around.
+   *
+   * So `inviteMember` enqueues the `member.invite_email` message itself, in the
+   * same transaction, carrying the token. This entry stays the audit record and
+   * nothing more. See the note above the enqueue in
+   * `repositories/members.ts`.
+   */
   'member.invited': define<{ email: string; role: string }>({
     subjectType: 'org',
     describe: (p) => `Invited ${p.email} to join as ${p.role}.`,
-    topic: 'member.invite_email',
   }),
 
   'member.invite_revoked': define<{ email: string }>({
