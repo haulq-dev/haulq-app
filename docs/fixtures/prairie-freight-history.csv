@@ -1,0 +1,49 @@
+﻿Prairie Freight LLC - Load History Export
+Period: 05/21/2026 - 08/19/2026
+
+Load #,Customer,PU City,PU St,Delivery City,Delivery St,Pickup Date,Date Delivered,All-In Rate,Miles,DH Miles,Wt (lbs),Description,Unit #,Remarks
+1000,ACME LOGISTICS LLC,Denver,CO,Colorado Springs,CO,05/23/26,05/23/26,$263.00,70,62,15600,Paper goods,Unit 7,
+1001,Heartland Transport Svcs.,Wichita,KS,Kansas City,MO,2026-05-25,2026-05-25,$392.00,199,62,21000,Retail freight,Unit 12,
+1002,"Acme Logistics, Inc.",Tulsa,OK,Dallas,TX,27-May-26,28-May-26,$818.00,257,47,21000,Appliances,Unit 12,
+1003,Acme Logistics,Tulsa,OK,Dallas,TX,05/29/26,05/30/26,$642.00,257,18,12400,"Pallets, mixed",Unit 12,TWIC required for port pickup
+1004,Heartland Transport Svcs.,Tulsa,OK,Dallas,TX,2026-05-31,2026-06-01,$751.00,257,88,8800,Appliances,Unit 12,
+1005,Prairie Freight Brokers,Tulsa,OK,Dallas,TX,02-Jun-26,03-Jun-26,$820.00,257,62,21000,Auto parts,Unit 12,
+1006,Heartland Transport Services,Dallas,TX,Houston,TX,06/04/26,06/04/26,$598.00,239,62,12400,"Pallets, mixed",Unit 12,
+1007,Acme Logistics,Kansas City,MO,Des Moines,IA,2026-06-07,2026-06-07,see email,194,88,,Appliances,Unit 12,"Rate confirmed by phone, paperwork to follow"
+1008,Prairie Freight Brokers,Denver,CO,Colorado Springs,CO,09-Jun-26,09-Jun-26,$283.00,70,110,,Appliances,Unit 12,
+1009,Acme Logistics,Wichita,KS,Denver,CO,06/11/26,06/12/26,"$1,825.00",522,110,,"Pallets, mixed",Unit 12,
+1010,Heartland Transport Services,Oklahoma City,OK,Tulsa,OK,2026-06-13,2026-06-13,$344.00,106,18,,Retail freight,Unit 12,
+1011,"Acme Logistics, Inc.",Kansas City,MO,Des Moines,IA,15-Jun-26,15-Jun-26,$497.00,194,176,15600,Building materials,Unit 12,
+1012,Acme Logistics,Wichita,KS,Oklahoma City,OK,06/17/26,06/17/26,$454.00,162,110,4200,"Pallets, mixed",Unit 12,"Driver assist required.
+Liftgate needed at delivery — dock is closed after 3pm."
+1013,"Acme Logistics, Inc.",Dallas,TX,Houston,TX,2026-06-19,2026-06-19,$786.00,239,18,4200,"Pallets, mixed",Unit 7,
+1014,"Acme Logistics, Inc.",Tulsa,OK,Dallas,TX,22-Jun-26,23-Jun-26,$661.00,257,110,12400,"Pallets, mixed",Unit 12,
+1015,Midwest Freight Co,Dallas,TX,Houston,TX,06/24/26,06/24/26,$769.00,239,34,21000,Retail freight,Unit 12,
+1016,Prairie Freight Brokers,Dallas,TX,Houston,TX,2026-06-26,2026-06-26,$779.00,239,176,12400,Paper goods,Unit 7,
+1017,Midwest Freight Co,Wichita,KS,Oklahoma City,OK,28-Jun-26,28-Jun-26,$614.00,162,88,21000,Building materials,Unit 7,
+1018,Midwest Freight Co,Denver,CO,Colorado Springs,CO,06/30/26,06/30/26,$199.00,70,34,12400,Building materials,Unit 12,
+1019,ACME LOGISTICS LLC,Joplin,MO,Springfield,MO,2026-07-02,2026-07-02,,72,34,4200,Appliances,Unit 12,
+1020,Midwest Freight Co,Oklahoma City,OK,Tulsa,OK,04-Jul-26,04-Jul-26,$281.00,106,47,12400,"Pallets, mixed",Unit 12,
+1021,Heartland Transport Services,Wichita,KS,Oklahoma City,OK,07/07/26,07/07/26,$429.00,162,176,8800,Auto parts,Unit 12,
+
+1022,Heartland Transport Services,Dallas,TX,Houston,TX,2026-07-09,2026-07-09,$600.00,239,110,,Bottled water,Unit 12,
+1023,Heartland Transport Services,Salina,KS,Lincoln,NE,11-Jul-26,11-Jul-26,$506.00,180,88,8800,Auto parts,Unit 12,
+1024,Heartland Transport Svcs.,Dallas,TX,Houston,TX,07/13/26,07/13/26,$609.00,239,18,4200,"Pallets, mixed",Unit 12,
+1025,Heartland Transport Services,Wichita,KS,Oklahoma City,OK,2026-07-15,2026-07-15,$458.00,162,18,21000,Paper goods,Unit 7,
+1026,ACME LOGISTICS LLC,Wichita,KS,Denver,,17-Jul-26,18-Jul-26,"$1,336.00",522,34,12400,Paper goods,Unit 7,
+1027,Midwest Freight Co,Wichita,KS,Kansas City,MO,07/19/26,07/19/26,$514.00,199,47,,Retail freight,Unit 12,
+1028,Acme Logistics,Denver,CO,Colorado Springs,CO,2026-07-22,2026-07-22,$207.00,70,47,21000,Bottled water,Unit 7,
+1029,Heartland Transport Svcs.,Salina,KS,Lincoln,NE,24-Jul-26,24-Jul-26,$481.00,180,34,4200,Bottled water,Unit 12,
+1030,Prairie Freight Brokers,Joplin,MO,Springfield,MO,07/26/26,07/26/26,$294.00,72,88,8800,Building materials,Unit 12,
+1031,Midwest Freight Co,Kansas City,MO,Des Moines,IA,2026-07-28,2026-07-28,$576.00,194,-5,8800,"Pallets, mixed",Unit 12,
+1032,"Acme Logistics, Inc.",Wichita,KS,Oklahoma City,OK,30-Jul-26,30-Jul-26,$359.00,162,88,4200,Bottled water,Unit 12,
+1033,ACME LOGISTICS LLC,Joplin,MO,Springfield,MO,08/01/26,08/01/26,$250.00,72,110,4200,Retail freight,Unit 12,
+1034,"Acme Logistics, Inc.",Oklahoma City,OK,Tulsa,OK,2026-08-03,2026-08-03,$352.00,106,34,8800,Retail freight,Unit 12,
+1035,Heartland Transport Services,Salina,KS,Lincoln,NE,06-Aug-26,06-Aug-26,$471.00,180,110,8800,Paper goods,Unit 12,
+1036,Heartland Transport Svcs.,Denver,CO,Colorado Springs,CO,08/08/26,08/08/26,$131.00,70,176,,"Pallets, mixed",Unit 7,
+1037,Heartland Transport Services,Denver,CO,Colorado Springs,CO,2026-08-10,2026-08-10,$215.00,70,88,15600,Appliances,Unit 12,
+1038,ACME LOGISTICS LLC,Wichita,KS,Kansas City,MO,12-Aug-26,12-Aug-26,$742.00,199,34,12400,Building materials,Unit 7,
+1039,Heartland Transport Services,Dallas,TX,Houston,TX,08/14/26,08/14/26,$609.00,239,18,,Building materials,Unit 12,
+1040,Acme Logistics,Joplin,MO,Springfield,MO,2026-08-16,2026-08-16,$256.00,72,110,12400,Retail freight,Unit 12,
+1041,Heartland Transport Svcs.,Salina,KS,Lincoln,NE,19-Aug-26,19-Aug-26,$662.00,180,18,15600,Retail freight,Unit 12,
+TOTAL,,,,,,,,"$21,833.00",,,,,,
