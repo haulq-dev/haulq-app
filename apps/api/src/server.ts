@@ -33,6 +33,7 @@ import { startOutboxRunner } from './outbox/runner.ts';
 import { requestContextPlugin } from './plugins/request-context.ts';
 import { driverRoutes } from './routes/drivers.ts';
 import { importRoutes } from './routes/imports.ts';
+import { loadRoutes } from './routes/loads.ts';
 import { memberRoutes } from './routes/members.ts';
 import { orgRoutes } from './routes/orgs.ts';
 import { timelineRoutes } from './routes/timeline.ts';
@@ -234,6 +235,7 @@ export async function buildServer(
   await app.register(memberRoutes);
   await app.register(truckRoutes);
   await app.register(driverRoutes);
+  await app.register(loadRoutes);
   await app.register(importRoutes);
   await app.register(timelineRoutes);
 

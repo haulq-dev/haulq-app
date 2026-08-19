@@ -226,3 +226,230 @@ export const TimelineEntrySchema = z.object({
   actorId: z.string().nullable(),
 });
 export type TimelineEntry = z.infer<typeof TimelineEntrySchema>;
+
+// ---------------------------------------------------------------------------
+// Loads
+// ---------------------------------------------------------------------------
+
+/**
+ * The state machine, mirrored from `sql/post/0300_load_status.sql`.
+ *
+ * **The database is the enforcement; this is display truth.** The same column
+ * is written by Docs, Pay, Dispatch and the driver app, which is why the rule
+ * lives in a trigger rather than in one service's code. Duplicating the
+ * ordinals here buys one thing: the UI can grey out a transition instead of
+ * offering it and surfacing a constraint violation.
+ *
+ * If these two ever disagree, the trigger wins and this file is the bug.
+ */
+export const LOAD_STATUSES = [
+  'prospect',
+  'quoted',
+  'booked',
+  'dispatched',
+  'in_transit',
+  'delivered',
+  'invoiced',
+  'paid',
+  'cancelled',
+] as const;
+export type LoadStatus = (typeof LOAD_STATUSES)[number];
+
+const STATUS_ORDINAL: Record<LoadStatus, number> = {
+  prospect: 10,
+  quoted: 20,
+  booked: 30,
+  dispatched: 40,
+  in_transit: 50,
+  delivered: 60,
+  invoiced: 70,
+  paid: 80,
+  cancelled: 90,
+};
+
+export const LOAD_SOURCES = [
+  'load_board',
+  'broker_email',
+  'manual',
+  'csv_import',
+  'api',
+] as const;
+export type LoadSource = (typeof LOAD_SOURCES)[number];
+
+export const STOP_TYPES = ['pickup', 'delivery'] as const;
+export type StopType = (typeof STOP_TYPES)[number];
+
+export interface TransitionCheck {
+  allowed: boolean;
+  /** Present when not allowed. The sentence a carrier should read. */
+  reason?: string;
+}
+
+/**
+ * Whether a status change is legal.
+ *
+ * Skips are legal on purpose. A carrier booking straight from a broker email
+ * goes prospect → booked with nothing quoted, and a short local run can go
+ * delivered → paid the same afternoon on a quick-pay. Forbidding skips would
+ * make the application invent intermediate states to satisfy the constraint,
+ * which teaches everyone the states are decorative.
+ */
+export function canTransition(from: LoadStatus, to: LoadStatus): TransitionCheck {
+  if (from === to) return { allowed: true };
+
+  if (to === 'cancelled') {
+    return from === 'paid'
+      ? {
+          allowed: false,
+          reason: 'This load has been paid. Record a reversal rather than cancelling it.',
+        }
+      : { allowed: true };
+  }
+
+  if (from === 'cancelled') {
+    return {
+      allowed: false,
+      reason: 'This load was cancelled. Reopening is not supported — create a new load.',
+    };
+  }
+
+  if (STATUS_ORDINAL[to] < STATUS_ORDINAL[from]) {
+    return {
+      allowed: false,
+      reason: `A load cannot move backwards from ${from.replace('_', ' ')} to ${to.replace('_', ' ')}.`,
+    };
+  }
+
+  return { allowed: true };
+}
+
+/** Statuses reachable from `from`, for building a menu that offers no dead ends. */
+export function nextStatuses(from: LoadStatus): LoadStatus[] {
+  return LOAD_STATUSES.filter((s) => s !== from && canTransition(from, s).allowed);
+}
+
+/**
+ * Which timestamp a status requires.
+ *
+ * `0300_load_status.sql` adds check constraints for these, so a load that
+ * reaches `booked` with a null `booked_at` is rejected by the database rather
+ * than discovered months later in an Insights query. The repository fills them
+ * in; this map is what tells it which.
+ */
+export const STATUS_TIMESTAMP: Partial<Record<LoadStatus, 'bookedAt' | 'deliveredAt' | 'cancelledAt'>> = {
+  booked: 'bookedAt',
+  delivered: 'deliveredAt',
+  cancelled: 'cancelledAt',
+};
+
+/** True once a load needs a truck named. `csv_import` is exempt — see the SQL. */
+export function requiresTruck(status: LoadStatus, source: LoadSource): boolean {
+  if (source === 'csv_import') return false;
+  if (status === 'cancelled') return false;
+  return STATUS_ORDINAL[status] >= STATUS_ORDINAL.dispatched;
+}
+
+const StopBase = z.object({
+  type: z.enum(STOP_TYPES),
+  facilityName: z.string().max(200).optional(),
+  addressLine1: z.string().max(200).optional(),
+  city: z.string().min(1).max(100),
+  state: StateCode,
+  postalCode: z.string().max(12).optional(),
+  /**
+   * Both ends optional, and that is deliberate. Boards routinely post a date
+   * with no time, and inventing "00:00" would make an HOS feasibility check in
+   * Phase 3 confidently wrong rather than merely unknown.
+   */
+  windowStart: z.string().datetime().optional(),
+  windowEnd: z.string().datetime().optional(),
+  appointmentRequired: z.boolean().default(false),
+  appointmentNumber: z.string().max(60).optional(),
+  referenceNumber: z.string().max(60).optional(),
+  instructions: z.string().max(2000).optional(),
+});
+
+export const CreateStopSchema = StopBase.superRefine((stop, ctx) => {
+  if (stop.windowStart && stop.windowEnd && stop.windowEnd < stop.windowStart) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['windowEnd'],
+      message: 'The window ends before it starts.',
+    });
+  }
+});
+export type CreateStop = z.infer<typeof CreateStopSchema>;
+
+export const CreateLoadSchema = z
+  .object({
+    source: z.enum(LOAD_SOURCES).default('manual'),
+    status: z.enum(LOAD_STATUSES).default('prospect'),
+
+    brokerName: z.string().max(200).optional(),
+    brokerLoadNumber: z.string().max(60).optional(),
+
+    equipment: EquipmentTypeSchema.default('STRAIGHT_BOX'),
+    commodity: z.string().max(200).optional(),
+    weightLbs: z.number().int().positive().max(80_000).optional(),
+    pieceCount: z.number().int().positive().max(10_000).optional(),
+    fullLoad: z.boolean().default(true),
+    hazmat: z.boolean().default(false),
+    comments: z.string().max(4000).optional(),
+
+    rate: MoneySchema.optional(),
+    /** All-in unless this is set. The distinction the whole product turns on. */
+    rateIsLinehaul: z.boolean().default(false),
+
+    expectedDeadheadMiles: z.number().int().min(0).max(5_000).optional(),
+    expectedLoadedMiles: z.number().int().min(0).max(5_000).optional(),
+
+    truckId: z.string().uuid().optional(),
+    driverId: z.string().uuid().optional(),
+
+    /**
+     * At least one pickup and one delivery.
+     *
+     * Not an arbitrary minimum: a load with no destination is not a load, and
+     * `load.created`'s sentence names both. Stops are rows rather than
+     * origin/dest columns (decision 2) so a two-stop delivery works today
+     * without a migration.
+     */
+    stops: z.array(StopBase).min(2),
+  })
+  .superRefine((load, ctx) => {
+    if (!load.stops.some((s) => s.type === 'pickup')) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['stops'],
+        message: 'A load needs at least one pickup.',
+      });
+    }
+    if (!load.stops.some((s) => s.type === 'delivery')) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['stops'],
+        message: 'A load needs at least one delivery.',
+      });
+    }
+    if (requiresTruck(load.status, load.source) && !load.truckId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['truckId'],
+        message: `A load at ${load.status.replace('_', ' ')} has to name the truck running it.`,
+      });
+    }
+  });
+export type CreateLoad = z.infer<typeof CreateLoadSchema>;
+
+export const UpdateLoadStatusSchema = z.object({
+  status: z.enum(LOAD_STATUSES),
+  /** Required when cancelling. A cancellation with no reason is unauditable. */
+  reason: z.string().max(500).optional(),
+  /** Backdating, for a delivery recorded the next morning. */
+  occurredAt: z.string().datetime().optional(),
+});
+
+export const AssignLoadSchema = z.object({
+  truckId: z.string().uuid().nullable(),
+  driverId: z.string().uuid().nullable().optional(),
+});

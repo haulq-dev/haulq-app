@@ -225,6 +225,25 @@ export const eventCatalog = {
       `${p.driverName ? `, driven by ${p.driverName}` : ''}.`,
   }),
 
+  /**
+   * The moves that are not milestones.
+   *
+   * `quoted`, `dispatched`, `in_transit`, `invoiced` and `paid` do not each
+   * earn a verb — five near-identical entries would be five sentences to keep
+   * consistent for no gain. But they still belong in the log: guardrail 6 asks
+   * for an audit trail, not a highlights reel, and "when did this go to
+   * invoiced" is a question Pay will be asked to answer.
+   *
+   * Both ends are in the payload so the sentence reads without joining back to
+   * the row, which matters because the row has moved on since.
+   */
+  'load.status_changed': define<{ reference: number; from: string; to: string }>({
+    subjectType: 'load',
+    describe: (p) =>
+      `Moved ${formatLoad(p.reference)} from ${p.from.replace('_', ' ')} to ` +
+      `${p.to.replace('_', ' ')}.`,
+  }),
+
   'load.delivered': define<{ reference: number; deliveredAt: string }>({
     subjectType: 'load',
     describe: (p) => `Delivered ${formatLoad(p.reference)}.`,
