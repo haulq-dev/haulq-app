@@ -11,6 +11,7 @@ export * from './storage-r2.ts';
 export * from './repositories/drivers.ts';
 export * from './repositories/identity.ts';
 export * from './repositories/imports.ts';
+export * from './repositories/insights.ts';
 export * from './repositories/loads.ts';
 export * from './repositories/members.ts';
 export * from './repositories/onboarding.ts';

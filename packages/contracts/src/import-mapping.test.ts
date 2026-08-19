@@ -168,6 +168,51 @@ describe('broker matching', () => {
     assert.notEqual(brokerMatchKey('Acme Logistics'), brokerMatchKey('Apex Logistics'));
   });
 
+  it('collapses an abbreviation against its full form', () => {
+    // The bug this suite exists to prevent recurring. `services?` was already
+    // stripped, so the long spelling reduced to `heartland` — but `Svcs.` was a
+    // word nothing recognised, and reduced to `heartland svcs`. One broker, two
+    // rows, profitability split in half.
+    const key = brokerMatchKey('Heartland Transport Services');
+    assert.equal(brokerMatchKey('Heartland Transport Svcs.'), key);
+    assert.equal(brokerMatchKey('HEARTLAND TRANSP SVC'), key);
+    assert.equal(brokerMatchKey('Heartland Transportation Services, LLC'), key);
+  });
+
+  it('merges abbreviations of words it does NOT strip', () => {
+    // `international` is distinctive enough to keep, so stripping cannot merge
+    // these. Expanding before stripping can — which is why the two passes are
+    // separate.
+    assert.equal(
+      brokerMatchKey('Summit Intl Freight'),
+      brokerMatchKey('Summit International Freight'),
+    );
+    assert.ok(brokerMatchKey('Summit Intl Freight').includes('international'));
+  });
+
+  it('leaves abbreviations that are also real name fragments alone', () => {
+    // `trans` expands to nothing on purpose. Trans Am Trucking is a real
+    // carrier; expanding and then stripping it would leave `am trucking`.
+    assert.ok(brokerMatchKey('Trans Am Trucking').startsWith('trans am'));
+    // A wrong merge silently blends two companies' numbers. A missed merge is
+    // a carrier clicking two rows together.
+    assert.notEqual(
+      brokerMatchKey('Trans Am Trucking'),
+      brokerMatchKey('Am Trucking'),
+    );
+  });
+
+  it('still keeps genuinely different brokers apart after expansion', () => {
+    assert.notEqual(
+      brokerMatchKey('Heartland Transport Svcs'),
+      brokerMatchKey('Highland Transport Svcs'),
+    );
+    assert.notEqual(
+      brokerMatchKey('Summit Intl'),
+      brokerMatchKey('Sunrise Intl'),
+    );
+  });
+
   it('does not produce an empty key for a name that is all suffixes', () => {
     // "Logistics Company" would otherwise match every other such broker.
     const key = brokerMatchKey('Logistics Company');

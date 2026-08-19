@@ -22,6 +22,7 @@ import { Shell } from './components/Shell.tsx';
 import { DriversScreen } from './routes/Drivers.tsx';
 import { ImportScreen } from './routes/Import.tsx';
 import { InviteScreen } from './routes/Invite.tsx';
+import { InsightsScreen } from './routes/Insights.tsx';
 import { LoadsScreen } from './routes/Loads.tsx';
 import { MembersScreen } from './routes/Members.tsx';
 import { OnboardingScreen } from './routes/Onboarding.tsx';
@@ -85,6 +86,11 @@ const trucksRoute = createRoute({
   path: '/trucks',
   component: TrucksScreen,
 });
+const insightsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/insights',
+  component: InsightsScreen,
+});
 const loadsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/loads',
@@ -121,6 +127,7 @@ const routeTree = rootRoute.addChildren([
   profileRoute,
   trucksRoute,
   loadsRoute,
+  insightsRoute,
   driversRoute,
   membersRoute,
   importRoute,

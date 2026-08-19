@@ -1,0 +1,41 @@
+# Line endings are normalized to LF inside the repository.
+#
+# Without this file git stored LF while the Windows working tree held CRLF, so
+# `git status` reported all 112 tracked files as fully rewritten and a real
+# change was invisible inside the noise. See PHASE_1_PLAN.md section 6.
+#
+# After adding this file, run once:  git add --renormalize .
+* text=auto eol=lf
+
+# Explicit, so auto-detection never has to guess on these.
+*.ts        text eol=lf
+*.tsx       text eol=lf
+*.js        text eol=lf
+*.mjs       text eol=lf
+*.cjs       text eol=lf
+*.json      text eol=lf
+*.jsonc     text eol=lf
+*.sql       text eol=lf
+*.md        text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+*.css       text eol=lf
+*.html      text eol=lf
+*.svg       text eol=lf
+*.csv       text eol=lf
+*.sh        text eol=lf
+.env.example text eol=lf
+
+# Never rewritten, never diffed as text.
+*.png       binary
+*.jpg       binary
+*.jpeg      binary
+*.gif       binary
+*.ico       binary
+*.webp      binary
+*.woff      binary
+*.woff2     binary
+*.pdf       binary
+
+# Generated. Keeps it out of language stats without hiding its diff.
+pnpm-lock.yaml linguist-generated=true

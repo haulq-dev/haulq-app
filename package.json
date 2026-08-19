@@ -15,8 +15,7 @@
     "test": "turbo run test --concurrency=1",
     "lint": "turbo run lint",
     "db:generate": "pnpm --filter @haulq/db generate",
-    "db:migrate": "pnpm --filter @haulq/db migrate",
-    "iq:test": "npm --prefix ../ai-load-dispatcher test"
+    "db:migrate": "pnpm --filter @haulq/db migrate"
   },
   "devDependencies": {
     "turbo": "^2.3.0",

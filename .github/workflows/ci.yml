@@ -34,51 +34,45 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # No `version:` on purpose. package.json's packageManager field is the
+      # single source of truth for the pnpm version, and pinning it in both
+      # places fails the moment the two drift apart.
       - uses: pnpm/action-setup@v4
-        with: { version: 9 }
 
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
-          cache-dependency-path: haulq-app/pnpm-lock.yaml
+
+      # Catches a CRLF file committed into a path .gitattributes marks as text.
+      # A clean checkout must match the index exactly; if it does not, the
+      # normalization has regressed and every later diff becomes unreadable.
+      - name: Line endings are normalized
+        run: git diff --exit-code
 
       - name: Install
-        working-directory: haulq-app
         run: pnpm install --frozen-lockfile
 
       - name: Typecheck
-        working-directory: haulq-app
         run: pnpm typecheck
 
       # The migration must run against a real Postgres, not be assumed valid.
       # Trigger and constraint errors in sql/post are invisible to typecheck and
       # to drizzle-kit, and they are exactly the parts carrying the guardrails.
       - name: Migrate
-        working-directory: haulq-app
         run: pnpm db:migrate
 
       # Applying twice proves idempotency. sql/pre and sql/post run on every
       # deploy, so a non-idempotent statement breaks the second deploy, not the
       # one that introduced it.
       - name: Migrate again (idempotency)
-        working-directory: haulq-app
         run: pnpm db:migrate
 
       - name: Test
-        working-directory: haulq-app
         run: pnpm test
 
-  # packages/core stays dependency-free with no build step (ADR-0001), so it
-  # tests on bare Node with no install at all. Separate job because it has a
-  # separate lifecycle and must not gain a pnpm dependency by accident.
-  iq-core:
-    name: ai-load-dispatcher core
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: 22 }
-      - name: Test core
-        working-directory: ai-load-dispatcher
-        run: npm test --workspaces --if-present
+# The `ai-load-dispatcher core` job that used to live here was removed when the
+# repositories were split. packages/core now lives in haulq-dispatcher and is
+# tested by that repository's own workflow. ADR-0001 keeps the two stacks apart;
+# a job here reaching into a sibling directory only worked before the split and
+# has been silently failing to find it ever since.

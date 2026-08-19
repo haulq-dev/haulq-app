@@ -19,6 +19,7 @@ const NAV = [
   { to: '/', label: 'Setup' },
   { to: '/profile', label: 'Carrier' },
   { to: '/loads', label: 'Loads' },
+  { to: '/insights', label: 'Insights' },
   { to: '/trucks', label: 'Trucks' },
   { to: '/drivers', label: 'Drivers' },
   { to: '/members', label: 'People' },

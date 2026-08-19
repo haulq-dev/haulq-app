@@ -342,6 +342,55 @@ const ENTITY_SUFFIXES =
   /\b(inc|incorporated|llc|l\.?l\.?c|ltd|limited|co|corp|corporation|company|group|logistics|transport(ation)?|freight|lines?|services?|solutions?)\b/g;
 
 /**
+ * Abbreviations, expanded to the word they stand for.
+ *
+ * A separate step from suffix-stripping, and the separation is the point. The
+ * two answer different questions:
+ *
+ *   expansion  — are these the same word?      (Svcs. and Services: yes)
+ *   stripping  — does that word carry meaning? (Services: no)
+ *
+ * Folding them together is what produced the bug this exists to fix.
+ * `services?` was already stripped, so "Heartland Transport Services" reduced
+ * to `heartland` — but "Heartland Transport Svcs." reduced to `heartland svcs`,
+ * because `svcs` was a word nothing recognised. One broker, two rows, and their
+ * profitability split down the middle.
+ *
+ * Keeping the steps apart also handles the case stripping cannot: `Intl` and
+ * `International` become the same key without anyone having to decide that
+ * "International" is noise. It is distinctive enough to keep.
+ *
+ * ---------------------------------------------------------------------------
+ * What is deliberately NOT in here
+ * ---------------------------------------------------------------------------
+ *
+ * Every entry is a form that is not also an ordinary English word, because an
+ * expansion fires on a whole word anywhere in the name — including inside a
+ * name that merely contains it.
+ *
+ *   `trans`  — Trans Am Trucking is a real carrier. Expanding it to
+ *              "transportation" would then strip it, leaving `am trucking`.
+ *   `log`    — a real word, and a plausible fragment (Log Cabin Freight).
+ *   `ent`    — three letters, too easy to hit by accident.
+ *
+ * The rule for adding one: if it could appear in a company name meaning
+ * something other than the expansion, leave it out. A missed merge is a carrier
+ * clicking two rows together; a wrong merge silently blends two companies'
+ * numbers and nobody notices.
+ */
+const ABBREVIATIONS: Array<[RegExp, string]> = [
+  [/\bsvcs?\b/g, 'services'],
+  [/\btransp\b/g, 'transportation'],
+  [/\bintl\b/g, 'international'],
+  [/\bmgmt\b/g, 'management'],
+  [/\bassocs?\b/g, 'associates'],
+  [/\bdist\b/g, 'distribution'],
+  [/\bbrkg\b/g, 'brokerage'],
+  [/\bxpress\b/g, 'express'],
+  [/\bwhse\b/g, 'warehouse'],
+];
+
+/**
  * A key for matching broker names that differ only cosmetically.
  *
  * "Acme Logistics", "ACME LOGISTICS, INC." and "Acme  Logistics LLC" are one
@@ -356,9 +405,15 @@ const ENTITY_SUFFIXES =
  * merging duplicates by hand across an entire import.
  */
 export function brokerMatchKey(name: string): string {
-  const stripped = name
-    .toLowerCase()
-    .replace(/[.,'"&()]/g, ' ')
+  let working = name.toLowerCase().replace(/[.,'"&()]/g, ' ');
+
+  // Expand before stripping. `Svcs.` has to become `services` while `services`
+  // is still something the suffix pass will recognise.
+  for (const [pattern, full] of ABBREVIATIONS) {
+    working = working.replace(pattern, full);
+  }
+
+  const stripped = working
     .replace(ENTITY_SUFFIXES, ' ')
     .replace(/\s+/g, ' ')
     .trim();
