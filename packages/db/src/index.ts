@@ -8,6 +8,7 @@ export * from './events/outbox.ts';
 export * from './events/record.ts';
 export * from './storage.ts';
 export * from './storage-r2.ts';
+export * from './repositories/documents.ts';
 export * from './repositories/drivers.ts';
 export * from './repositories/identity.ts';
 export * from './repositories/imports.ts';

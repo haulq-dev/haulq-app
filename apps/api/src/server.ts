@@ -31,6 +31,7 @@ import { LogMailer, PostmarkMailer, type Mailer } from './email/postmark.ts';
 import { buildOutboxHandlers } from './outbox/handlers.ts';
 import { startOutboxRunner } from './outbox/runner.ts';
 import { requestContextPlugin } from './plugins/request-context.ts';
+import { documentRoutes } from './routes/documents.ts';
 import { driverRoutes } from './routes/drivers.ts';
 import { importRoutes } from './routes/imports.ts';
 import { insightsRoutes } from './routes/insights.ts';
@@ -239,12 +240,14 @@ export async function buildServer(
   await app.register(loadRoutes);
   await app.register(insightsRoutes);
   await app.register(importRoutes);
+  // Registered without fastify-plugin so its binary body parser stays scoped
+  // to these routes rather than applying to every upload in the API.
+  await app.register(documentRoutes);
   await app.register(timelineRoutes);
 
   // Still to land:
-  //   Phase 0   /v1/loads
   //   Phase 0b  /v1/verify
-  //   Phase 1a  /v1/documents
+  //   Phase 1a  document classification, extraction and validation endpoints
 
   return app;
 }

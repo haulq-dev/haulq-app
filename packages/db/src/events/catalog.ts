@@ -308,6 +308,35 @@ export const eventCatalog = {
     topic: 'document.received',
   }),
 
+  /**
+   * Attaching is a human decision often enough to be worth its own verb. A
+   * rate confirmation that arrives by email before the load exists gets matched
+   * later — by a person, or by a model — and "which document was hung on this
+   * load, and by whom" is a question a dispute asks directly.
+   */
+  'document.attached': define<{ kind: string; loadReference: number }>({
+    subjectType: 'document',
+    describe: (p) =>
+      `Attached the ${p.kind.replace('_', ' ')} to ${formatLoad(p.loadReference)}.`,
+  }),
+
+  /**
+   * Recorded because guardrail 5 makes a model's reads auditable, not because
+   * anything downstream reacts to it — hence no topic. `extractorVersion` is in
+   * the sentence so a bad prompt is findable in the log rather than only in a
+   * column.
+   */
+  'document.extracted': define<{
+    kind: string;
+    fieldCount: number;
+    extractorVersion: string;
+  }>({
+    subjectType: 'document',
+    describe: (p) =>
+      `Read ${p.fieldCount} ${p.fieldCount === 1 ? 'field' : 'fields'} off the ` +
+      `${p.kind.replace('_', ' ')} using ${p.extractorVersion}.`,
+  }),
+
   'document.validated': define<{ kind: string; loadReference: number }>({
     subjectType: 'document',
     describe: (p) =>
