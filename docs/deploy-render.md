@@ -57,11 +57,38 @@ deploy.
 2. Doppler → your project → Integrations → Render → paste the API key.
 3. Choose the config (`prd`) and the Render service (`haulq-api`).
 
-**Do not put `DATABASE_URL` in Doppler.** Render sets it from the database, and
-the Doppler sync would overwrite it. The symptom is an API that talks to the
-wrong database — or nothing — after an unrelated secret changes, which is a
-miserable thing to diagnose.
+> **Corrected 2026-08-18. The advice that used to be here was wrong.**
+>
+> This section previously said: *do not put `DATABASE_URL` in Doppler, Render
+> sets it from the database and the sync would overwrite it.* That assumed the
+> integration merges into Render's environment. **It does not — it replaces the
+> service's entire variable list on every sync.**
+>
+> The result was that `DATABASE_URL`, `WEB_ORIGIN` and `AUTH_PROVIDER`, all
+> declared in `render.yaml`, silently disappeared from the deployed service.
+>
+> Two of the three failed safely. `AUTH_PROVIDER` defaults to `dev`, and
+> `DevAuthenticator` refuses to construct under `NODE_ENV=production`, so the
+> boot fails loudly rather than serving header-trusting auth to the internet.
+>
+> **`WEB_ORIGIN` is the one that bites quietly.** It defaults to
+> `http://localhost:5173`. That breaks CORS, and since the outbox consumer
+> shipped it also puts a `localhost` link in every invitation email. Nothing
+> errors, nothing logs, and the first symptom is an invited driver saying the
+> link does not work.
 
+**So Doppler owns the whole runtime environment**, and `render.yaml` declares no
+`envVars` for the API at all. Anything added back there survives until the next
+sync and then vanishes.
+
+`DATABASE_URL` is therefore copied by hand rather than resolved by
+`fromDatabase`. Take the **internal** connection string from the `haulq-db`
+dashboard — same region, private network, unreachable from outside Render.
+
+The cost of copying it is real and worth stating: if the database is ever
+recreated its connection string changes, and Doppler will still hold the old
+one. That failure is at least immediate and loud — `/ready` checks the
+connection, so the deploy goes unhealthy rather than serving against nothing.
 What belongs in Doppler:
 
 ```

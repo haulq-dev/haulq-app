@@ -78,46 +78,44 @@ services:
     # it.
     startCommand: node --experimental-strip-types apps/api/src/index.ts
 
-    envVars:
-      - key: NODE_ENV
-        value: production
-      - key: LOG_LEVEL
-        value: info
-
-      # From the database below. Internal URL — same region, private network,
-      # lower latency, and never exposed publicly.
-      #
-      # Do NOT also define DATABASE_URL in Doppler. The Doppler→Render sync
-      # would overwrite this with whatever it holds, and the failure looks like
-      # an intermittently wrong database rather than a configuration mistake.
-      - key: DATABASE_URL
-        fromDatabase:
-          name: haulq-db
-          property: connectionString
-
-      # Where the browser calls from. CORS is scoped to exactly this origin.
-      #
-      # A literal rather than `fromService … property: host`, because that
-      # yields a bare hostname with no scheme — and `WEB_ORIGIN` is validated
-      # as a URL, so the API would refuse to boot. Update this when the custom
-      # domain is attached; until then use the onrender.com URL, with https://.
-      - key: WEB_ORIGIN
-        value: https://app.haulq.ai
-
-      # Auth. `dev` is header-trusting and DevAuthenticator refuses to
-      # construct when NODE_ENV=production, so leaving this wrong fails the
-      # boot rather than exposing the API.
-      - key: AUTH_PROVIDER
-        value: clerk
-      - key: CLERK_SECRET_KEY
-        sync: false          # set in Doppler, or the dashboard
-      - key: CLERK_WEBHOOK_SECRET
-        sync: false
-
-      # Ephemeral. Anything written here is gone on the next deploy — attach a
-      # Disk or move to R2 before a carrier's uploads matter. See the runbook.
-      - key: STORAGE_DIR
-        value: /var/data/haulq-storage
+    # ------------------------------------------------------------------
+    # No envVars here. Doppler owns this service's entire environment.
+    # ------------------------------------------------------------------
+    #
+    # The Doppler→Render integration REPLACES the service's variable list on
+    # every sync rather than merging into it. Anything declared here survives
+    # exactly until the next sync and then silently disappears — which is how
+    # DATABASE_URL, WEB_ORIGIN and AUTH_PROVIDER were lost on 2026-08-18.
+    #
+    # Two of those three failed safely. AUTH_PROVIDER defaults to `dev`, and
+    # DevAuthenticator refuses to construct under NODE_ENV=production, so the
+    # boot fails loudly instead of serving header-trusting auth. WEB_ORIGIN is
+    # the one to watch: it defaults to http://localhost:5173, which breaks CORS
+    # AND puts a localhost link in every invitation email. Nothing errors.
+    #
+    # So the whole runtime environment lives in Doppler's `prd` config:
+    #
+    #   NODE_ENV=production          LOG_LEVEL=info
+    #   DATABASE_URL                 see the note below
+    #   WEB_ORIGIN=https://app.haulq.ai
+    #   AUTH_PROVIDER=clerk          CLERK_SECRET_KEY, CLERK_WEBHOOK_SECRET
+    #   R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET
+    #   POSTMARK_SERVER_TOKEN        EMAIL_FROM=hello@haulq.ai
+    #   OUTBOX_POLL_MS=5000          nothing sends while this is 0 or unset
+    #   CREDENTIAL_ENCRYPTION_PUBLIC_KEY / _PRIVATE_KEY
+    #
+    # DATABASE_URL is now copied by hand, which `fromDatabase` used to do. Take
+    # the INTERNAL connection string from the haulq-db dashboard — same region,
+    # private network, and not reachable from outside Render.
+    #
+    # The cost of copying it: if the database is ever recreated, its connection
+    # string changes and Doppler still holds the old one. That failure is at
+    # least loud — /ready checks the connection, so the deploy goes unhealthy
+    # immediately rather than serving against nothing.
+    #
+    # STORAGE_DIR is in Doppler too, but it is now only a fallback: the server
+    # picks R2 whenever the R2_* variables are present, and warns at boot if it
+    # finds itself on the local disk in production.
 
   # --------------------------------------------------------------------------
   # Web
