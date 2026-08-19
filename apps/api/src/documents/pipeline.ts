@@ -50,6 +50,7 @@ import {
   type Scope,
 } from '@haulq/db';
 import type { DocumentReader } from './reader.ts';
+import { validateDocument, type ValidationAttempt } from './validate.ts';
 
 export interface PipelineDeps {
   reader: DocumentReader;
@@ -73,6 +74,16 @@ export type PipelineOutcome =
       missing: string[];
       /** False for kinds with nothing on them worth checking against a load. */
       extractable: boolean;
+      /**
+       * What happened when the reading was compared to the load.
+       *
+       * Attempted immediately rather than queued: the comparison is two row
+       * reads and no model call, and a document that sits `extracted` without a
+       * verdict is one a carrier sees as neither checked nor broken. Skipped
+       * with `not_attached` for the common case of a rate confirmation that
+       * arrived before its load existed — the attach route runs it then.
+       */
+      validation: ValidationAttempt;
     };
 
 /**
@@ -140,12 +151,17 @@ export async function processDocument(
     ...(read.pageCount !== null ? { pageCount: read.pageCount } : {}),
   });
 
+  const validation = await validateDocument(s, documentId);
+
   return {
     status: 'read',
-    document: updated,
+    // Re-read rather than reusing `updated`: validation writes the status and
+    // the findings, so `updated` is one revision stale the moment it returns.
+    document: (await getDocument(s, documentId)) ?? updated,
     classification,
     fieldCount: Object.keys(extracted.fields).length,
     missing: extracted.missing,
     extractable: worthExtracting(classification.kind),
+    validation,
   };
 }

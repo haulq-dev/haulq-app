@@ -38,6 +38,7 @@ import { DocumentKindSchema } from '@haulq/contracts';
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { HttpError, requireRole, requireScope } from '../plugins/request-context.ts';
 import { safeFilename, sniff, SUPPORTED_DOCUMENT_TYPES } from '../documents/sniff.ts';
+import { validateDocument } from '../documents/validate.ts';
 
 /**
  * 25 MB.
@@ -270,7 +271,28 @@ export async function documentRoutes(app: FastifyInstance) {
     }
 
     try {
-      return { document: present(await attachToLoad(s, id, body.loadId)) };
+      await attachToLoad(s, id, body.loadId);
+
+      /**
+       * Validate here, inline.
+       *
+       * A rate confirmation usually arrives before its load exists, so the
+       * pipeline could not compare it to anything and left it `extracted`.
+       * Attaching is the moment the other half turns up. It is two row reads and
+       * a pure comparison, so it costs the request almost nothing, and doing it
+       * asynchronously would show the person who just attached the document a
+       * verdict that is a second out of date.
+       */
+      const validation = await validateDocument(s, id);
+      const document = await getDocument(s, id);
+
+      return {
+        document: document ? present(document) : null,
+        validation:
+          validation.status === 'validated'
+            ? { outcome: validation.verdict.outcome, reason: validation.verdict.reason }
+            : null,
+      };
     } catch (err) {
       if (err instanceof DocumentError) {
         throw new HttpError(

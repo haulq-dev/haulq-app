@@ -20,6 +20,7 @@ export * from './documents.ts';
 export * from './extract.ts';
 export * from './import-mapping.ts';
 export * from './operating-facts.ts';
+export * from './validate.ts';
 
 /**
  * Money on the wire.

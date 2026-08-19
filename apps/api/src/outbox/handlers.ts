@@ -187,6 +187,10 @@ function documentHandler(deps: HandlerDeps): OutboxHandler {
             confidence: outcome.classification.confidence,
             fields: outcome.fieldCount,
             missing: outcome.missing,
+            validation:
+              outcome.validation.status === 'validated'
+                ? outcome.validation.verdict.outcome
+                : `skipped:${outcome.validation.why}`,
           },
           'document read without a model call',
         );
