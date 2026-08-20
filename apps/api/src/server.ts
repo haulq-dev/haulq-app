@@ -26,7 +26,7 @@ import { ClerkAuthenticator } from './auth/clerk-authenticator.ts';
 import { DevAuthenticator } from './auth/dev-authenticator.ts';
 import type { Env } from './env.ts';
 import type { Mailer } from './email/postmark.ts';
-import { buildOutboxHandlers } from './outbox/handlers.ts';
+import { buildOutboxGroups } from './outbox/handlers.ts';
 import { startOutboxRunner } from './outbox/runner.ts';
 import { buildDocumentReader, buildMailer, buildStorage } from './runtime.ts';
 import type { DocumentReader } from './documents/reader.ts';
@@ -141,7 +141,7 @@ export async function buildServer(
   const reader = options.reader ?? buildDocumentReader(env, app.log);
 
   startOutboxRunner(app, {
-    handlers: buildOutboxHandlers({
+    groups: buildOutboxGroups({
       mailer,
       webOrigin: env.WEB_ORIGIN,
       db,

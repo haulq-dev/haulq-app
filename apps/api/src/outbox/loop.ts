@@ -30,15 +30,23 @@
  * deploy time and saves the duplicate.
  */
 
-import { drainOutbox, type Database, type OutboxHandler } from '@haulq/db';
+import { drainOutbox, type Database } from '@haulq/db';
+import type { OutboxGroup } from './handlers.ts';
 import type { RuntimeLog } from '../runtime.ts';
 
 export interface OutboxLoopOptions {
   db: Database;
-  handlers: Record<string, OutboxHandler>;
+  /**
+   * Drained in order, every pass.
+   *
+   * Groups exist because a batch's lease is shared by every message in it and
+   * handlers run serially — see the long note on `buildOutboxGroups`. Order is
+   * significant: fast groups first, so a backlog of OCR never delays an
+   * invitation email.
+   */
+  groups: OutboxGroup[];
   /** Gap between passes. Must be > 0; a zero-interval loop is a busy wait. */
   intervalMs: number;
-  batchSize?: number;
   log: RuntimeLog;
   /**
    * How long to wait after a *failed* drain, as opposed to a completed one.
@@ -68,19 +76,35 @@ export interface OutboxLoop {
  */
 export async function drainOnce(options: {
   db: Database;
-  handlers: Record<string, OutboxHandler>;
-  batchSize?: number;
+  groups: OutboxGroup[];
   log: RuntimeLog;
 }): Promise<{ ok: boolean; claimed: number }> {
+  let claimed = 0;
+
+  for (const group of options.groups) {
+    const pass = await drainGroup(options.db, group, options.log);
+    if (!pass.ok) return { ok: false, claimed };
+    claimed += pass.claimed;
+  }
+
+  return { ok: true, claimed };
+}
+
+async function drainGroup(
+  db: Database,
+  group: OutboxGroup,
+  log: RuntimeLog,
+): Promise<{ ok: boolean; claimed: number }> {
   try {
-    const result = await drainOutbox(options.db, {
-      handlers: options.handlers,
-      ...(options.batchSize ? { batchSize: options.batchSize } : {}),
+    const result = await drainOutbox(db, {
+      handlers: group.handlers,
+      batchSize: group.batchSize,
+      leaseSeconds: group.leaseSeconds,
       // The invite payload carries a live token. Once the mail is away there is
       // no reason for it to stay in a processed row.
       scrubPayloadOnSuccess: true,
       onError: (message, error) =>
-        options.log.error(
+        log.error(
           {
             seq: message.seq.toString(),
             topic: message.topic,
@@ -93,18 +117,18 @@ export async function drainOnce(options: {
 
     // Silent when idle. This runs every few seconds; logging "claimed 0"
     // forever buries the lines that matter.
-    if (result.claimed > 0) options.log.info({ ...result }, 'outbox drained');
+    if (result.claimed > 0) log.info({ group: group.name, ...result }, 'outbox drained');
     if (result.exhausted > 0) {
-      options.log.warn(
-        { exhausted: result.exhausted },
+      log.warn(
+        { group: group.name, exhausted: result.exhausted },
         'outbox messages gave up — see outboxDeadLetters',
       );
     }
 
     return { ok: true, claimed: result.claimed };
   } catch (error) {
-    options.log.error(
-      { err: error instanceof Error ? error.message : String(error) },
+    log.error(
+      { group: group.name, err: error instanceof Error ? error.message : String(error) },
       'outbox drain failed',
     );
     return { ok: false, claimed: 0 };
@@ -139,15 +163,22 @@ export function startOutboxLoop(options: OutboxLoopOptions): OutboxLoop {
 
   const finished = (async () => {
     options.log.info(
-      { intervalMs: options.intervalMs, topics: Object.keys(options.handlers) },
+      {
+        intervalMs: options.intervalMs,
+        groups: options.groups.map((g) => ({
+          name: g.name,
+          topics: Object.keys(g.handlers),
+          batchSize: g.batchSize,
+          leaseSeconds: g.leaseSeconds,
+        })),
+      },
       'outbox loop started',
     );
 
     while (!stopping) {
       const pass = await drainOnce({
         db: options.db,
-        handlers: options.handlers,
-        ...(options.batchSize ? { batchSize: options.batchSize } : {}),
+        groups: options.groups,
         log: options.log,
       });
 

@@ -39,7 +39,7 @@
 import { closeDatabase, createDatabase, ping } from '@haulq/db';
 import pino from 'pino';
 import { loadEnv } from './env.ts';
-import { buildOutboxHandlers } from './outbox/handlers.ts';
+import { buildOutboxGroups } from './outbox/handlers.ts';
 import { startOutboxLoop } from './outbox/loop.ts';
 import { buildDocumentReader, buildMailer, buildStorage } from './runtime.ts';
 
@@ -84,7 +84,7 @@ const mailer = buildMailer(env, log);
 
 const loop = startOutboxLoop({
   db,
-  handlers: buildOutboxHandlers({
+  groups: buildOutboxGroups({
     mailer,
     webOrigin: env.WEB_ORIGIN,
     db,

@@ -200,13 +200,75 @@ function documentHandler(deps: HandlerDeps): OutboxHandler {
 }
 
 /**
- * The topic map the runner drains.
+ * The topic map. Only topics in here are claimed; anything else stays queued
+ * untouched.
  *
- * Only topics in here are claimed. Anything else stays queued untouched.
+ * Kept as a flat map because that is what a test wants when it drains
+ * everything in one go. Production drains through `buildOutboxGroups` below,
+ * which splits it — see the note there, it is not a formality.
  */
 export function buildOutboxHandlers(deps: HandlerDeps): Record<string, OutboxHandler> {
   return {
     'member.invite_email': inviteHandler(deps),
     'document.received': documentHandler(deps),
   };
+}
+
+/** One set of topics drained together, with a lease sized to fit them. */
+export interface OutboxGroup {
+  name: string;
+  handlers: Record<string, OutboxHandler>;
+  batchSize: number;
+  leaseSeconds: number;
+}
+
+/**
+ * Fast topics and slow topics cannot share a batch.
+ *
+ * `drainOutbox` stamps every message in a batch with the same lease at claim
+ * time and then handles them **serially**. The lease is therefore a budget for
+ * the whole batch, not for each message — which was invisible while every
+ * handler finished in milliseconds, and stopped being invisible the moment OCR
+ * entered the pipeline:
+ *
+ *     20 documents × 15s of OCR each = 300s = the entire default lease
+ *
+ * Past that line, messages still being processed become claimable again, so a
+ * page gets read — and paid for — twice. Worse, `attempts` is incremented at
+ * claim, so a slow batch burns retries against `maxAttempts` on documents that
+ * were succeeding, and they eventually dead-letter for the crime of being slow.
+ *
+ * So the batch is sized against the worst case per message, and the lease is
+ * sized against the batch:
+ *
+ *   invitations   Postmark answers in about a second. 20 × ~2s ≈ 40s, well
+ *                 inside the default 300s lease. Unchanged.
+ *
+ *   documents     the worst case is `AzureDocumentReader`'s own 120s timeout,
+ *                 because that is the point at which it gives up. 3 × 120s =
+ *                 360s, so the lease is 900s — enough slack that a full batch
+ *                 of forty-page scans still finishes inside it.
+ *
+ * The lease follows the timeout, not the other way round. Shrinking the Azure
+ * budget to make the arithmetic tidier would make HaulQ abandon documents it
+ * could have read.
+ *
+ * **Order matters.** Fast first, so a backlog of scanned history never delays
+ * somebody's invitation email behind twenty minutes of OCR.
+ */
+export function buildOutboxGroups(deps: HandlerDeps): OutboxGroup[] {
+  return [
+    {
+      name: 'fast',
+      handlers: { 'member.invite_email': inviteHandler(deps) },
+      batchSize: 20,
+      leaseSeconds: 300,
+    },
+    {
+      name: 'slow',
+      handlers: { 'document.received': documentHandler(deps) },
+      batchSize: 3,
+      leaseSeconds: 900,
+    },
+  ];
 }

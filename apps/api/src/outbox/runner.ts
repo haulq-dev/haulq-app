@@ -21,13 +21,12 @@
  */
 
 import type { FastifyInstance } from 'fastify';
-import type { OutboxHandler } from '@haulq/db';
+import type { OutboxGroup } from './handlers.ts';
 import { startOutboxLoop } from './loop.ts';
 
 export interface RunnerOptions {
-  handlers: Record<string, OutboxHandler>;
+  groups: OutboxGroup[];
   intervalMs: number;
-  batchSize?: number;
 }
 
 export function startOutboxRunner(app: FastifyInstance, options: RunnerOptions): void {
@@ -46,9 +45,8 @@ export function startOutboxRunner(app: FastifyInstance, options: RunnerOptions):
 
   const loop = startOutboxLoop({
     db: app.db,
-    handlers: options.handlers,
+    groups: options.groups,
     intervalMs: options.intervalMs,
-    ...(options.batchSize ? { batchSize: options.batchSize } : {}),
     log: app.log,
   });
 

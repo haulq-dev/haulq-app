@@ -1,31 +1,34 @@
 /**
- * The outbox drain loop.
+ * The outbox drain loop, and the lease arithmetic under it.
  *
- * Shared by the API and the worker, so the behaviour worth pinning is the
- * behaviour that differs between "it works on my laptop" and "it works during a
- * Render deploy at 3am":
+ * Two things are under test here and the second one is the reason this file
+ * grew:
  *
- *  - passes never overlap, because with Azure in the chain one can take tens of
- *    seconds and two of them would fight for the same rows
- *  - a full batch goes straight round again, so forty documents drain in
- *    seconds rather than forty polling intervals
- *  - a database outage backs off instead of producing a wall of identical
- *    errors, and does not kill the process
- *  - stopping finishes the pass in flight rather than abandoning a leased
- *    message that has already been paid for
+ * **The loop.** Passes never overlap, a backlog drains without waiting, a
+ * database outage backs off instead of killing the process, and stopping
+ * finishes the pass in flight rather than abandoning a message already paid for.
  *
- * No database: `drainOutbox` is exercised for real elsewhere. What is under test
- * here is the loop around it, and giving it a fake lets the slow, racy and
- * failing cases be written at all.
+ * **The groups.** `drainOutbox` stamps one lease across a whole batch and then
+ * handles it serially, so the lease is a budget for the batch. That was
+ * invisible while every handler took milliseconds. With OCR in the pipeline it
+ * is the difference between a bulk import working and a bulk import re-reading —
+ * and re-paying for — its own documents. The arithmetic is asserted against the
+ * reader's real timeout rather than restated, so raising one without the other
+ * fails here instead of in production.
+ *
+ * No database: `drainOutbox` is exercised for real elsewhere. A fake lets the
+ * slow, racy and failing cases be written at all — and lets the batch size and
+ * lease actually sent to Postgres be observed.
  */
 
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
+import { AZURE_DEFAULT_TIMEOUT_MS } from '../documents/azure-reader.ts';
+import { buildOutboxGroups, type OutboxGroup } from './handlers.ts';
 import { startOutboxLoop } from './loop.ts';
 
 const silent = { info: () => {}, warn: () => {}, error: () => {} };
 
-/** Records what the loop said, for the cases where the log is the interface. */
 function recorder() {
   const lines: Array<{ o: Record<string, unknown>; msg: string }> = [];
   const push = (o: unknown, msg: string) =>
@@ -33,54 +36,142 @@ function recorder() {
   return { lines, info: push, warn: push, error: push };
 }
 
+const group = (over: Partial<OutboxGroup> = {}): OutboxGroup => ({
+  name: 'test',
+  handlers: { 'x.y': async () => {} },
+  batchSize: 10,
+  leaseSeconds: 60,
+  ...over,
+});
+
 /**
- * A fake database whose `transaction` drives `drainOutbox`.
+ * A fake database that drives `drainOutbox` and records what it was asked for.
  *
- * `drainOutbox` claims inside a transaction and returns early when it claims
- * nothing, so a transaction that yields no rows is a complete, honest "idle
- * pass" without needing Postgres.
+ * `limit(n)` receives the batch size and the claim's `set({ availableAt })`
+ * carries the lease, so both are observable without reaching into the query
+ * builder.
  */
 function fakeDb(onPass: () => Promise<unknown[]> | unknown[]) {
-  return {
+  const seen: Array<{ batchSize: number; leaseMs: number | null }> = [];
+
+  const db = {
     transaction: async (fn: (tx: unknown) => unknown) => {
       const rows = await onPass();
-      const chain = {
+      let batchSize = -1;
+      let leaseMs: number | null = null;
+
+      const chain: Record<string, unknown> = {};
+      Object.assign(chain, {
         select: () => chain,
         from: () => chain,
         where: () => chain,
         orderBy: () => chain,
-        limit: () => chain,
+        limit: (n: number) => {
+          batchSize = n;
+          return chain;
+        },
         for: () => Promise.resolve(rows),
         update: () => chain,
-        set: () => chain,
+        set: (values: { availableAt?: Date }) => {
+          if (values.availableAt instanceof Date) {
+            leaseMs = values.availableAt.getTime() - Date.now();
+          }
+          return chain;
+        },
         returning: () => Promise.resolve(rows),
-      };
-      return fn(chain);
+      });
+
+      const out = await fn(chain);
+      seen.push({ batchSize, leaseMs });
+      return out;
     },
-  } as never;
+  };
+
+  return { db: db as never, seen };
 }
 
-const tick = () => new Promise((r) => setTimeout(r, 5));
+const tick = (ms = 5) => new Promise((r) => setTimeout(r, ms));
+
+describe('outbox groups — the lease has to fit the batch', () => {
+  const groups = buildOutboxGroups({} as never);
+  const fast = groups.find((g) => g.name === 'fast')!;
+  const slow = groups.find((g) => g.name === 'slow')!;
+
+  it('drains fast topics before slow ones', () => {
+    // A backlog of scanned history must never delay somebody's invitation.
+    assert.deepEqual(groups.map((g) => g.name), ['fast', 'slow']);
+  });
+
+  it('puts the document topic in the slow group and mail in the fast one', () => {
+    assert.deepEqual(Object.keys(fast.handlers), ['member.invite_email']);
+    assert.deepEqual(Object.keys(slow.handlers), ['document.received']);
+  });
+
+  it('sizes the slow lease against the reader\'s real worst case', () => {
+    // THE invariant. drainOutbox leases a whole batch at once and handles it
+    // serially, so a batch that cannot finish inside its lease starts handing
+    // its own messages back to the queue mid-flight — re-reading pages and
+    // burning retries on documents that were succeeding.
+    const worstCaseMs = slow.batchSize * AZURE_DEFAULT_TIMEOUT_MS;
+    assert.ok(
+      worstCaseMs < slow.leaseSeconds * 1000,
+      `a full slow batch can take ${worstCaseMs / 1000}s but the lease is ` +
+        `${slow.leaseSeconds}s — raise the lease or shrink the batch`,
+    );
+  });
+
+  it('leaves real slack rather than only just fitting', () => {
+    const worstCaseMs = slow.batchSize * AZURE_DEFAULT_TIMEOUT_MS;
+    assert.ok(
+      slow.leaseSeconds * 1000 >= worstCaseMs * 1.5,
+      'the slow lease should have room for a slow claim and a slow commit too',
+    );
+  });
+
+  it('keeps the fast group big, because mail is cheap', () => {
+    assert.ok(fast.batchSize >= 20, 'no reason to trickle invitations');
+    assert.ok(
+      fast.batchSize * 5000 < fast.leaseSeconds * 1000,
+      'even at 5s per send a full mail batch must fit its lease',
+    );
+  });
+});
 
 describe('startOutboxLoop', () => {
   it('refuses a non-positive interval rather than busy-waiting', () => {
+    const { db } = fakeDb(() => []);
     assert.throws(
-      () => startOutboxLoop({ db: fakeDb(() => []), handlers: {}, intervalMs: 0, log: silent }),
+      () => startOutboxLoop({ db, groups: [group()], intervalMs: 0, log: silent }),
       /positive interval/,
     );
   });
 
-  it('keeps polling while it has nothing to do', async () => {
-    let passes = 0;
+  it('sends each group its own batch size and lease', async () => {
+    const { db, seen } = fakeDb(() => []);
     const loop = startOutboxLoop({
-      db: fakeDb(() => {
-        passes += 1;
-        return [];
-      }),
-      handlers: { 'x.y': async () => {} },
+      db,
+      groups: [
+        group({ name: 'fast', batchSize: 20, leaseSeconds: 300 }),
+        group({ name: 'slow', handlers: { 'a.b': async () => {} }, batchSize: 3, leaseSeconds: 900 }),
+      ],
       intervalMs: 1,
       log: silent,
     });
+
+    await tick();
+    await loop.stop();
+
+    // Only claims that found rows set a lease; the batch size is always sent.
+    assert.deepEqual(seen.slice(0, 2).map((s) => s.batchSize), [20, 3]);
+  });
+
+  it('keeps polling while it has nothing to do', async () => {
+    let passes = 0;
+    const { db } = fakeDb(() => {
+      passes += 1;
+      return [];
+    });
+    const loop = startOutboxLoop({ db, groups: [group()], intervalMs: 1, log: silent });
 
     await tick();
     await loop.stop();
@@ -91,22 +182,19 @@ describe('startOutboxLoop', () => {
     let inFlight = 0;
     let overlapped = false;
 
-    const loop = startOutboxLoop({
-      db: fakeDb(async () => {
-        inFlight += 1;
-        if (inFlight > 1) overlapped = true;
-        await new Promise((r) => setTimeout(r, 15));
-        inFlight -= 1;
-        return [];
-      }),
-      handlers: { 'x.y': async () => {} },
-      // Far shorter than a pass takes. An interval-based loop would stack here.
-      intervalMs: 1,
-      log: silent,
+    const { db } = fakeDb(async () => {
+      inFlight += 1;
+      if (inFlight > 1) overlapped = true;
+      await tick(15);
+      inFlight -= 1;
+      return [];
     });
 
-    await new Promise((r) => setTimeout(r, 60));
+    // Interval far shorter than a pass takes. An interval-based loop stacks here.
+    const loop = startOutboxLoop({ db, groups: [group()], intervalMs: 1, log: silent });
+    await tick(60);
     await loop.stop();
+
     assert.equal(overlapped, false, 'two drains ran concurrently');
   });
 
@@ -114,18 +202,19 @@ describe('startOutboxLoop', () => {
     const log = recorder();
     let passes = 0;
 
+    const { db } = fakeDb(() => {
+      passes += 1;
+      throw new Error('ECONNREFUSED');
+    });
     const loop = startOutboxLoop({
-      db: fakeDb(() => {
-        passes += 1;
-        throw new Error('ECONNREFUSED');
-      }),
-      handlers: { 'x.y': async () => {} },
+      db,
+      groups: [group()],
       intervalMs: 1,
       errorBackoffMs: 5,
       log,
     });
 
-    await new Promise((r) => setTimeout(r, 40));
+    await tick(40);
     await loop.stop();
 
     assert.ok(passes >= 2, 'the loop stopped trying');
@@ -135,20 +224,42 @@ describe('startOutboxLoop', () => {
     );
   });
 
+  it('does not attempt later groups once the database is gone', async () => {
+    let passes = 0;
+    const { db } = fakeDb(() => {
+      passes += 1;
+      throw new Error('down');
+    });
+
+    const loop = startOutboxLoop({
+      db,
+      groups: [group({ name: 'fast' }), group({ name: 'slow' })],
+      intervalMs: 1,
+      errorBackoffMs: 50,
+      log: silent,
+    });
+
+    await tick(20);
+    await loop.stop();
+    assert.equal(passes, 1, 'the second group tried anyway and doubled the error noise');
+  });
+
   it('backs off further after a failure than after an idle pass', async () => {
     const failing: number[] = [];
+    const { db } = fakeDb(() => {
+      failing.push(Date.now());
+      throw new Error('down');
+    });
+
     const loop = startOutboxLoop({
-      db: fakeDb(() => {
-        failing.push(Date.now());
-        throw new Error('down');
-      }),
-      handlers: { 'x.y': async () => {} },
+      db,
+      groups: [group()],
       intervalMs: 1,
       errorBackoffMs: 30,
       log: silent,
     });
 
-    await new Promise((r) => setTimeout(r, 70));
+    await tick(70);
     await loop.stop();
 
     const gaps = failing.slice(1).map((t, i) => t - failing[i]!);
@@ -160,19 +271,14 @@ describe('startOutboxLoop', () => {
 
   it('stops after finishing the pass in flight', async () => {
     let finishedPasses = 0;
-    const loop = startOutboxLoop({
-      db: fakeDb(async () => {
-        await new Promise((r) => setTimeout(r, 25));
-        finishedPasses += 1;
-        return [];
-      }),
-      handlers: { 'x.y': async () => {} },
-      intervalMs: 1,
-      log: silent,
+    const { db } = fakeDb(async () => {
+      await tick(25);
+      finishedPasses += 1;
+      return [];
     });
 
-    // Stop while a pass is definitely still running.
-    await new Promise((r) => setTimeout(r, 5));
+    const loop = startOutboxLoop({ db, groups: [group()], intervalMs: 1, log: silent });
+    await tick(5);
     await loop.stop();
 
     assert.ok(
@@ -182,22 +288,19 @@ describe('startOutboxLoop', () => {
   });
 
   it('resolves stop() even when called twice', async () => {
-    const loop = startOutboxLoop({
-      db: fakeDb(() => []),
-      handlers: { 'x.y': async () => {} },
-      intervalMs: 1,
-      log: silent,
-    });
+    const { db } = fakeDb(() => []);
+    const loop = startOutboxLoop({ db, groups: [group()], intervalMs: 1, log: silent });
     await loop.stop();
     await loop.stop();
     await loop.finished;
   });
 
-  it('says what it is draining when it starts', async () => {
+  it('states every group and its arithmetic when it starts', async () => {
     const log = recorder();
+    const { db } = fakeDb(() => []);
     const loop = startOutboxLoop({
-      db: fakeDb(() => []),
-      handlers: { 'member.invite_email': async () => {}, 'document.received': async () => {} },
+      db,
+      groups: buildOutboxGroups({} as never),
       intervalMs: 1,
       log,
     });
@@ -205,6 +308,9 @@ describe('startOutboxLoop', () => {
 
     const started = log.lines.find((l) => l.msg === 'outbox loop started');
     assert.ok(started, JSON.stringify(log.lines.map((l) => l.msg)));
-    assert.deepEqual(started!.o['topics'], ['member.invite_email', 'document.received']);
+    assert.deepEqual(started!.o['groups'], [
+      { name: 'fast', topics: ['member.invite_email'], batchSize: 20, leaseSeconds: 300 },
+      { name: 'slow', topics: ['document.received'], batchSize: 3, leaseSeconds: 900 },
+    ]);
   });
 });

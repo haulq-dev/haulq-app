@@ -118,76 +118,99 @@ services:
     # finds itself on the local disk in production.
 
   # --------------------------------------------------------------------------
-  # Outbox worker
+  # Outbox worker — DEFINED BUT NOT DEPLOYED
   # --------------------------------------------------------------------------
   #
-  # Drains event_outbox: invitation email, and document classification and
-  # extraction. A separate service because Phase 1a put Azure Document
-  # Intelligence in the pipeline — an OCR pass takes seconds per page while it
-  # polls a remote operation, and that must not happen in the process serving
-  # requests. Phase 1 plan section 5.
+  # Commented out deliberately, not abandoned. Render background workers have no
+  # free instance type, and this is not worth paying for at current volume: the
+  # API drains the outbox in-process with OUTBOX_POLL_MS=5000, using the same
+  # loop and the same handlers.
   #
-  # Same repo, same build, different entry point. It shares apps/api's
-  # dependencies deliberately: the worker reads objects the API wrote, and a
-  # second package with its own copy of the storage and reader wiring is how the
-  # two silently disagree about which bucket they are using.
-  - type: worker
-    name: haulq-worker
-    runtime: node
-    region: oregon          # same region as the database; it connects privately
-    plan: starter
-    rootDir: .
-
-    buildFilter:
-      paths:
-        - apps/api/**
-        - packages/**
-        - package.json
-        - pnpm-lock.yaml
-        - pnpm-workspace.yaml
-        - tsconfig.base.json
-
-    buildCommand: npm i -g pnpm@9.15.9 && pnpm install --frozen-lockfile
-
-    # NO preDeployCommand. The API owns migrations. Two services racing to
-    # migrate the same database on every deploy is a deadlock waiting for a
-    # slow migration, and the worker has nothing useful to do about a schema it
-    # does not define.
-
-    # `node` directly, not `pnpm --filter`, for the same measured reason as the
-    # API: with pnpm in front, SIGTERM stops at the pnpm process and the
-    # worker's shutdown handler never runs — so it never finishes the pass in
-    # flight, and a message that was mid-OCR is redelivered and paid for twice.
-    startCommand: node --experimental-strip-types apps/api/src/worker.ts
-
-    # ------------------------------------------------------------------
-    # No envVars here either. Doppler owns this service's environment.
-    # ------------------------------------------------------------------
-    #
-    # Point Doppler's `prd` config at this service as well as the API. The two
-    # services want the same secrets — same database, same R2 bucket, same
-    # Postmark token, same Azure key — and one config for both is what keeps
-    # them from drifting.
-    #
-    # The one variable that must differ is which process does the draining, and
-    # that is handled by using two names rather than two configs:
-    #
-    #   OUTBOX_POLL_MS=0     read by the API. Keeps slow work out of the
-    #                        request process. The API warns loudly at boot in
-    #                        production when this is 0, because it is also what
-    #                        a lost variable looks like.
-    #
-    #   WORKER_POLL_MS       read only by this service. Unset is fine; it
-    #                        defaults to 2000ms, and a full batch skips the wait
-    #                        entirely so a backlog drains at full speed.
-    #
-    # ORDER OF OPERATIONS when first deploying this: bring the worker up FIRST,
-    # confirm it logs `haulq-worker ready`, and only then set OUTBOX_POLL_MS=0
-    # on the API. Doing it the other way round leaves a window where nothing
-    # drains — no invitations, no document reading — and nothing errors.
-    #
-    # Scaling out is safe: drainOutbox claims with FOR UPDATE SKIP LOCKED, so
-    # two instances take disjoint sets rather than double-sending.
+  # What running in-process actually costs, measured rather than assumed:
+  #
+  #   Not the event loop. Azure polling is awaited I/O, so Fastify keeps serving
+  #   requests between polls. The only synchronous CPU is base64-encoding the
+  #   document, which is tens of milliseconds even at the 25 MB upload cap.
+  #
+  #   Memory, a little. drainOutbox handles a batch serially, so exactly one
+  #   document is in memory at a time — roughly 60 MB transient for a maximum
+  #   upload, against 512 MB on a starter instance.
+  #
+  # UNCOMMENT WHEN: a carrier is importing scanned history in bulk, or the API's
+  # memory graph shows the transient spikes reaching the instance ceiling. Then
+  # follow the cutover in PHASE_1_PLAN.md section 5 — worker up first, confirm
+  # `haulq-worker ready`, then set OUTBOX_POLL_MS=0.
+  #
+  # # --------------------------------------------------------------------------
+  # #
+  # # Drains event_outbox: invitation email, and document classification and
+  # # extraction. A separate service because Phase 1a put Azure Document
+  # # Intelligence in the pipeline — an OCR pass takes seconds per page while it
+  # # polls a remote operation, and that must not happen in the process serving
+  # # requests. Phase 1 plan section 5.
+  # #
+  # # Same repo, same build, different entry point. It shares apps/api's
+  # # dependencies deliberately: the worker reads objects the API wrote, and a
+  # # second package with its own copy of the storage and reader wiring is how the
+  # # two silently disagree about which bucket they are using.
+  # - type: worker
+  # name: haulq-worker
+  # runtime: node
+  # region: oregon          # same region as the database; it connects privately
+  # plan: starter
+  # rootDir: .
+  #
+  # buildFilter:
+  # paths:
+  # - apps/api/**
+  # - packages/**
+  # - package.json
+  # - pnpm-lock.yaml
+  # - pnpm-workspace.yaml
+  # - tsconfig.base.json
+  #
+  # buildCommand: npm i -g pnpm@9.15.9 && pnpm install --frozen-lockfile
+  #
+  # # NO preDeployCommand. The API owns migrations. Two services racing to
+  # # migrate the same database on every deploy is a deadlock waiting for a
+  # # slow migration, and the worker has nothing useful to do about a schema it
+  # # does not define.
+  #
+  # # `node` directly, not `pnpm --filter`, for the same measured reason as the
+  # # API: with pnpm in front, SIGTERM stops at the pnpm process and the
+  # # worker's shutdown handler never runs — so it never finishes the pass in
+  # # flight, and a message that was mid-OCR is redelivered and paid for twice.
+  # startCommand: node --experimental-strip-types apps/api/src/worker.ts
+  #
+  # # ------------------------------------------------------------------
+  # # No envVars here either. Doppler owns this service's environment.
+  # # ------------------------------------------------------------------
+  # #
+  # # Point Doppler's `prd` config at this service as well as the API. The two
+  # # services want the same secrets — same database, same R2 bucket, same
+  # # Postmark token, same Azure key — and one config for both is what keeps
+  # # them from drifting.
+  # #
+  # # The one variable that must differ is which process does the draining, and
+  # # that is handled by using two names rather than two configs:
+  # #
+  # #   OUTBOX_POLL_MS=0     read by the API. Keeps slow work out of the
+  # #                        request process. The API warns loudly at boot in
+  # #                        production when this is 0, because it is also what
+  # #                        a lost variable looks like.
+  # #
+  # #   WORKER_POLL_MS       read only by this service. Unset is fine; it
+  # #                        defaults to 2000ms, and a full batch skips the wait
+  # #                        entirely so a backlog drains at full speed.
+  # #
+  # # ORDER OF OPERATIONS when first deploying this: bring the worker up FIRST,
+  # # confirm it logs `haulq-worker ready`, and only then set OUTBOX_POLL_MS=0
+  # # on the API. Doing it the other way round leaves a window where nothing
+  # # drains — no invitations, no document reading — and nothing errors.
+  # #
+  # # Scaling out is safe: drainOutbox claims with FOR UPDATE SKIP LOCKED, so
+  # # two instances take disjoint sets rather than double-sending.
+  #
 
   # --------------------------------------------------------------------------
   # Web

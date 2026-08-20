@@ -39,6 +39,16 @@ import type { DocumentReader, ReadResult } from './reader.ts';
 const DEFAULT_API_VERSION = '2024-11-30';
 const DEFAULT_MODEL = 'prebuilt-read';
 
+/**
+ * Longest this reader will wait on one document before giving up.
+ *
+ * Exported because it is the worst case per message, and the outbox's slow
+ * group sizes its batch and its lease against it — see `buildOutboxGroups`.
+ * Raising this without raising the lease there lets a batch outlive its own
+ * claim, so the two are checked against each other in a test.
+ */
+export const AZURE_DEFAULT_TIMEOUT_MS = 120_000;
+
 export interface AzureReaderOptions {
   /** e.g. `https://haulq-docs.cognitiveservices.azure.com` */
   endpoint: string;
@@ -115,7 +125,7 @@ export class AzureDocumentReader implements DocumentReader {
     this.#model = options.model ?? DEFAULT_MODEL;
     this.#apiVersion = options.apiVersion ?? DEFAULT_API_VERSION;
     this.#pollIntervalMs = options.pollIntervalMs ?? 1000;
-    this.#timeoutMs = options.timeoutMs ?? 120_000;
+    this.#timeoutMs = options.timeoutMs ?? AZURE_DEFAULT_TIMEOUT_MS;
     this.#fetch = options.fetch ?? globalThis.fetch;
     this.#sleep = options.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
 
