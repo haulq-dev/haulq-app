@@ -12,13 +12,11 @@
 
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
-import Fastify, { type FastifyBaseLogger, type FastifyInstance } from 'fastify';
+import Fastify, { type FastifyInstance } from 'fastify';
 import {
   closeDatabase,
   createDatabase,
-  FilesystemObjectStore,
   ping,
-  r2FromEnv,
   R2ObjectStore,
   type Database,
   type ObjectStore,
@@ -27,10 +25,11 @@ import type { Authenticator } from './auth/authenticator.ts';
 import { ClerkAuthenticator } from './auth/clerk-authenticator.ts';
 import { DevAuthenticator } from './auth/dev-authenticator.ts';
 import type { Env } from './env.ts';
-import { LogMailer, PostmarkMailer, type Mailer } from './email/postmark.ts';
+import type { Mailer } from './email/postmark.ts';
 import { buildOutboxHandlers } from './outbox/handlers.ts';
 import { startOutboxRunner } from './outbox/runner.ts';
-import { LocalDocumentReader, type DocumentReader } from './documents/reader.ts';
+import { buildDocumentReader, buildMailer, buildStorage } from './runtime.ts';
+import type { DocumentReader } from './documents/reader.ts';
 import { requestContextPlugin } from './plugins/request-context.ts';
 import { documentRoutes } from './routes/documents.ts';
 import { driverRoutes } from './routes/drivers.ts';
@@ -49,67 +48,6 @@ declare module 'fastify' {
     env: Env;
     storage: ObjectStore;
   }
-}
-
-/**
- * R2 in production, the local filesystem otherwise.
- *
- * Decided by whether the R2 variables are present, not by NODE_ENV, so a
- * staging deploy or a laptop holding real credentials behaves exactly like
- * production without a second switch to keep in step.
- *
- * **It logs which one it chose.** Without that line, "the carrier's upload
- * disappeared" and "the R2 secrets never reached this deploy" are the same
- * symptom, and the import pipeline is staged across requests so the gap
- * between them is hours.
- */
-function buildStorage(env: Env, log: FastifyBaseLogger): ObjectStore {
-  const r2 = r2FromEnv(env);
-  if (r2) {
-    log.info({ store: 'r2', bucket: env.R2_BUCKET }, 'object storage ready');
-    return r2;
-  }
-
-  if (env.NODE_ENV === 'production') {
-    // Render's disk does not survive a deploy or a restart. An import is
-    // uploaded in one request and committed in another, often an hour later
-    // while the carrier checks the column mapping — so this is not a
-    // theoretical risk, it is the normal path.
-    log.warn(
-      { store: 'filesystem', dir: env.STORAGE_DIR },
-      'object storage is the local disk IN PRODUCTION — uploads will not survive a deploy. Set R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY and R2_BUCKET.',
-    );
-  } else {
-    log.info({ store: 'filesystem', dir: env.STORAGE_DIR }, 'object storage ready');
-  }
-
-  return new FilesystemObjectStore(env.STORAGE_DIR);
-}
-
-/**
- * Postmark when a token exists, a logger when it does not.
- *
- * Same shape as `buildStorage`, and the same reason for the warning: a
- * production deploy quietly not sending mail looks exactly like a deploy whose
- * secret never arrived, and the first symptom is an invitation nobody receives.
- */
-function buildMailer(env: Env, log: FastifyBaseLogger): Mailer {
-  if (env.POSTMARK_SERVER_TOKEN) {
-    log.info({ mailer: 'postmark', from: env.EMAIL_FROM }, 'mailer ready');
-    return new PostmarkMailer({
-      token: env.POSTMARK_SERVER_TOKEN,
-      from: env.EMAIL_FROM,
-    });
-  }
-
-  const message =
-    env.NODE_ENV === 'production'
-      ? 'no POSTMARK_SERVER_TOKEN — invitations WILL NOT BE SENT, only logged'
-      : 'mailer ready';
-  const level = env.NODE_ENV === 'production' ? 'warn' : 'info';
-  log[level]({ mailer: 'log' }, message);
-
-  return new LogMailer((o, msg) => log.info(o, msg));
 }
 
 export interface BuildOptions {
@@ -200,8 +138,7 @@ export async function buildServer(
   });
 
   const mailer = options.mailer ?? buildMailer(env, app.log);
-  const reader = options.reader ?? new LocalDocumentReader();
-  app.log.info({ reader: reader.name }, 'document reader ready');
+  const reader = options.reader ?? buildDocumentReader(env, app.log);
 
   startOutboxRunner(app, {
     handlers: buildOutboxHandlers({

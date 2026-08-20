@@ -40,6 +40,22 @@ const EnvSchema = z.object({
   STORAGE_DIR: z.string().default('/tmp/haulq-storage'),
 
   /**
+   * Azure AI Document Intelligence. Optional, and optional on purpose.
+   *
+   * Without it the document pipeline still reads digital PDFs — the text layer
+   * pass needs no account and no network. What Azure adds is OCR for the pile
+   * that has none: photographs of signed BOLs, faxed scale tickets, scans. So a
+   * fresh clone and CI both work unset, and setting it changes which documents
+   * can be read rather than whether the feature exists.
+   *
+   * `prebuilt-read` is the model, chosen in `azure-reader.ts` and not
+   * configurable here — see the note there on why layout is the expensive
+   * mistake.
+   */
+  AZURE_DI_ENDPOINT: z.string().url().optional(),
+  AZURE_DI_KEY: z.string().optional(),
+
+  /**
    * Postmark. Optional: with no token the mailer logs instead of sending, which
    * is what makes the invite flow walkable locally with no account.
    */
