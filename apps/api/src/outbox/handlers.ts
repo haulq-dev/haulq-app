@@ -13,12 +13,15 @@
 import { randomUUID } from 'node:crypto';
 import {
   eventSubject,
+  getOrg,
+  listMembers,
   scope,
   type Database,
   type ObjectStore,
   type OutboxHandler,
   type OutboxMessage,
 } from '@haulq/db';
+import { exceptionAlertEmail } from '../email/exception-alert-email.ts';
 import { inviteEmail, type InvitePayload } from '../email/invite-email.ts';
 import { MailerError, type Mailer } from '../email/postmark.ts';
 import { processDocument } from '../documents/pipeline.ts';
@@ -203,6 +206,93 @@ function documentHandler(deps: HandlerDeps): OutboxHandler {
   };
 }
 
+/** Enough of the payload to alert on, or nothing. */
+function asExceptionAlert(
+  message: OutboxMessage,
+): { reference: number; hoursSinceActivity: number } | null {
+  const p = message.payload as Partial<{ reference: number; hoursSinceActivity: number }>;
+  if (typeof p.reference !== 'number' || typeof p.hoursSinceActivity !== 'number') return null;
+  return { reference: p.reference, hoursSinceActivity: p.hoursSinceActivity };
+}
+
+/**
+ * Escalate a quiet load to a human. PHASE_2_PLAN.md section 4's fifth line
+ * item, and Track's own promise made real: automatic status updates,
+ * escalating to a human on exceptions.
+ *
+ * Sent to every active owner and dispatcher, not just one — a small
+ * carrier's dispatcher and its owner are often the same two or three
+ * people juggling several trucks, and a driver has effectively vanished
+ * for the purposes of this alert. Whoever sees it first calls.
+ */
+function exceptionAlertHandler(deps: HandlerDeps): OutboxHandler {
+  return async (message) => {
+    const alert = asExceptionAlert(message);
+    if (!alert) {
+      deps.log.warn(
+        { seq: message.seq.toString(), topic: message.topic },
+        'exception alert skipped: payload missing fields',
+      );
+      return;
+    }
+
+    const s = scope(deps.db, {
+      orgId: message.orgId,
+      actor: { type: 'system', name: 'outbox-consumer' },
+      correlationId: randomUUID(),
+    });
+
+    const [org, members] = await Promise.all([getOrg(s), listMembers(s)]);
+    const recipients = members.filter((m) => m.role === 'owner' || m.role === 'dispatcher');
+
+    if (recipients.length === 0) {
+      // Not retryable — no amount of waiting adds a dispatcher to the account.
+      deps.log.warn(
+        { seq: message.seq.toString(), orgId: message.orgId },
+        'exception alert has nobody to send to',
+      );
+      return;
+    }
+
+    for (const recipient of recipients) {
+      const email = exceptionAlertEmail(
+        {
+          to: recipient.email,
+          orgName: org?.name ?? 'your carrier',
+          loadReference: alert.reference,
+          hoursSinceActivity: alert.hoursSinceActivity,
+        },
+        deps.webOrigin,
+      );
+
+      try {
+        await deps.mailer.send({
+          ...email,
+          metadata: { outboxSeq: message.seq.toString(), orgId: message.orgId },
+        });
+      } catch (error) {
+        if (error instanceof MailerError && !error.retryable) {
+          deps.log.warn(
+            { seq: message.seq.toString(), to: recipient.email, status: error.status },
+            'exception alert permanently rejected for this recipient — not retrying',
+          );
+          continue;
+        }
+        // A transient failure partway through the recipient list is retried
+        // whole. Postmark has no dedupe, so an owner who already got it
+        // gets a second copy — a rare, harmless cost against the
+        // alternative of a dispatcher never hearing about a silent load.
+        throw error;
+      }
+    }
+
+    deps.log.info(
+      { seq: message.seq.toString(), recipients: recipients.length },
+      'exception alert sent',
+    );
+  };
+}
+
 /**
  * The topic map. Only topics in here are claimed; anything else stays queued
  * untouched.
@@ -215,6 +305,7 @@ export function buildOutboxHandlers(deps: HandlerDeps): Record<string, OutboxHan
   return {
     'member.invite_email': inviteHandler(deps),
     'document.received': documentHandler(deps),
+    'track.exception_alerted': exceptionAlertHandler(deps),
   };
 }
 
@@ -264,7 +355,10 @@ export function buildOutboxGroups(deps: HandlerDeps): OutboxGroup[] {
   return [
     {
       name: 'fast',
-      handlers: { 'member.invite_email': inviteHandler(deps) },
+      handlers: {
+        'member.invite_email': inviteHandler(deps),
+        'track.exception_alerted': exceptionAlertHandler(deps),
+      },
       batchSize: 20,
       leaseSeconds: 300,
     },

@@ -18,10 +18,11 @@
  * authenticates by possessing a secret rather than by signing in.
  */
 
-import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
-import { and, desc, eq, isNull } from 'drizzle-orm';
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
+import { and, desc, eq, gt, inArray, isNull } from 'drizzle-orm';
 import type { Database } from '../client.ts';
 import type { Scope } from '../context.ts';
+import { eventLog } from '../schema/events.ts';
 import { recordEvent } from '../events/record.ts';
 import { drivers, trucks } from '../schema/fleet.ts';
 import { loads, loadStops } from '../schema/loads.ts';
@@ -616,4 +617,166 @@ export async function truckPositionHistory(
     .where(and(eq(truckPositions.orgId, s.ctx.orgId), eq(truckPositions.truckId, truckId)))
     .orderBy(desc(truckPositions.recordedAt))
     .limit(Math.min(limit, 200));
+}
+
+// ---------------------------------------------------------------------------
+// Exception alerts
+// ---------------------------------------------------------------------------
+//
+// "Automatic status updates, escalating to a human on exceptions" — Track's
+// own promise, PHASE_2_PLAN.md section 4's fifth line item. Runs with no
+// tenant, a sweep across every org, same shape `expireStaleInvitations`
+// already has for housekeeping — this is a scheduled job's work, not a
+// request's.
+
+export interface ExceptionCandidate {
+  orgId: string;
+  loadId: string;
+  reference: number;
+  /** Whichever is most recent of dispatch, a stop checkpoint, or a position ping. */
+  lastActivityAt: Date;
+  hoursSinceActivity: number;
+}
+
+/**
+ * Loads sitting in `in_transit` with nothing reported in `thresholdHours`.
+ *
+ * "Activity" is whichever is most recent of: `dispatchedAt` (the baseline —
+ * a load dispatched and then never touched is still caught), a
+ * `load_stops` checkpoint, or a `truck_positions` ping. Computed in three
+ * queries and joined in memory rather than one query with `GREATEST`
+ * across subqueries — a small carrier's `in_transit` count is a handful of
+ * rows, and three readable queries beat one query nobody wants to debug at
+ * 2am when the alert didn't fire.
+ */
+export async function findExceptionCandidates(
+  db: Database,
+  thresholdHours: number,
+): Promise<ExceptionCandidate[]> {
+  const cutoff = new Date(Date.now() - thresholdHours * 3_600_000);
+
+  const inTransit = await db
+    .select({
+      orgId: loads.orgId,
+      loadId: loads.id,
+      reference: loads.reference,
+      truckId: loads.truckId,
+      dispatchedAt: loads.dispatchedAt,
+    })
+    .from(loads)
+    .where(and(eq(loads.status, 'in_transit'), isNull(loads.deletedAt)));
+
+  if (inTransit.length === 0) return [];
+
+  const loadIds = inTransit.map((l) => l.loadId);
+  const truckIds = [...new Set(inTransit.map((l) => l.truckId).filter((id): id is string => id !== null))];
+
+  const stopRows = await db
+    .select({
+      loadId: loadStops.loadId,
+      arrivedAt: loadStops.arrivedAt,
+      loadingStartedAt: loadStops.loadingStartedAt,
+      loadingEndedAt: loadStops.loadingEndedAt,
+      departedAt: loadStops.departedAt,
+    })
+    .from(loadStops)
+    .where(inArray(loadStops.loadId, loadIds));
+
+  const latestStopByLoad = new Map<string, Date>();
+  for (const row of stopRows) {
+    for (const t of [row.arrivedAt, row.loadingStartedAt, row.loadingEndedAt, row.departedAt]) {
+      if (!t) continue;
+      const current = latestStopByLoad.get(row.loadId);
+      if (!current || t > current) latestStopByLoad.set(row.loadId, t);
+    }
+  }
+
+  const latestPositionByTruck = new Map<string, Date>();
+  if (truckIds.length > 0) {
+    const positionRows = await db
+      .select({ truckId: truckPositions.truckId, recordedAt: truckPositions.recordedAt })
+      .from(truckPositions)
+      .where(inArray(truckPositions.truckId, truckIds))
+      .orderBy(desc(truckPositions.recordedAt));
+    // Ordered newest first, so the first row seen per truck is its latest.
+    for (const row of positionRows) {
+      if (!latestPositionByTruck.has(row.truckId)) latestPositionByTruck.set(row.truckId, row.recordedAt);
+    }
+  }
+
+  const candidates: ExceptionCandidate[] = [];
+  for (const load of inTransit) {
+    const times = [
+      load.dispatchedAt,
+      latestStopByLoad.get(load.loadId) ?? null,
+      load.truckId ? (latestPositionByTruck.get(load.truckId) ?? null) : null,
+    ].filter((t): t is Date => t !== null);
+
+    // No dispatchedAt and nothing reported: `createLoad` and
+    // `updateLoadStatus` both stamp `dispatchedAt` on the way to
+    // `in_transit`, so this should not happen — but the scan should not
+    // throw over a data bug it did not cause. Skipping, not alerting,
+    // because there is no baseline to measure "quiet" against.
+    if (times.length === 0) continue;
+
+    const lastActivityAt = times.reduce((latest, t) => (t > latest ? t : latest));
+    if (lastActivityAt > cutoff) continue;
+
+    candidates.push({
+      orgId: load.orgId,
+      loadId: load.loadId,
+      reference: load.reference,
+      lastActivityAt,
+      hoursSinceActivity: Math.floor((Date.now() - lastActivityAt.getTime()) / 3_600_000),
+    });
+  }
+
+  return candidates;
+}
+
+/**
+ * Fire `track.exception_alerted` for one candidate — unless it already was,
+ * since the activity that made it a candidate.
+ *
+ * That "since" is the whole dedup rule: the scan runs every few minutes, and
+ * without it a load stuck at four hours quiet would raise a new alert every
+ * pass. Checking for a prior alert *after* `lastActivityAt` means a load
+ * that goes quiet, gets alerted, then reports in and goes quiet again gets a
+ * second alert — the silence resets, so the escalation does too. A load
+ * that never reports again gets exactly one.
+ */
+export async function raiseExceptionAlert(
+  db: Database,
+  candidate: ExceptionCandidate,
+): Promise<boolean> {
+  const s: Scope = {
+    ctx: {
+      orgId: candidate.orgId,
+      actor: { type: 'system', name: 'exception-scan' },
+      correlationId: randomUUID(),
+    },
+    db,
+  };
+
+  return withTransaction(s, async (tx) => {
+    const [already] = await tx.db
+      .select({ seq: eventLog.seq })
+      .from(eventLog)
+      .where(
+        and(
+          eq(eventLog.orgId, candidate.orgId),
+          eq(eventLog.subjectId, candidate.loadId),
+          eq(eventLog.verb, 'track.exception_alerted'),
+          gt(eventLog.occurredAt, candidate.lastActivityAt),
+        ),
+      )
+      .limit(1);
+    if (already) return false;
+
+    await recordEvent(tx, 'track.exception_alerted', {
+      subjectId: candidate.loadId,
+      payload: { reference: candidate.reference, hoursSinceActivity: candidate.hoursSinceActivity },
+    });
+    return true;
+  });
 }

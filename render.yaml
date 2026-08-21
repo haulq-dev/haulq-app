@@ -102,6 +102,9 @@ services:
     #   R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET
     #   POSTMARK_SERVER_TOKEN        EMAIL_FROM=hello@haulq.ai
     #   OUTBOX_POLL_MS=5000          nothing sends while this is 0 or unset
+    #   EXCEPTION_SCAN_POLL_MS=300000   Track's exception alert — see below
+    #   EXCEPTION_THRESHOLD_HOURS=4     unset, same as OUTBOX_POLL_MS: nothing
+    #                                   fires while the poll interval is 0
     #   CREDENTIAL_ENCRYPTION_PUBLIC_KEY / _PRIVATE_KEY
     #
     # DATABASE_URL is now copied by hand, which `fromDatabase` used to do. Take

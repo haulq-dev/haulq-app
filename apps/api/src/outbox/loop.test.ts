@@ -103,7 +103,7 @@ describe('outbox groups — the lease has to fit the batch', () => {
   });
 
   it('puts the document topic in the slow group and mail in the fast one', () => {
-    assert.deepEqual(Object.keys(fast.handlers), ['member.invite_email']);
+    assert.deepEqual(Object.keys(fast.handlers), ['member.invite_email', 'track.exception_alerted']);
     assert.deepEqual(Object.keys(slow.handlers), ['document.received']);
   });
 
@@ -309,7 +309,12 @@ describe('startOutboxLoop', () => {
     const started = log.lines.find((l) => l.msg === 'outbox loop started');
     assert.ok(started, JSON.stringify(log.lines.map((l) => l.msg)));
     assert.deepEqual(started!.o['groups'], [
-      { name: 'fast', topics: ['member.invite_email'], batchSize: 20, leaseSeconds: 300 },
+      {
+        name: 'fast',
+        topics: ['member.invite_email', 'track.exception_alerted'],
+        batchSize: 20,
+        leaseSeconds: 300,
+      },
       { name: 'slow', topics: ['document.received'], batchSize: 3, leaseSeconds: 900 },
     ]);
   });

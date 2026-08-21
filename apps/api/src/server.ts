@@ -26,6 +26,7 @@ import { ClerkAuthenticator } from './auth/clerk-authenticator.ts';
 import { DevAuthenticator } from './auth/dev-authenticator.ts';
 import type { Env } from './env.ts';
 import type { Mailer } from './email/postmark.ts';
+import { startExceptionScanRunner } from './exceptions/runner.ts';
 import { buildOutboxGroups } from './outbox/handlers.ts';
 import { startOutboxRunner } from './outbox/runner.ts';
 import { buildDocumentReader, buildMailer, buildModelReader, buildStorage } from './runtime.ts';
@@ -167,6 +168,11 @@ export async function buildServer(
       },
     }),
     intervalMs: env.OUTBOX_POLL_MS,
+  });
+
+  startExceptionScanRunner(app, {
+    intervalMs: env.EXCEPTION_SCAN_POLL_MS,
+    thresholdHours: env.EXCEPTION_THRESHOLD_HOURS,
   });
 
   await app.register(helmet);

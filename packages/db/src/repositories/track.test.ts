@@ -21,12 +21,14 @@ import {
   testScope,
 } from '../testing.ts';
 import { createDriver } from './drivers.ts';
-import { createLoad } from './loads.ts';
+import { createLoad, updateLoadStatus } from './loads.ts';
 import {
+  findExceptionCandidates,
   issueCheckinLink,
   issueVisibilityLink,
   previewCheckin,
   previewTracking,
+  raiseExceptionAlert,
   recordCheckinPosition,
   recordStopCheckin,
   revokeCheckinLink,
@@ -297,6 +299,96 @@ suite('track repository', () => {
         () => previewTracking(db, 'definitely-not-issued'),
         (e: TrackError) => e.code === 'invalid_token',
       );
+    });
+  });
+
+  // --- exception alerts ----------------------------------------------------
+
+  describe('findExceptionCandidates / raiseExceptionAlert', () => {
+    /** A load dispatched `hoursAgo` in the past, with nothing reported since. */
+    async function aQuietLoad(hoursAgo: number) {
+      const load = await createLoad(s, {
+        status: 'booked', // no dispatchedAt yet — see the note in loads.ts
+        brokerName: 'Prairie Freight',
+        truckId,
+        stops: wichitaToDenver,
+      });
+      const at = new Date(Date.now() - hoursAgo * 3_600_000).toISOString();
+      await updateLoadStatus(s, load.id, { status: 'in_transit', occurredAt: at });
+      return load;
+    }
+
+    it('flags a load quiet past the threshold, using dispatch as the baseline', async () => {
+      const load = await aQuietLoad(5);
+      const candidates = await findExceptionCandidates(db, 4);
+      assert.ok(candidates.some((c) => c.loadId === load.id));
+    });
+
+    it('does not flag a load dispatched inside the threshold', async () => {
+      const load = await aQuietLoad(1);
+      const candidates = await findExceptionCandidates(db, 4);
+      assert.ok(!candidates.some((c) => c.loadId === load.id));
+    });
+
+    it('a recent stop check-in counts as activity, overriding an old dispatch', async () => {
+      const load = await aQuietLoad(10);
+      const { token } = await issueCheckinLink(s, load.id);
+      const preview = await previewCheckin(db, token);
+      await recordStopCheckin(db, {
+        token,
+        stopId: preview.stops[0]!.id,
+        milestone: 'arrived',
+        correlationId: 'test',
+      });
+
+      const candidates = await findExceptionCandidates(db, 4);
+      assert.ok(!candidates.some((c) => c.loadId === load.id));
+    });
+
+    it('a recent position ping counts as activity too', async () => {
+      const load = await aQuietLoad(10);
+      const { token } = await issueCheckinLink(s, load.id);
+      await recordCheckinPosition(db, { token, lat: 39.0997, lng: -94.5786 });
+
+      const candidates = await findExceptionCandidates(db, 4);
+      assert.ok(!candidates.some((c) => c.loadId === load.id));
+    });
+
+    it('ignores a load that is not in_transit even if it is old', async () => {
+      const load = await createLoad(s, {
+        status: 'delivered',
+        brokerName: 'Prairie Freight',
+        truckId,
+        stops: wichitaToDenver,
+      });
+      const candidates = await findExceptionCandidates(db, 4);
+      assert.ok(!candidates.some((c) => c.loadId === load.id));
+    });
+
+    it('raises an alert once, then again only after activity moves the clock', async () => {
+      const load = await aQuietLoad(6);
+      const [candidate] = await findExceptionCandidates(db, 4);
+      assert.ok(candidate);
+
+      const first = await raiseExceptionAlert(db, candidate!);
+      assert.equal(first, true);
+
+      const second = await raiseExceptionAlert(db, candidate!);
+      assert.equal(second, false, 'should not re-alert for the same silence window');
+
+      const events = await readEvents(s, load.id);
+      const alerts = events.filter((e) => e.verb === 'track.exception_alerted');
+      assert.equal(alerts.length, 1);
+      assert.match(alerts[0]!.explanation, /No check-in or position update/);
+
+      // The load goes quiet again after new activity moves the baseline —
+      // simulated here the same way `aQuietLoad` backdates the first one.
+      const later: typeof candidate = {
+        ...candidate!,
+        lastActivityAt: new Date(Date.now() - 5 * 3_600_000),
+      };
+      const third = await raiseExceptionAlert(db, later);
+      assert.equal(third, true, 'a fresh silence window should alert again');
     });
   });
 });

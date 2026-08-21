@@ -564,6 +564,22 @@ export const eventCatalog = {
     subjectType: 'load',
     describe: (p) => `Revoked the tracking link for ${formatLoad(p.reference)}.`,
   }),
+
+  /**
+   * "Automatic status updates, escalating to a human on exceptions" — Track's
+   * own promise, and this is the escalation. `hoursSinceActivity` is in the
+   * sentence rather than just the threshold, because a load quiet for eleven
+   * hours reads differently than one quiet for four, and the dispatcher
+   * reading this in their inbox should know which they're looking at without
+   * opening the app.
+   */
+  'track.exception_alerted': define<{ reference: number; hoursSinceActivity: number }>({
+    subjectType: 'load',
+    describe: (p) =>
+      `No check-in or position update on ${formatLoad(p.reference)} in over ` +
+      `${p.hoursSinceActivity} hours while in transit. Flagged for follow-up.`,
+    topic: 'track.exception_alerted',
+  }),
 } as const;
 
 export type EventVerb = keyof typeof eventCatalog;

@@ -168,9 +168,20 @@ export async function createLoad(
     // A load created directly at a later status still needs the timestamps
     // that status implies, or the check constraints reject it. Backfilled to
     // "now" because that is the only honest answer available at creation.
+    //
+    // `dispatchedAt` has no check constraint behind it — nothing here would
+    // reject its absence — but Track's exception scan
+    // (`repositories/track.ts`'s `findExceptionCandidates`) uses it as the
+    // baseline "last activity" for a load that has reported nothing yet, and
+    // a load created straight into `in_transit` with no baseline can never
+    // become an exception candidate. Stamped for the same reason the others
+    // are, just not enforced by the same mechanism.
     const stamps = {
       ...(ORDINAL[status] >= ORDINAL.booked && status !== 'cancelled'
         ? { bookedAt: now }
+        : {}),
+      ...(ORDINAL[status] >= ORDINAL.dispatched && status !== 'cancelled'
+        ? { dispatchedAt: now }
         : {}),
       ...(ORDINAL[status] >= ORDINAL.delivered && status !== 'cancelled'
         ? { deliveredAt: now }

@@ -101,6 +101,24 @@ const EnvSchema = z.object({
    */
   OUTBOX_POLL_MS: z.coerce.number().int().min(0).default(0),
 
+  /**
+   * How often the exception scan sweeps for quiet `in_transit` loads, in
+   * milliseconds. 0 is off, same reasoning and same default as
+   * `OUTBOX_POLL_MS` — see `exceptions/runner.ts`.
+   */
+  EXCEPTION_SCAN_POLL_MS: z.coerce.number().int().min(0).default(0),
+  /**
+   * How many hours a load can sit in `in_transit` with no check-in and no
+   * position update before it is an exception. Four hours is a guess at a
+   * reasonable check-call cadence, not a researched figure — PHASE_2_PLAN.md
+   * section 7 does not name a value, so this is a deployment default, not a
+   * decision this file is entitled to consider settled. Unlike the
+   * detention-timer threshold that section also leaves open, this one is
+   * not billing-facing — it changes when a dispatcher gets nagged, not what
+   * a carrier charges — so a wrong guess here costs an email, not a dispute.
+   */
+  EXCEPTION_THRESHOLD_HOURS: z.coerce.number().int().min(1).default(4),
+
   WEB_ORIGIN: z.string().url().default('http://localhost:5173'),
 });
 
