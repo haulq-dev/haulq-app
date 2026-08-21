@@ -143,6 +143,23 @@ export async function createOrg(
   });
 }
 
+/**
+ * Look up a tenant by its slug, with no `Scope` — there is no tenant yet to
+ * scope to. Postmark inbound email intake is the caller: a shared inbound
+ * address routes to an org via plus-addressing (`docs+{slug}@...`), and the
+ * slug is the only stable, already-unique handle an org has for that.
+ */
+export async function getOrgBySlug(db: Database, slug: string): Promise<Org | undefined> {
+  const [row] = await db.select().from(orgs).where(eq(orgs.slug, slug));
+  return row;
+}
+
+/** The tenant's own row. `slug` is the field this exists for right now — see below. */
+export async function getOrg(s: Scope): Promise<Org | undefined> {
+  const [row] = await s.db.select().from(orgs).where(eq(orgs.id, s.ctx.orgId));
+  return row;
+}
+
 // ---------------------------------------------------------------------------
 // Profile
 // ---------------------------------------------------------------------------

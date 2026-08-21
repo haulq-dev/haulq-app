@@ -30,7 +30,7 @@ import {
   summarizeValidation,
   type ValidationFinding,
 } from '@haulq/contracts';
-import { request, requestBlob } from '../lib/api.ts';
+import { request, requestBlob, type CarrierProfile } from '../lib/api.ts';
 import { useSession } from '../components/AuthGate.tsx';
 import { Card, Empty, ErrorNote, Pill } from '../components/ui.tsx';
 
@@ -189,6 +189,52 @@ function Dropzone() {
         <ErrorNote error={error} />
       </div>
     </Card>
+  );
+}
+
+/**
+ * The other way paperwork gets here.
+ *
+ * A carrier already forwarding a rate confirmation from their phone's mail app
+ * is not going to switch to a browser upload for it. Same copy-to-clipboard
+ * pattern as `TokenPanel` in Members.tsx; not shared, because the two carry
+ * different caveats and forcing one component to say both is how a caveat
+ * quietly goes missing from one of them.
+ */
+function InboundEmailPanel({ slug }: { slug: string }) {
+  const address = `docs+${slug}@docs.haulq.ai`;
+  const [copied, setCopied] = useState(false);
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(address);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Same reasoning as TokenPanel: clipboard access can be denied, and the
+      // address is selectable text regardless, so this is a convenience
+      // failing rather than the feature failing.
+      setCopied(false);
+    }
+  };
+
+  return (
+    <div className="border-l-2 border-brand bg-brand-50 p-4">
+      <p className="field-label text-brand">Or send it by email</p>
+      <p className="mt-2 max-w-prose text-sm text-slate">
+        Forward a rate confirmation, BOL, or POD to this address and it lands
+        here the same way a drag-and-drop upload does — sending the same email
+        twice is harmless.
+      </p>
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <code className="num min-w-0 flex-1 border border-line bg-white px-3 py-2 text-xs break-all">
+          {address}
+        </code>
+        <button className="hq-btn hq-btn-primary shrink-0" onClick={() => void copy()}>
+          {copied ? 'Copied' : 'Copy'}
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -442,12 +488,22 @@ export function DocumentsScreen() {
     enabled: Boolean(session?.orgId),
   });
 
+  // Same query key Profile.tsx uses — the two screens share one cache entry
+  // rather than each fetching the org profile on its own.
+  const profile = useQuery({
+    queryKey: ['profile'],
+    queryFn: () => request<CarrierProfile>('/v1/org/profile'),
+    enabled: Boolean(session?.orgId),
+  });
+
   const items = query.data?.items ?? [];
   const rejected = counts.data?.counts['rejected'] ?? 0;
 
   return (
     <div className="space-y-6">
       <Dropzone />
+
+      {profile.data?.slug && <InboundEmailPanel slug={profile.data.slug} />}
 
       {rejected > 0 && (
         <p className="border-l-2 border-bad bg-bad-50 px-3 py-2 text-sm text-bad">

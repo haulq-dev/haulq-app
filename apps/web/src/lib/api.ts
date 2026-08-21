@@ -202,6 +202,8 @@ export interface CarrierProfile {
   city: string | null;
   state: string | null;
   operatingFactsReconciledAt: string | null;
+  /** From `orgs.slug`. `docs+{slug}@docs.haulq.ai` is this org's inbound address. */
+  slug: string | null;
 }
 
 export interface FactIssue {

@@ -160,6 +160,22 @@ suite('onboarding', () => {
       assert.equal(profile.json().state, 'KS', 'state upper-cased on the way in');
     });
 
+    it("carries the org's slug, for the HaulQ Docs inbound address", async () => {
+      // slug lives on orgs, not carrier_profiles — this is the join that makes
+      // it visible here, and it is what the web app builds
+      // docs+{slug}@docs.haulq.ai from.
+      const signedUp = await signUp('Slug Visibility Co');
+      const orgId = signedUp.json().org.id;
+      const orgSlug = signedUp.json().org.slug;
+
+      const profile = await app.inject({
+        method: 'GET',
+        url: '/v1/org/profile',
+        headers: as(orgId),
+      });
+      assert.equal(profile.json().slug, orgSlug);
+    });
+
     it('writes no event when nothing actually changed', async () => {
       // A timeline of noise is a timeline nobody reads, which defeats
       // guardrail 6 as thoroughly as having no log.

@@ -38,6 +38,7 @@ import { insightsRoutes } from './routes/insights.ts';
 import { loadRoutes } from './routes/loads.ts';
 import { memberRoutes } from './routes/members.ts';
 import { orgRoutes } from './routes/orgs.ts';
+import { postmarkInboundRoutes } from './routes/postmark-inbound.ts';
 import { timelineRoutes } from './routes/timeline.ts';
 import { webhookRoutes } from './routes/webhooks.ts';
 import { truckRoutes } from './routes/trucks.ts';
@@ -195,11 +196,14 @@ export async function buildServer(
   // Registered without fastify-plugin so its binary body parser stays scoped
   // to these routes rather than applying to every upload in the API.
   await app.register(documentRoutes);
+  // Unauthenticated-tenant, secret-gated — same family as webhookRoutes above,
+  // just Basic Auth instead of an HMAC signature. Ordinary JSON body, so no
+  // scoped content type parser needed.
+  await app.register(postmarkInboundRoutes);
   await app.register(timelineRoutes);
 
   // Still to land:
   //   Phase 0b  /v1/verify
-  //   Phase 1a  document classification, extraction and validation endpoints
 
   return app;
 }

@@ -17,6 +17,7 @@ import {
 import {
   createOrg,
   getCarrierProfile,
+  getOrg,
   onboardingStatus,
   OnboardingError,
   saveOperatingFacts,
@@ -95,7 +96,12 @@ export async function orgRoutes(app: FastifyInstance) {
         'This account has no carrier profile yet.',
       );
     }
-    return profile;
+    // slug lives on orgs, not carrier_profiles. Included here — rather than a
+    // separate endpoint — because the one thing it is for today, the HaulQ
+    // Docs inbound address, is exactly the kind of account fact this route
+    // already answers.
+    const org = await getOrg(s);
+    return { ...profile, slug: org?.slug ?? null };
   });
 
   app.patch('/v1/org/profile', async (request) => {

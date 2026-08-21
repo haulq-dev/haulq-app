@@ -64,6 +64,17 @@ const EnvSchema = z.object({
   EMAIL_FROM: z.string().email().default('hello@haulq.ai'),
 
   /**
+   * Postmark inbound webhook, for HaulQ Docs email intake. Both optional
+   * together, same pattern as CLERK_WEBHOOK_SECRET — the route itself 503s
+   * rather than accepting unverified when either is unset. There is no HMAC
+   * scheme on Postmark's inbound parse webhook, unlike its outbound delivery
+   * events, so this is HTTP Basic Auth: set in the Postmark inbound stream's
+   * webhook URL as `https://user:password@api.haulq.ai/v1/webhooks/postmark-inbound`.
+   */
+  POSTMARK_INBOUND_USER: z.string().optional(),
+  POSTMARK_INBOUND_PASSWORD: z.string().optional(),
+
+  /**
    * How often the in-process outbox consumer polls, in milliseconds. 0 is off.
    *
    * Off by default on purpose. A poller that starts itself runs in every test
