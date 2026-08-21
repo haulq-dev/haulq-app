@@ -457,3 +457,144 @@ export const AssignLoadSchema = z.object({
   truckId: z.string().uuid().nullable(),
   driverId: z.string().uuid().nullable().optional(),
 });
+
+// ---------------------------------------------------------------------------
+// Pay
+// ---------------------------------------------------------------------------
+//
+// Same split as Loads above: the database is the enforcement (the invoice
+// status trigger in `sql/post/0700_invoice_status.sql`, the partial unique
+// index that allows one open invoice per load), this is display truth plus
+// the shape a request body has to match before it reaches a repository
+// function at all.
+
+/** Mirrors `invoice_status` in `schema/enums.ts`. */
+export const INVOICE_STATUSES = ['draft', 'sent', 'paid', 'void'] as const;
+export type InvoiceStatus = (typeof INVOICE_STATUSES)[number];
+
+const INVOICE_STATUS_ORDINAL: Record<InvoiceStatus, number> = {
+  draft: 10,
+  sent: 20,
+  paid: 30,
+  void: 40,
+};
+
+/**
+ * Whether an invoice status change is legal — same reasoning as
+ * `canTransition` above: the trigger is the enforcement, this lets a screen
+ * grey out a dead-end instead of offering it and showing a raw refusal.
+ */
+export function canTransitionInvoice(from: InvoiceStatus, to: InvoiceStatus): TransitionCheck {
+  if (from === to) return { allowed: true };
+
+  if (to === 'void') {
+    return from === 'paid'
+      ? {
+          allowed: false,
+          reason: 'This invoice is paid. Record a reversal rather than voiding it.',
+        }
+      : { allowed: true };
+  }
+
+  if (from === 'void') {
+    return {
+      allowed: false,
+      reason: 'This invoice was voided. Generate a new one to reissue it.',
+    };
+  }
+
+  if (INVOICE_STATUS_ORDINAL[to] < INVOICE_STATUS_ORDINAL[from]) {
+    return { allowed: false, reason: `An invoice cannot move backwards from ${from} to ${to}.` };
+  }
+
+  return { allowed: true };
+}
+
+/**
+ * Linehaul, fuel surcharge, detention, TONU, lumper — one row per
+ * accessorial. `code` is free text with no enum on the wire either, same
+ * reasoning as `documents.kind`: the tail of things a carrier bills for is
+ * long and grows on its own schedule.
+ */
+export const InvoiceLineItemSchema = z.object({
+  code: z.string().min(1).max(60),
+  description: z.string().min(1).max(300),
+  amountCents: z.number().int(),
+  currency: z.string().length(3).optional(),
+});
+export type InvoiceLineItem = z.infer<typeof InvoiceLineItemSchema>;
+
+export const GenerateInvoiceSchema = z.object({
+  loadId: z.string().uuid(),
+  lineItems: z.array(InvoiceLineItemSchema).min(1),
+  sourceDocumentId: z.string().uuid().optional(),
+  /** Overrides the due date computed from the broker's payment terms. */
+  dueAt: z.string().datetime().optional(),
+});
+export type GenerateInvoice = z.infer<typeof GenerateInvoiceSchema>;
+
+export const VoidInvoiceSchema = z.object({
+  reason: z.string().min(1).max(500),
+});
+
+/** Mirrors `factoring_packet_status` in `schema/enums.ts`. */
+export const FACTORING_PACKET_STATUSES = [
+  'assembling',
+  'submitted',
+  'accepted',
+  'rejected',
+  'funded',
+] as const;
+export type FactoringPacketStatus = (typeof FACTORING_PACKET_STATUSES)[number];
+
+export const FACTORING_SUBMISSION_METHODS = ['email', 'portal', 'api'] as const;
+
+export const CreateFactoringCompanySchema = z.object({
+  name: z.string().min(1).max(200),
+  email: z.string().email().optional(),
+  phone: z.string().max(40).optional(),
+  submissionMethod: z.enum(FACTORING_SUBMISSION_METHODS).default('email'),
+  notes: z.string().max(2000).optional(),
+});
+export type CreateFactoringCompany = z.infer<typeof CreateFactoringCompanySchema>;
+
+export const AssembleFactoringPacketSchema = z.object({
+  invoiceId: z.string().uuid(),
+  factoringCompanyId: z.string().uuid(),
+  /** Which of the load's `documents` rows to bundle. Often empty at first —
+   *  an invoice with no supporting paperwork attached yet is still a packet
+   *  worth starting, not an error. */
+  documentIds: z.array(z.string().uuid()).default([]),
+});
+export type AssembleFactoringPacket = z.infer<typeof AssembleFactoringPacketSchema>;
+
+export const FactoringResponseSchema = z
+  .object({
+    outcome: z.enum(['accepted', 'rejected']),
+    reason: z.string().max(500).optional(),
+  })
+  .superRefine((input, ctx) => {
+    if (input.outcome === 'rejected' && !input.reason?.trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['reason'],
+        message: 'Say why the factor rejected this packet.',
+      });
+    }
+  });
+export type FactoringResponse = z.infer<typeof FactoringResponseSchema>;
+
+export const PAYMENT_SOURCES = ['factor', 'broker_direct'] as const;
+export type PaymentSource = (typeof PAYMENT_SOURCES)[number];
+
+export const RecordPaymentSchema = z.object({
+  amount: MoneySchema,
+  source: z.enum(PAYMENT_SOURCES),
+  /** Overrides `now()`, for a deposit recorded the day after it cleared. */
+  receivedAt: z.string().datetime().optional(),
+  reference: z.string().max(120).optional(),
+  notes: z.string().max(2000).optional(),
+  /** When this money settles a specific factoring submission. */
+  factoringPacketId: z.string().uuid().optional(),
+});
+export type RecordPayment = z.infer<typeof RecordPaymentSchema>;

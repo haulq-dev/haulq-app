@@ -8,6 +8,13 @@
       "when": 1786981231375,
       "tag": "0000_phase0_foundation",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1787326375104,
+      "tag": "0001_tiny_angel",
+      "breakpoints": true
     }
   ]
 }

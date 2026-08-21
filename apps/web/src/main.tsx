@@ -27,6 +27,7 @@ import { InsightsScreen } from './routes/Insights.tsx';
 import { LoadsScreen } from './routes/Loads.tsx';
 import { MembersScreen } from './routes/Members.tsx';
 import { OnboardingScreen } from './routes/Onboarding.tsx';
+import { PayScreen } from './routes/Pay.tsx';
 import { ProfileScreen } from './routes/Profile.tsx';
 import { TimelineScreen } from './routes/Timeline.tsx';
 import { TrucksScreen } from './routes/Trucks.tsx';
@@ -102,6 +103,11 @@ const documentsRoute = createRoute({
   path: '/documents',
   component: DocumentsScreen,
 });
+const payRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/pay',
+  component: PayScreen,
+});
 const driversRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/drivers',
@@ -135,6 +141,7 @@ const routeTree = rootRoute.addChildren([
   loadsRoute,
   insightsRoute,
   documentsRoute,
+  payRoute,
   driversRoute,
   membersRoute,
   importRoute,

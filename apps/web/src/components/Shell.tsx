@@ -21,6 +21,7 @@ const NAV = [
   { to: '/loads', label: 'Loads' },
   { to: '/insights', label: 'Insights' },
   { to: '/documents', label: 'Documents' },
+  { to: '/pay', label: 'Pay' },
   { to: '/trucks', label: 'Trucks' },
   { to: '/drivers', label: 'Drivers' },
   { to: '/members', label: 'People' },

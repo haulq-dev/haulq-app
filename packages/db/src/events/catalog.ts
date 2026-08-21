@@ -43,6 +43,11 @@ export function formatLoad(reference: number): string {
   return `load ${reference}`;
 }
 
+/** Same idea as `formatLoad`, for the number on a factoring packet's cover sheet. */
+export function formatInvoice(reference: number): string {
+  return `invoice ${reference}`;
+}
+
 /**
  * One event's definition: what it is about, and how to describe it.
  *
@@ -354,6 +359,143 @@ export const eventCatalog = {
       `The ${p.kind.replace('_', ' ')} does not match ` +
       `${formatLoad(p.loadReference)}: ${p.reason}`,
     topic: 'document.rejected',
+  }),
+
+  // --- pay -------------------------------------------------------------
+  //
+  // PHASE_1_PLAN.md section 5's three sentences, each getting the verbs its
+  // own state machine needs. `invoice.sent` and `invoice.paid` also move
+  // `loads.status` (see `repositories/pay.ts`'s `advanceLoad`), which is why
+  // their sentences name the load as well as the invoice — a carrier reading
+  // the timeline should not have to cross-reference which load an invoice
+  // was for.
+
+  'invoice.generated': define<{
+    reference: number;
+    loadReference: number;
+    totalAmount: number;
+    totalCurrency: string;
+  }>({
+    subjectType: 'invoice',
+    describe: (p) =>
+      `Generated ${formatInvoice(p.reference)} for ${formatLoad(p.loadReference)}, ` +
+      `${formatMoney(p.totalAmount, p.totalCurrency)}.`,
+  }),
+
+  'invoice.sent': define<{
+    reference: number;
+    loadReference: number;
+    totalAmount: number;
+    totalCurrency: string;
+  }>({
+    subjectType: 'invoice',
+    describe: (p) =>
+      `Sent ${formatInvoice(p.reference)} for ${formatLoad(p.loadReference)}, ` +
+      `${formatMoney(p.totalAmount, p.totalCurrency)}.`,
+  }),
+
+  'invoice.paid': define<{
+    reference: number;
+    loadReference: number;
+    totalAmount: number;
+    totalCurrency: string;
+  }>({
+    subjectType: 'invoice',
+    // What "receivables aging" and "payment speed" both resolve against —
+    // the moment an invoice's payments finally cover its total.
+    describe: (p) =>
+      `${formatInvoice(p.reference)} for ${formatLoad(p.loadReference)} is now ` +
+      `fully paid: ${formatMoney(p.totalAmount, p.totalCurrency)}.`,
+  }),
+
+  'invoice.voided': define<{ reference: number; reason: string }>({
+    subjectType: 'invoice',
+    describe: (p) => `Voided ${formatInvoice(p.reference)}: ${p.reason}`,
+  }),
+
+  'factoring_company.added': define<{ name: string }>({
+    subjectType: 'factoring_company',
+    describe: (p) => `Added ${p.name} as a factoring company.`,
+  }),
+
+  /**
+   * A human decision — which of a load's documents go to which factor —
+   * worth its own line for the same reason `document.attached` is: a
+   * rejected packet gets re-examined later, and "what did we send them" is
+   * the first question.
+   */
+  'factoring_packet.assembled': define<{
+    invoiceReference: number;
+    factoringCompanyName: string;
+    documentCount: number;
+  }>({
+    subjectType: 'factoring_packet',
+    describe: (p) =>
+      `Assembled a factoring packet for ${formatInvoice(p.invoiceReference)} — ` +
+      `${p.documentCount} ${p.documentCount === 1 ? 'document' : 'documents'} — ` +
+      `for ${p.factoringCompanyName}.`,
+  }),
+
+  /**
+   * `topic` is here for the future the estimate names but this phase does not
+   * build: an outbox consumer that emails the packet, the way
+   * `document.received` already drives intake and `invite-email.ts` already
+   * drives a templated send. Until that consumer exists the row queues and
+   * nothing drains it, which is inert, not broken.
+   */
+  'factoring_packet.submitted': define<{
+    invoiceReference: number;
+    factoringCompanyName: string;
+  }>({
+    subjectType: 'factoring_packet',
+    describe: (p) =>
+      `Submitted ${formatInvoice(p.invoiceReference)} to ${p.factoringCompanyName}.`,
+    topic: 'factoring_packet.submitted',
+  }),
+
+  'factoring_packet.accepted': define<{
+    invoiceReference: number;
+    factoringCompanyName: string;
+  }>({
+    subjectType: 'factoring_packet',
+    describe: (p) =>
+      `${p.factoringCompanyName} accepted ${formatInvoice(p.invoiceReference)}.`,
+  }),
+
+  'factoring_packet.rejected': define<{
+    invoiceReference: number;
+    factoringCompanyName: string;
+    reason: string;
+  }>({
+    subjectType: 'factoring_packet',
+    describe: (p) =>
+      `${p.factoringCompanyName} rejected ${formatInvoice(p.invoiceReference)}: ${p.reason}`,
+    topic: 'factoring_packet.rejected',
+  }),
+
+  'factoring_packet.funded': define<{
+    invoiceReference: number;
+    factoringCompanyName: string;
+    amount: number;
+    currency: string;
+  }>({
+    subjectType: 'factoring_packet',
+    describe: (p) =>
+      `${p.factoringCompanyName} funded ${formatInvoice(p.invoiceReference)}: ` +
+      `${formatMoney(p.amount, p.currency)}.`,
+  }),
+
+  'payment.recorded': define<{
+    invoiceReference: number;
+    amount: number;
+    currency: string;
+    source: string;
+  }>({
+    subjectType: 'payment',
+    describe: (p) =>
+      `Recorded ${formatMoney(p.amount, p.currency)} against ` +
+      `${formatInvoice(p.invoiceReference)} from ` +
+      `${p.source === 'factor' ? 'the factor' : 'the broker, direct'}.`,
   }),
 
   // --- credentials ---------------------------------------------------------

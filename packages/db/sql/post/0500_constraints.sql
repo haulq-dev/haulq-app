@@ -168,3 +168,25 @@ alter table board_credentials drop constraint if exists board_credentials_status
 alter table board_credentials add constraint board_credentials_status_ck check (
   status in ('unverified', 'active', 'failed', 'revoked')
 );
+
+-- --- pay ----------------------------------------------------------------
+
+alter table factoring_companies drop constraint if exists factoring_companies_submission_method_ck;
+alter table factoring_companies add constraint factoring_companies_submission_method_ck check (
+  submission_method in ('email', 'portal', 'api')
+);
+
+-- A negative or zero invoice total is not a smaller invoice, it is a bug in
+-- whatever generated the line items.
+alter table invoices drop constraint if exists invoices_total_positive;
+alter table invoices add constraint invoices_total_positive check (
+  total_amount > 0
+);
+
+-- A zero-dollar payment row records nothing; a negative one is a refund or a
+-- factor's fee, and neither is modeled yet — see `pay.ts`'s module note on
+-- what this phase deliberately does not do.
+alter table payments drop constraint if exists payments_amount_positive;
+alter table payments add constraint payments_amount_positive check (
+  payment_amount > 0
+);

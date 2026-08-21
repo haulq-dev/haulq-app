@@ -1,9 +1,11 @@
 /**
- * The Phase 0 schema.
+ * The schema.
  *
- * Scope is deliberately the foundation only: tenancy, fleet, the load object,
- * documents, the event log, CSV import. No Dispatch, Docs, Pay or Insights
- * tables — those arrive with their phases.
+ * Phase 0 (tenancy, fleet, the load object, documents, the event log, CSV
+ * import) plus Phase 1a (documents, already listed above) and Phase 1b
+ * (`pay.ts`). No Dispatch or Insights tables — Insights reads columns
+ * `loads.ts` and `pay.ts` already carry rather than owning its own table,
+ * and Dispatch arrives in Phase 4.
  *
  * The dispatcher's operational tables (`scored_loads`, `decisions`,
  * `broker_emails`, `poll_runs`) are NOT here. They stay in
@@ -21,3 +23,4 @@ export * from './loads.ts';
 export * from './documents.ts';
 export * from './events.ts';
 export * from './imports.ts';
+export * from './pay.ts';

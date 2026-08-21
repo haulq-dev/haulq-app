@@ -144,3 +144,48 @@ export const importRowStatusEnum = pgEnum('import_row_status', [
   'committed',
   'skipped',
 ]);
+
+// --- pay ---------------------------------------------------------------
+
+/**
+ * Same shape as `load_status`: small, ordered, guarded by a transition
+ * trigger rather than application code, because a rejected-and-resent
+ * invoice and a factor's own status feed both need to write this column
+ * without racing each other.
+ */
+export const invoiceStatusEnum = pgEnum('invoice_status', [
+  'draft', // generated, not yet reviewed
+  'sent', // handed to the broker or the factor
+  'paid',
+  'void', // never becomes paid; the load's `cancelled` analog
+]);
+
+/**
+ * A carrier's relationship with a factor is a payment method they hold, not
+ * a counterparty on one load — see the module note in `pay.ts`. This tracks
+ * a submitted invoice through that relationship.
+ *
+ * PHASE_1_PLAN.md section 7: the packet *format* — a PDF a carrier reviews
+ * and emails themselves, vs. a per-factor API — is still an open question.
+ * This enum answers neither; a manual submission still moves through
+ * `assembling` → `submitted` → `accepted`/`rejected` → `funded`, the human
+ * just does the `submitted` transition by hand instead of an adapter doing
+ * it automatically.
+ */
+export const factoringPacketStatusEnum = pgEnum('factoring_packet_status', [
+  'assembling', // documents being gathered, not yet sent
+  'submitted',
+  'accepted', // factor will fund it
+  'rejected',
+  'funded', // money reported received — see `payments`. Not initiated here.
+]);
+
+/**
+ * Where a payment came from. Matters for receivables aging: a factor pays in
+ * days, a broker paying direct on net-30 terms is a different clock, and
+ * conflating the two would average away the reason a carrier factors at all.
+ */
+export const paymentSourceEnum = pgEnum('payment_source', [
+  'factor',
+  'broker_direct',
+]);
