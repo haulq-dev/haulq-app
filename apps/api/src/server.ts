@@ -35,6 +35,7 @@ import type { DocumentReader } from './documents/reader.ts';
 import { requestContextPlugin } from './plugins/request-context.ts';
 import { brokerRoutes } from './routes/brokers.ts';
 import { documentRoutes } from './routes/documents.ts';
+import { integrationRoutes } from './routes/integrations.ts';
 import { driverRoutes } from './routes/drivers.ts';
 import { importRoutes } from './routes/imports.ts';
 import { insightsRoutes } from './routes/insights.ts';
@@ -213,6 +214,7 @@ export async function buildServer(
   await app.register(loadRoutes);
   await app.register(brokerRoutes);
   await app.register(trackRoutes);
+  await app.register(integrationRoutes);
   await app.register(payRoutes);
   await app.register(insightsRoutes);
   await app.register(importRoutes);

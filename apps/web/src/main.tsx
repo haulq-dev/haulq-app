@@ -22,6 +22,7 @@ import { Shell } from './components/Shell.tsx';
 import { DocumentsScreen } from './routes/Documents.tsx';
 import { DriversScreen } from './routes/Drivers.tsx';
 import { ImportScreen } from './routes/Import.tsx';
+import { IntegrationsScreen } from './routes/Integrations.tsx';
 import { InviteScreen } from './routes/Invite.tsx';
 import { InsightsScreen } from './routes/Insights.tsx';
 import { LoadsScreen } from './routes/Loads.tsx';
@@ -143,6 +144,11 @@ const trackRoute = createRoute({
   path: '/track/$token',
   component: TrackScreen,
 });
+const integrationsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/integrations',
+  component: IntegrationsScreen,
+});
 
 const routeTree = rootRoute.addChildren([
   indexRoute,
@@ -158,6 +164,7 @@ const routeTree = rootRoute.addChildren([
   timelineRoute,
   inviteRoute,
   trackRoute,
+  integrationsRoute,
 ]);
 
 const router = createRouter({ routeTree });

@@ -274,11 +274,31 @@ export const carrierProfiles = pgTable(
 );
 
 /**
- * Pointer to a credential in the secrets manager. No secret material, ever.
+ * A connected board or ELD provider. No secret material in plain text, ever
+ * — two different shapes of that promise sit side by side here:
  *
- * Inherited verbatim from the dispatcher schema's design note, which is right:
- * a leaked database should not hand over the carrier's DAT login. `board` is
- * text rather than an enum because the set grows on someone else's schedule.
+ *  - **`secretRef`** — a pointer into the secrets manager (Doppler), for a
+ *    credential a human hands over once: a DAT username and password. Set
+ *    by hand today; nothing in this codebase writes it programmatically.
+ *    Inherited verbatim from the dispatcher schema's design note.
+ *
+ *  - **`encryptedAccessToken` / `encryptedRefreshToken`** — for an OAuth
+ *    connection (Motive, Phase 2b), where the token is minted at connect
+ *    time and rotated automatically every couple of hours with no human in
+ *    the loop. Doppler is built for a person or a deploy managing config,
+ *    not a running server writing a new secret every two hours, so these
+ *    are sealed directly in this row instead — `crypto_box_seal` from
+ *    `credential-crypto.ts`, encrypted with `CREDENTIAL_ENCRYPTION_PUBLIC_KEY`
+ *    at write time, decryptable only by whoever holds
+ *    `CREDENTIAL_ENCRYPTION_PRIVATE_KEY`. A leaked database alone still
+ *    hands over nothing — the same guarantee `secretRef` makes, kept a
+ *    different way because an OAuth token cannot be a Doppler *path*, it
+ *    has to be the credential itself, somewhere.
+ *
+ * One row is always exactly one shape or the other — see
+ * `board_credentials_has_a_secret` in `sql/post/0500_constraints.sql`.
+ * `board` is text rather than an enum because the set grows on someone
+ * else's schedule.
  */
 export const boardCredentials = pgTable(
   'board_credentials',
@@ -289,10 +309,16 @@ export const boardCredentials = pgTable(
       .references(() => orgs.id, { onDelete: 'cascade' }),
 
     board: text('board').notNull(),
-    /** Doppler / secrets-manager path. Opaque to this database. */
-    secretRef: text('secret_ref').notNull(),
+    /** Doppler / secrets-manager path. Opaque to this database. Null for an OAuth connection. */
+    secretRef: text('secret_ref'),
     /** Which board user searches run as, for the provider's audit trail. */
     endUserEmail: text('end_user_email'),
+
+    /** Sealed with `CREDENTIAL_ENCRYPTION_PUBLIC_KEY`. Null for a secretRef-shaped row. */
+    encryptedAccessToken: text('encrypted_access_token'),
+    encryptedRefreshToken: text('encrypted_refresh_token'),
+    /** When `encryptedAccessToken` stops being usable and needs the refresh token. */
+    tokenExpiresAt: timestamp('token_expires_at', { withTimezone: true }),
 
     status: text('status').notNull().default('unverified'),
     lastVerifiedAt: timestamp('last_verified_at', { withTimezone: true }),

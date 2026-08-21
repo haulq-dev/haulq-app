@@ -1,4 +1,5 @@
 export * from './client.ts';
+export * from './credential-crypto.ts';
 export * from './geo.ts';
 export * from './ssl.ts';
 export * from './context.ts';
@@ -9,6 +10,7 @@ export * from './events/outbox.ts';
 export * from './events/record.ts';
 export * from './storage.ts';
 export * from './storage-r2.ts';
+export * from './repositories/board-credentials.ts';
 export * from './repositories/brokers.ts';
 export * from './repositories/documents.ts';
 export * from './repositories/drivers.ts';

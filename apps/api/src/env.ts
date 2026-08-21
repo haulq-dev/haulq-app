@@ -120,6 +120,29 @@ const EnvSchema = z.object({
   EXCEPTION_THRESHOLD_HOURS: z.coerce.number().int().min(1).default(4),
 
   WEB_ORIGIN: z.string().url().default('http://localhost:5173'),
+
+  /**
+   * Motive (2b's ELD provider). All optional together: `/v1/integrations/
+   * motive/connect` 503s rather than accepting a connection nobody can
+   * finish — same pattern `POSTMARK_INBOUND_USER`/`_PASSWORD` already use.
+   *
+   * `MOTIVE_REDIRECT_URI` has to exactly match what is registered in
+   * Motive's developer dashboard for this OAuth app, or the authorization
+   * step fails on their side before HaulQ ever sees it.
+   */
+  MOTIVE_CLIENT_ID: z.string().optional(),
+  MOTIVE_CLIENT_SECRET: z.string().optional(),
+  MOTIVE_REDIRECT_URI: z.string().url().optional(),
+
+  /**
+   * `credential-crypto.ts`'s sealed-box keypair. Both optional together —
+   * without them Motive's OAuth callback has nowhere safe to put the token
+   * it just received, so it refuses rather than storing one unsealed.
+   * Generate with `generateCredentialKeypair()` once, by hand; nothing
+   * rotates these automatically.
+   */
+  CREDENTIAL_ENCRYPTION_PUBLIC_KEY: z.string().optional(),
+  CREDENTIAL_ENCRYPTION_PRIVATE_KEY: z.string().optional(),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

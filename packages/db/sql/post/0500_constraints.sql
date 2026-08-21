@@ -158,15 +158,35 @@ alter table load_stops add constraint load_stops_window_ordered check (
 -- The dispatcher schema's design note, kept: a leaked database must not hand
 -- over the carrier's DAT login. `secret_ref` is a pointer into Doppler. This
 -- constraint is a blunt instrument against the day someone "temporarily" pastes
--- a real credential into it.
+-- a real credential into it. Null is still allowed through — an OAuth-shaped
+-- row (Motive) has no pointer at all, see the two constraints below.
 alter table board_credentials drop constraint if exists board_credentials_ref_is_pointer;
 alter table board_credentials add constraint board_credentials_ref_is_pointer check (
-  secret_ref ~ '^[a-zA-Z0-9_/.:-]+$' and length(secret_ref) <= 200
+  secret_ref is null
+  or (secret_ref ~ '^[a-zA-Z0-9_/.:-]+$' and length(secret_ref) <= 200)
 );
 
 alter table board_credentials drop constraint if exists board_credentials_status_ck;
 alter table board_credentials add constraint board_credentials_status_ck check (
   status in ('unverified', 'active', 'failed', 'revoked')
+);
+
+-- A row is a Doppler pointer or a sealed OAuth token, never both and never
+-- neither. Mixing them would mean a reader has to guess which secret is the
+-- real one; having neither means "connected" while holding nothing to
+-- connect with.
+alter table board_credentials drop constraint if exists board_credentials_exactly_one_secret_shape;
+alter table board_credentials add constraint board_credentials_exactly_one_secret_shape check (
+  (secret_ref is not null and encrypted_access_token is null)
+  or (secret_ref is null and encrypted_access_token is not null)
+);
+
+-- A sealed access token without an expiry can never be refreshed on time —
+-- the refresh path (repositories/board-credentials.ts) decides "still good"
+-- or "needs the refresh token" by comparing against this column.
+alter table board_credentials drop constraint if exists board_credentials_oauth_has_expiry;
+alter table board_credentials add constraint board_credentials_oauth_has_expiry check (
+  encrypted_access_token is null or token_expires_at is not null
 );
 
 -- --- pay ----------------------------------------------------------------

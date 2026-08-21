@@ -26,6 +26,7 @@ const NAV = [
   { to: '/drivers', label: 'Drivers' },
   { to: '/members', label: 'People' },
   { to: '/import', label: 'Import' },
+  { to: '/integrations', label: 'Integrations' },
   { to: '/timeline', label: 'Activity' },
 ] as const;
 
