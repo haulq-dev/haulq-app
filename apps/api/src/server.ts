@@ -28,7 +28,8 @@ import type { Env } from './env.ts';
 import type { Mailer } from './email/postmark.ts';
 import { buildOutboxGroups } from './outbox/handlers.ts';
 import { startOutboxRunner } from './outbox/runner.ts';
-import { buildDocumentReader, buildMailer, buildStorage } from './runtime.ts';
+import { buildDocumentReader, buildMailer, buildModelReader, buildStorage } from './runtime.ts';
+import type { ModelDocumentReader } from './documents/model-reader.ts';
 import type { DocumentReader } from './documents/reader.ts';
 import { requestContextPlugin } from './plugins/request-context.ts';
 import { documentRoutes } from './routes/documents.ts';
@@ -79,6 +80,14 @@ export interface BuildOptions {
    * default and not a placeholder.
    */
   reader?: DocumentReader;
+
+  /**
+   * Override the model pass. Tests inject a fake or leave it unset. Left
+   * unset in production this is Anthropic when `ANTHROPIC_API_KEY` is
+   * configured, and no model pass at all when it is not — see
+   * `documents/model-reader.ts`.
+   */
+  modelReader?: ModelDocumentReader | undefined;
 }
 
 /**
@@ -140,6 +149,7 @@ export async function buildServer(
 
   const mailer = options.mailer ?? buildMailer(env, app.log);
   const reader = options.reader ?? buildDocumentReader(env, app.log);
+  const modelReader = options.modelReader ?? buildModelReader(env, app.log);
 
   startOutboxRunner(app, {
     groups: buildOutboxGroups({
@@ -148,6 +158,7 @@ export async function buildServer(
       db,
       storage,
       reader,
+      modelReader,
       log: {
         info: (o, msg) => app.log.info(o, msg),
         warn: (o, msg) => app.log.warn(o, msg),

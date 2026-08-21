@@ -56,6 +56,24 @@ const EnvSchema = z.object({
   AZURE_DI_KEY: z.string().optional(),
 
   /**
+   * The model pass, for documents the deterministic rules decline — a
+   * photograph nobody templated, a packet where several kinds matched, a
+   * confidently-classified document missing a field no label named. Optional,
+   * same reasoning as Azure above: without a key, `processDocument` still
+   * does everything it did before this existed, just with more documents
+   * left as `needs: 'model'` for a person to look at rather than a model.
+   *
+   * `ANTHROPIC_MODEL` defaults to a Haiku-tier model deliberately — this is
+   * the "screen cheap" half of the same argument `haulq-dispatcher`'s
+   * scoring makes for itself: called only after three free passes already
+   * declined, so it does not need to be the largest model available, only a
+   * careful one. See `documents/model-reader.ts` for why it is not trusted
+   * with a single field it cannot point at verbatim on the page.
+   */
+  ANTHROPIC_API_KEY: z.string().optional(),
+  ANTHROPIC_MODEL: z.string().default('claude-haiku-4-5-20251001'),
+
+  /**
    * Postmark. Optional: with no token the mailer logs instead of sending, which
    * is what makes the invite flow walkable locally with no account.
    */

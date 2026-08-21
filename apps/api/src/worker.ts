@@ -41,7 +41,7 @@ import pino from 'pino';
 import { loadEnv } from './env.ts';
 import { buildOutboxGroups } from './outbox/handlers.ts';
 import { startOutboxLoop } from './outbox/loop.ts';
-import { buildDocumentReader, buildMailer, buildStorage } from './runtime.ts';
+import { buildDocumentReader, buildMailer, buildModelReader, buildStorage } from './runtime.ts';
 
 const env = loadEnv();
 
@@ -80,6 +80,7 @@ try {
 
 const storage = buildStorage(env, log);
 const reader = buildDocumentReader(env, log);
+const modelReader = buildModelReader(env, log);
 const mailer = buildMailer(env, log);
 
 const loop = startOutboxLoop({
@@ -90,6 +91,7 @@ const loop = startOutboxLoop({
     db,
     storage,
     reader,
+    modelReader,
     log,
   }),
   intervalMs,

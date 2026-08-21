@@ -22,6 +22,7 @@ import {
 import { inviteEmail, type InvitePayload } from '../email/invite-email.ts';
 import { MailerError, type Mailer } from '../email/postmark.ts';
 import { processDocument } from '../documents/pipeline.ts';
+import type { ModelDocumentReader } from '../documents/model-reader.ts';
 import type { DocumentReader } from '../documents/reader.ts';
 
 export interface HandlerDeps {
@@ -32,6 +33,8 @@ export interface HandlerDeps {
   db: Database;
   storage: ObjectStore;
   reader: DocumentReader;
+  /** Unset means no model pass — see `documents/pipeline.ts`. */
+  modelReader?: ModelDocumentReader | undefined;
   log: {
     info: (o: unknown, msg: string) => void;
     warn: (o: unknown, msg: string) => void;
@@ -156,6 +159,7 @@ function documentHandler(deps: HandlerDeps): OutboxHandler {
     const outcome = await processDocument(s, documentId, {
       reader: deps.reader,
       storage: deps.storage,
+      modelReader: deps.modelReader,
     });
 
     const base = { seq: message.seq.toString(), documentId, reader: deps.reader.name };

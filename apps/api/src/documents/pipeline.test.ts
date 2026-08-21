@@ -24,7 +24,31 @@ import type { FastifyInstance } from 'fastify';
 import { loadEnv } from '../env.ts';
 import { buildServer } from '../server.ts';
 import { buildOutboxHandlers } from '../outbox/handlers.ts';
+import type { Classification } from '@haulq/contracts';
+import type { ModelDocumentReader, ModelReading } from './model-reader.ts';
 import { LocalDocumentReader } from './reader.ts';
+
+/**
+ * A model reader that returns whatever a test scripts, and records what it
+ * was asked. `read` returning null is the honest "could not help" answer —
+ * `AnthropicModelReader` itself only reaches that after a real HTTP call,
+ * already covered in `model-reader.test.ts`; this fake exists so the
+ * pipeline's wiring can be tested without one.
+ */
+class FakeModelReader implements ModelDocumentReader {
+  readonly name = 'fake-model/test-v1';
+  calls: Array<{ text: string; guess: Classification | null }> = [];
+  #next: ModelReading | null = null;
+
+  script(reading: ModelReading | null) {
+    this.#next = reading;
+  }
+
+  async read(text: string, guess: Classification | null): Promise<ModelReading | null> {
+    this.calls.push({ text, guess });
+    return this.#next;
+  }
+}
 
 const url = process.env['DATABASE_URL'];
 const suite = url ? describe : describe.skip;
@@ -84,6 +108,14 @@ const PACKET = pdf([
 /** A scan: no text layer at all, just an image the reader cannot open. */
 const SCAN = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(256, 7)]);
 
+/** Classifies confidently, but names no load number for the rule to find. */
+const RATECON_NO_LOADNUM = pdf([
+  'PRAIRIE LOGISTICS LLC',
+  'RATE CONFIRMATION',
+  'Weight: 42,000 lbs',
+  'Total Rate: $2,400.00',
+]);
+
 const as = (orgId: string, extra: Record<string, string> = {}) => ({
   'x-haulq-org-id': orgId,
   'x-haulq-user-id': userId,
@@ -114,7 +146,7 @@ async function upload(orgId: string, bytes: Buffer, filename: string, type = 'ap
 }
 
 /** Drain the outbox the way the runner would, and report what it did. */
-async function drain() {
+async function drain(modelReader?: ModelDocumentReader) {
   const logged: Array<{ o: Record<string, unknown>; msg: string }> = [];
   const handlers = buildOutboxHandlers({
     mailer: { send: async () => {} } as never,
@@ -122,6 +154,7 @@ async function drain() {
     db: app.db,
     storage: app.storage,
     reader: new LocalDocumentReader(),
+    modelReader,
     log: {
       info: (o, msg) => logged.push({ o: o as Record<string, unknown>, msg }),
       warn: (o, msg) => logged.push({ o: o as Record<string, unknown>, msg }),
@@ -266,5 +299,149 @@ suite('document classification and extraction', () => {
     await drain();
     const after = await fetchDoc(orgId, doc.id);
     assert.equal(after.status, 'extracted');
+  });
+
+  // --- the model pass --------------------------------------------------
+
+  describe('the model pass', () => {
+    it('reads a packet the deterministic rules could only guess at, when a model is configured', async () => {
+      const orgId = await newOrg('Model Packet Co');
+      const doc = await upload(orgId, PACKET, 'packet.pdf');
+
+      const model = new FakeModelReader();
+      model.script({
+        kind: 'rate_confirmation',
+        confidence: 0.88,
+        fields: { rateAmount: { value: 240000, raw: '$2,400.00', label: 'model' } },
+      });
+
+      await drain(model);
+      const after = await fetchDoc(orgId, doc.id);
+
+      assert.equal(after.kind, 'rate_confirmation');
+      assert.equal(after.status, 'extracted');
+      assert.equal(after.extracted.rateAmount.value, 240000);
+      assert.match(after.extractorVersion, /fake-model\/test-v1/);
+      assert.equal(model.calls.length, 1, 'called once, only after the deterministic rules declined');
+    });
+
+    it('still returns needs:model when even the configured model cannot help', async () => {
+      const orgId = await newOrg('Model Declines Co');
+      const doc = await upload(orgId, PACKET, 'packet.pdf');
+
+      const model = new FakeModelReader();
+      model.script(null);
+
+      const { logged } = await drain(model);
+      const after = await fetchDoc(orgId, doc.id);
+
+      assert.equal(after.status, 'received', 'stays in the inbox — a model call was spent, not wasted silently');
+      assert.ok(logged.some((l) => l.msg === 'document needs model'));
+      assert.equal(model.calls.length, 1);
+    });
+
+    it('attributes a model-produced reading to the model, not the outbox consumer', async () => {
+      const orgId = await newOrg('Model Attribution Co');
+      await upload(orgId, PACKET, 'packet.pdf');
+
+      const model = new FakeModelReader();
+      model.script({ kind: 'pod', confidence: 0.8, fields: {} });
+      await drain(model);
+
+      const timeline = await app.inject({
+        method: 'GET',
+        url: '/v1/timeline?limit=20',
+        headers: as(orgId),
+      });
+      const extracted = timeline
+        .json()
+        .items.find((e: { verb: string }) => e.verb === 'document.extracted');
+
+      assert.ok(extracted);
+      assert.equal(extracted.actorType, 'agent');
+      // The reader that read the *bytes* was local-pdf-text; the reading
+      // itself came from the model, and guardrail 5 asks for the second one.
+      assert.equal(extracted.actorId, 'fake-model/test-v1');
+    });
+
+    it('fills a missing expected field on an already-confident classification', async () => {
+      const orgId = await newOrg('Fill Gap Co');
+      const doc = await upload(orgId, RATECON_NO_LOADNUM, 'ratecon.pdf');
+
+      const model = new FakeModelReader();
+      model.script({
+        kind: 'rate_confirmation',
+        confidence: 0.95,
+        fields: { brokerLoadNumber: { value: 'RC-FILLED', raw: 'RC-FILLED', label: 'model' } },
+      });
+
+      await drain(model);
+      const after = await fetchDoc(orgId, doc.id);
+
+      assert.equal(after.extracted.rateAmount.value, 240000, 'the rule-found field is untouched');
+      assert.equal(after.extracted.brokerLoadNumber.value, 'RC-FILLED', 'the gap the rules left is now filled');
+      assert.match(after.extractorVersion, /\+fake-model\/test-v1/);
+    });
+
+    it('does not merge a model fill-in when the model names a different kind', async () => {
+      const orgId = await newOrg('Kind Mismatch Co');
+      const doc = await upload(orgId, RATECON_NO_LOADNUM, 'ratecon.pdf');
+
+      const model = new FakeModelReader();
+      // Disagrees with the deterministic classification — its fields answer
+      // a different question and must not be trusted for this document.
+      model.script({
+        kind: 'bol',
+        confidence: 0.9,
+        fields: { brokerLoadNumber: { value: 'WRONG-KIND', raw: 'WRONG-KIND', label: 'model' } },
+      });
+
+      await drain(model);
+      const after = await fetchDoc(orgId, doc.id);
+
+      assert.equal(after.extracted.brokerLoadNumber, undefined);
+      assert.doesNotMatch(after.extractorVersion, /fake-model/);
+    });
+
+    it('never calls the model for a document the deterministic rules already read completely', async () => {
+      const orgId = await newOrg('No Call Needed Co');
+      await upload(orgId, RATECON, 'ratecon.pdf');
+
+      const model = new FakeModelReader();
+      model.script({ kind: 'rate_confirmation', confidence: 0.9, fields: {} });
+      await drain(model);
+
+      assert.equal(model.calls.length, 0, 'nothing was missing, so nothing was worth a call');
+    });
+
+    it('behaves exactly as before when no model is configured', async () => {
+      const orgId = await newOrg('No Model Configured Co');
+      const doc = await upload(orgId, RATECON_NO_LOADNUM, 'ratecon.pdf');
+
+      await drain(); // no modelReader argument at all
+
+      const after = await fetchDoc(orgId, doc.id);
+      assert.equal(after.status, 'extracted');
+      assert.equal(after.extracted.brokerLoadNumber, undefined, 'still missing — nothing was asked to fill it');
+    });
+
+    it('is idempotent for a model-produced reading, same as a deterministic one', async () => {
+      const orgId = await newOrg('Model Redelivery Co');
+      const doc = await upload(orgId, PACKET, 'packet.pdf');
+
+      const model = new FakeModelReader();
+      model.script({ kind: 'pod', confidence: 0.8, fields: {} });
+      await drain(model);
+      const first = await fetchDoc(orgId, doc.id);
+
+      const requeued = await requeueOutboxForTest(app.db, { orgId, topic: 'document.received' });
+      assert.equal(requeued, 1);
+
+      const { logged } = await drain(model);
+      const second = await fetchDoc(orgId, doc.id);
+
+      assert.deepEqual(second.extractedAt, first.extractedAt);
+      assert.ok(logged.some((l) => l.o['why'] === 'already_read'));
+    });
   });
 });

@@ -1,0 +1,39 @@
+Load History Report
+Prairie Freight LLC   |   20 May 2026 - 17 Aug 2026   |   exported 17 Aug 2026
+
+Load #,Broker,Pickup City,Pickup State,Delivery City,Delivery State,Pickup Date,Delivery Date,Rate,Miles,Truck
+4100,Acme Logistics,Wichita,KS,Denver,CO,2026-05-19,2026-05-21,"$993.96",520,Unit 12
+4101,"ACME LOGISTICS, INC.",Tulsa,OK,Dallas,TX,05/21/2026,05/22/2026,636.00,290,Unit 12
+4102,Acme Logistics LLC,Omaha,NE,Des Moines,IA,24 May 2026,25 May 2026,"219.42",135,Unit 12
+4103,Apex Freight Co,Kansas City,MO,Chicago,IL,2026-05-26,2026-05-27,"827.49",510,Unit 12
+4104,Apex Freight,Springfield,MO,Memphis,TN,05/26/2026,05/28/2026,"$661.71",285,Unit 12
+4105,Beta Transport,Wichita,KS,Amarillo,TX,29 May 2026,30 May 2026,753.22,340,Unit 12
+4106,Cornhusker Carriers,Topeka,KS,Oklahoma City,OK,2026-05-31,2026-06-01,"465.66",295,Unit 12
+4107,Prairie Brokerage LLC,Lincoln,NE,Sioux Falls,SD,06/02/2026,06/03/2026,"380.19",175,Unit 12
+4108,Acme Logistics,Wichita,KS,Denver,CO,04 Jun 2026,06 Jun 2026,"$1,051.84",520,Unit 12
+4109,"ACME LOGISTICS, INC.",Tulsa,OK,Dallas,TX,2026-06-06,2026-06-07,598.05,290,Unit 12
+4110,Acme Logistics LLC,Omaha,NE,Des Moines,IA,06/09/2026,06/10/2026,"280.79",135,Unit 12
+4111,Apex Freight Co,Kansas City,MO,Chicago,IL,10 Jun 2026,ASAP,"956.47",510,Unit 12
+4112,Apex Freight,Springfield,MO,Memphis,TN,2026-06-11,2026-06-13,"$513.63",285,Unit 12
+4113,Beta Transport,Wichita,KS,Amarillo,TX,06/13/2026,06/15/2026,535.09,340,Unit 12
+4114,Cornhusker Carriers,Topeka,KS,Oklahoma City,OK,15 Jun 2026,17 Jun 2026,"482.69",295,Unit 12
+4115,Prairie Brokerage LLC,Lincoln,NE,Sioux Falls,SD,2026-06-18,2026-06-20,"280.61",175,Unit 12
+4116,Acme Logistics,Wichita,KS,Denver,CO,06/20/2026,06/21/2026,"$894.82",520,Unit 12
+4117,"ACME LOGISTICS, INC.",Tulsa, OK ,OK,Dallas,TX,21 Jun 2026,23 Jun 2026,536.61,290,Unit 12
+4118,Acme Logistics LLC,Omaha,NE,Des Moines,IA,2026-06-24,2026-06-26,"217.14",135,Unit 12
+4119,Apex Freight Co,Kansas City,MO,Chicago,IL,06/25/2026,06/27/2026,"927.95",510,Unit 12
+4120,Apex Freight,Springfield,MO,Memphis,TN,28 Jun 2026,30 Jun 2026,"$445.20",285,Unit 12
+4121,Beta Transport,Wichita,KS,Amarillo,TX,2026-07-01,2026-07-02,563.61,340,Unit 12
+4122,Cornhusker Carriers,Topeka,KS,Oklahoma City,OK,07/02/2026,07/03/2026,"471.38",295,Unit 12
+4123,Prairie Brokerage LLC,Lincoln,NE,Sioux Falls,SD,05 Jul 2026,06 Jul 2026,see invoice,175,Unit 12
+4124,Acme Logistics,Wichita,KS,Denver,CO,2026-07-05,2026-07-07,"$1,017.69",520,Unit 12
+4125,"ACME LOGISTICS, INC.",Tulsa,OK,Dallas,TX,07/07/2026,07/09/2026,598.84,290,Unit 12
+4126,Acme Logistics LLC,Omaha,NE,Des Moines,IA,09 Jul 2026,11 Jul 2026,"254.69",135,Unit 12
+4127,Apex Freight Co,Kansas City,MO,Chicago,IL,2026-07-12,2026-07-13,"900.58",510,Unit 12
+4128,Apex Freight,Springfield,MO,Memphis,TN,07/15/2026,07/16/2026,"$489.79",285,Unit 12
+4129,Beta Transport,Wichita,KS,Amarillo,TX,17 Jul 2026,18 Jul 2026,538.45,340,Unit 12
+4130,Cornhusker Carriers,Topeka,KS,Oklahoma City,OK,2026-07-18,2026-07-19,"561.45",295,Unit 12
+4131,Prairie Brokerage LLC,Lincoln,NE,Sioux Falls,SD,07/19/2026,07/21/2026,"387.49",175,Unit 12
+4132,Acme Logistics,Wichita,KS,Denver,CO,23 Jul 2026,24 Jul 2026,"$836.90",520,Unit 12
+4133,"ACME LOGISTICS, INC.",Tulsa,OK,Dallas,TX,2026-07-24,2026-07-25,453.10,290,Unit 12
+,,,,,,,,"TOTAL",,

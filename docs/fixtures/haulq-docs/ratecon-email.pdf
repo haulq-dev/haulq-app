@@ -1,0 +1,25 @@
+%PDF-1.4
+1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj
+2 0 obj << /Type /Pages /Count 1 >> endobj
+3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 90 0 R /Resources << /Font << /F1 91 0 R >> >> >> endobj
+90 0 obj << /Length 265 >> stream
+BT /F1 12 Tf 72 720 Td
+(PRAIRIE LOGISTICS LLC) Tj
+0 -16 Td
+(RATE CONFIRMATION) Tj
+0 -16 Td
+(Carrier: Prairie Freight LLC) Tj
+0 -16 Td
+(Load Number: RC-1003) Tj
+0 -16 Td
+(Total Rate: $2,400.00) Tj
+0 -16 Td
+(Weight: 42000) Tj
+0 -16 Td
+(Equipment: Straight Box) Tj
+ET
+
+endstream endobj
+91 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj
+trailer << /Root 1 0 R >>
+%%EOF

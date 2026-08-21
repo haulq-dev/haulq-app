@@ -20,11 +20,10 @@
  *      across the top has told us what it is, and no model is consulted.
  *   3. Labelled values are read the same way. A rate confirmation whose rate
  *      sits after the word RATE needs nothing further.
- *
- * A model is only worth paying for where all three decline: a photograph, a fax,
- * a template nobody has seen. That path is not built yet, and this returns
- * `needs: 'ocr'` or `needs: 'model'` so the handler can say so plainly instead
- * of writing a guess.
+ *   4. Only now, and only for what is left over, `deps.modelReader` — see
+ *      `model-reader.ts`. Unset in every environment with no key configured,
+ *      in which case this behaves exactly as it did before the model pass
+ *      existed: `needs: 'model'`, or a `missing` list, for a person to look at.
  *
  * ---------------------------------------------------------------------------
  * Nothing here decides a document is fine
@@ -40,21 +39,27 @@ import {
   isConfident,
   worthExtracting,
   type Classification,
+  type DocumentKind,
+  type ExtractedField,
 } from '@haulq/contracts';
 import {
   getDocument,
   recordClassification,
   recordExtraction,
+  scope,
   type Document,
   type ObjectStore,
   type Scope,
 } from '@haulq/db';
+import type { ModelDocumentReader } from './model-reader.ts';
 import type { DocumentReader } from './reader.ts';
 import { validateDocument, type ValidationAttempt } from './validate.ts';
 
 export interface PipelineDeps {
   reader: DocumentReader;
   storage: ObjectStore;
+  /** Unset means the model pass does not exist yet in this environment — see the module note. */
+  modelReader?: ModelDocumentReader | undefined;
 }
 
 export type PipelineOutcome =
@@ -126,6 +131,27 @@ export async function processDocument(
         kindConfidence: classification.confidence,
       });
     }
+
+    if (deps.modelReader) {
+      const reading = await deps.modelReader.read(read.text, classification);
+      if (reading) {
+        // The model's own kind may disagree with — or simply exceed — the
+        // pattern guess. Re-running the deterministic rules against it costs
+        // nothing further and means `missing` stays an honest answer rather
+        // than an empty list nobody computed.
+        const patterns = extractDeterministically({ text: read.text, kind: reading.kind });
+        return finishExtraction(s, documentId, document, read, {
+          kind: reading.kind,
+          confidence: reading.confidence,
+          reason: `read by ${deps.modelReader.name}`,
+          fields: mergeFields(patterns.fields, reading.fields),
+          missing: patterns.missing.filter((f) => !(f in reading.fields)),
+          versionSuffix: deps.modelReader.name,
+          modelName: deps.modelReader.name,
+        });
+      }
+    }
+
     return { status: 'needs', needs: 'model', document, guess: classification };
   }
 
@@ -134,34 +160,103 @@ export async function processDocument(
     kind: classification.kind,
   });
 
-  // Version identifies both halves. Re-running one of them later has to be
-  // distinguishable from re-running the other, and a single opaque string is
-  // what `documents.extractor_version` gets compared against.
-  const version = `${read.version}/${extracted.version}`;
+  if (extracted.missing.length > 0 && deps.modelReader) {
+    const reading = await deps.modelReader.read(read.text, classification);
+    // Only trust the fill-in when the model agrees on what kind of document
+    // this is. If it does not, its fields are answers to a different
+    // question and merging them would silently mix two readings.
+    if (reading && reading.kind === classification.kind) {
+      const filled = mergeFields(extracted.fields, reading.fields);
+      const stillMissing = extracted.missing.filter((f) => !(f in filled));
+      if (stillMissing.length < extracted.missing.length) {
+        return finishExtraction(s, documentId, document, read, {
+          kind: classification.kind,
+          confidence: classification.confidence,
+          reason: `${classification.reason}; gaps filled by ${deps.modelReader.name}`,
+          fields: filled,
+          missing: stillMissing,
+          versionSuffix: `${extracted.version}+${deps.modelReader.name}`,
+          modelName: deps.modelReader.name,
+        });
+      }
+    }
+  }
+
+  return finishExtraction(s, documentId, document, read, {
+    kind: classification.kind,
+    confidence: classification.confidence,
+    reason: classification.reason,
+    fields: extracted.fields,
+    missing: extracted.missing,
+    versionSuffix: extracted.version,
+  });
+}
+
+/** A rule-found value always wins over a model-found one for the same field — the rule is reading a label, not estimating. */
+function mergeFields(
+  ruleFields: Record<string, ExtractedField>,
+  modelFields: Record<string, ExtractedField>,
+): Record<string, ExtractedField> {
+  return { ...modelFields, ...ruleFields };
+}
+
+/**
+ * Write an extraction and its validation, and build the outcome.
+ *
+ * The one place both the deterministic path and the model path end up,
+ * because a caller of `processDocument` should not be able to tell which one
+ * produced a given `'read'` outcome — the shape is identical either way, and
+ * `extractorVersion` on the document is where that provenance actually lives.
+ */
+async function finishExtraction(
+  s: Scope,
+  documentId: string,
+  document: Document,
+  read: { version: string; pageCount: number | null },
+  args: {
+    kind: DocumentKind;
+    confidence: number;
+    reason: string;
+    fields: Record<string, ExtractedField>;
+    missing: string[];
+    /** Appended to `read.version` to form `extractor_version`. */
+    versionSuffix: string;
+    /** Set only when a model actually produced part of this reading — see the module note on attribution. */
+    modelName?: string;
+  },
+): Promise<PipelineOutcome> {
+  const version = `${read.version}/${args.versionSuffix}`;
 
   if (document.extractorVersion === version && document.extractedAt) {
     return { status: 'skipped', why: 'already_read' };
   }
 
-  const updated = await recordExtraction(s, documentId, {
-    extracted: extracted.fields,
+  // Guardrail 5: a reading a model touched is attributed to that model, not
+  // to whichever process happened to be draining the outbox. Built fresh
+  // rather than mutating `s`, so nothing outside this one write is affected.
+  const writeScope: Scope = args.modelName
+    ? scope(s.db, { ...s.ctx, actor: { type: 'agent', model: args.modelName } })
+    : s;
+
+  const updated = await recordExtraction(writeScope, documentId, {
+    extracted: args.fields,
     extractorVersion: version,
-    kind: classification.kind,
-    kindConfidence: classification.confidence,
+    kind: args.kind,
+    kindConfidence: args.confidence,
     ...(read.pageCount !== null ? { pageCount: read.pageCount } : {}),
   });
 
-  const validation = await validateDocument(s, documentId);
+  const validation = await validateDocument(writeScope, documentId);
 
   return {
     status: 'read',
     // Re-read rather than reusing `updated`: validation writes the status and
     // the findings, so `updated` is one revision stale the moment it returns.
-    document: (await getDocument(s, documentId)) ?? updated,
-    classification,
-    fieldCount: Object.keys(extracted.fields).length,
-    missing: extracted.missing,
-    extractable: worthExtracting(classification.kind),
+    document: (await getDocument(writeScope, documentId)) ?? updated,
+    classification: { kind: args.kind, confidence: args.confidence, reason: args.reason },
+    fieldCount: Object.keys(args.fields).length,
+    missing: args.missing,
+    extractable: worthExtracting(args.kind),
     validation,
   };
 }

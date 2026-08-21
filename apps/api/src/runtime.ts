@@ -24,6 +24,7 @@ import {
   type ObjectStore,
 } from '@haulq/db';
 import { AzureDocumentReader, ChainedDocumentReader } from './documents/azure-reader.ts';
+import { AnthropicModelReader, type ModelDocumentReader } from './documents/model-reader.ts';
 import { LocalDocumentReader, type DocumentReader } from './documents/reader.ts';
 import { LogMailer, PostmarkMailer, type Mailer } from './email/postmark.ts';
 import type { Env } from './env.ts';
@@ -101,6 +102,24 @@ export function buildDocumentReader(env: Env, log: RuntimeLog): DocumentReader {
   ]);
   log.info({ readers: chain.name, ocr: true }, 'document reader ready');
   return chain;
+}
+
+/**
+ * The model pass, when a key is configured.
+ *
+ * Undefined otherwise — `processDocument` treats an unset `modelReader`
+ * exactly as it did before this existed, so a fresh clone and CI both work
+ * with no account, same as Azure above.
+ */
+export function buildModelReader(env: Env, log: RuntimeLog): ModelDocumentReader | undefined {
+  if (!env.ANTHROPIC_API_KEY) {
+    log.info({ modelPass: false }, 'model pass not configured — set ANTHROPIC_API_KEY to read what the deterministic rules decline');
+    return undefined;
+  }
+
+  const reader = new AnthropicModelReader({ apiKey: env.ANTHROPIC_API_KEY, model: env.ANTHROPIC_MODEL });
+  log.info({ modelPass: true, model: reader.name }, 'model pass ready');
+  return reader;
 }
 
 /**

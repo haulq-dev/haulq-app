@@ -247,7 +247,8 @@ Open the app on a phone, or DevTools at 375px.
 
 ## What is deliberately not covered
 
-- **Documents** — Phase 1a, not built.
+- **Documents** — Phase 1a. Its own walkthrough is `PHASE_1A_DOCS_WALKTHROUGH.md`,
+  beside this file.
 - **Verify / mc-lookup** — the FMCSA key is set, so `haulq.ai/tools/mc-lookup`
   should answer now. Test that separately on the marketing site; it is not part
   of the app.
