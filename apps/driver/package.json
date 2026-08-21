@@ -1,0 +1,38 @@
+{
+  "name": "@haulq/driver",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The driver check-in app. React + Vite, wrapped in Capacitor for iOS/Android. PHASE_2_PLAN.md section 4.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "cap:sync": "vite build && cap sync"
+  },
+  "dependencies": {
+    "@capacitor/app": "^6.0.0",
+    "@capacitor/core": "^6.0.0",
+    "@capacitor/geolocation": "^6.0.0",
+    "@haulq/contracts": "workspace:*",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "@tanstack/react-query": "^5.62.0",
+    "@fontsource-variable/dm-sans": "^5.1.0",
+    "@fontsource-variable/fraunces": "^5.1.0",
+    "@fontsource-variable/jetbrains-mono": "^5.3.0"
+  },
+  "devDependencies": {
+    "@capacitor/android": "^6.0.0",
+    "@capacitor/cli": "^6.0.0",
+    "@capacitor/ios": "^6.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "typescript": "^5.7.0",
+    "vite": "^6.0.0",
+    "@tailwindcss/vite": "^4.0.0",
+    "tailwindcss": "^4.0.0"
+  }
+}
