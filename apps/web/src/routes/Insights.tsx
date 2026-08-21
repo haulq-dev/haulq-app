@@ -54,11 +54,21 @@ interface BreakdownRow {
   basis: 'actual' | 'expected' | 'mixed';
 }
 
+interface PaymentPerformance {
+  paidInvoiceCount: number;
+  avgDaysToPayment: number | null;
+  lateCount: number;
+  exceptionRate: number | null;
+  factoringRejectedCount: number;
+  periodDays: number;
+}
+
 interface InsightsResponse {
   summary: Summary;
   byBroker: BreakdownRow[];
   byLane: BreakdownRow[];
   byTruck: BreakdownRow[];
+  payment: PaymentPerformance;
 }
 
 const WINDOWS = [30, 90, 180, 365] as const;
@@ -203,6 +213,46 @@ function Breakdown({
   );
 }
 
+/**
+ * Payment speed and exceptions — the piece of Insights that was blocked on
+ * Pay: there is nothing to measure until an invoice has a paid date.
+ *
+ * Exception rate is late-paid invoices only. A currently-overdue invoice
+ * that has not been paid at all yet is a different question — that is what
+ * Pay's own receivables aging answers — and averaging the two together
+ * would blur "this always happens eventually, just slowly" with "this
+ * might never get paid."
+ */
+function PaymentPerformanceCard({ payment: p }: { payment: PaymentPerformance }) {
+  return (
+    <Card title="Payment performance">
+      {p.paidInvoiceCount === 0 ? (
+        <Empty>Nothing paid in the last {p.periodDays} days yet.</Empty>
+      ) : (
+        <div className="grid gap-3 sm:grid-cols-3">
+          <Stat
+            label="Days to get paid"
+            value={p.avgDaysToPayment === null ? '—' : p.avgDaysToPayment.toFixed(1)}
+            sub={`averaged over ${p.paidInvoiceCount} paid ${p.paidInvoiceCount === 1 ? 'invoice' : 'invoices'}`}
+          />
+          <Stat
+            label="Paid late"
+            value={p.exceptionRate === null ? '—' : `${Math.round(p.exceptionRate * 100)}%`}
+            sub={`${p.lateCount} of ${p.paidInvoiceCount}, against the due date on file`}
+            tone={p.exceptionRate !== null && p.exceptionRate > 0 ? 'bad' : 'ink'}
+          />
+          <Stat
+            label="Factoring rejected"
+            value={String(p.factoringRejectedCount)}
+            sub="submissions a factor turned down"
+            tone={p.factoringRejectedCount > 0 ? 'bad' : 'ink'}
+          />
+        </div>
+      )}
+    </Card>
+  );
+}
+
 export function InsightsScreen() {
   const [days, setDays] = useState<number>(90);
 
@@ -307,6 +357,8 @@ export function InsightsScreen() {
               typed rather than one measured.
             </p>
           )}
+
+          <PaymentPerformanceCard payment={data.data!.payment} />
 
           <Breakdown
             title="By broker"

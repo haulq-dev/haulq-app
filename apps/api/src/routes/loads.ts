@@ -34,6 +34,7 @@ import {
   listLoads,
   loadCounts,
   LoadError,
+  loadMargin,
   updateLoadStatus,
   type LoadStatus,
 } from '@haulq/db';
@@ -144,6 +145,18 @@ export async function loadRoutes(app: FastifyInstance) {
     const load = await getLoad(s, id);
     if (!load) throw new HttpError(404, 'not_found', 'That load no longer exists.');
     return load;
+  });
+
+  /**
+   * What this one load actually made. PHASE_1_PLAN.md section 4's per-load
+   * gap — a single-row read, not a new aggregation engine.
+   */
+  app.get('/v1/loads/:id/margin', async (request) => {
+    const s = await requireScope(request);
+    const { id } = request.params as { id: string };
+    const margin = await loadMargin(s, id);
+    if (!margin) throw new HttpError(404, 'not_found', 'That load no longer exists.');
+    return margin;
   });
 
   app.post('/v1/loads', async (request, reply) => {

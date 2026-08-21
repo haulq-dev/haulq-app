@@ -27,7 +27,7 @@ import {
 } from '@haulq/contracts';
 import { request, type Truck } from '../lib/api.ts';
 import { useOrgs, useSession } from '../components/AuthGate.tsx';
-import { Card, Empty, ErrorNote, Field, Money, Num, Pill } from '../components/ui.tsx';
+import { Card, Empty, ErrorNote, Field, Label, Money, Num, Pill } from '../components/ui.tsx';
 
 interface Stop {
   id: string;
@@ -324,9 +324,96 @@ function AddLoad({ trucks, onDone }: { trucks: Truck[]; onDone: () => void }) {
   );
 }
 
+interface LoadMargin {
+  reference: number;
+  revenueCents: number | null;
+  loadedMiles: number | null;
+  deadheadMiles: number | null;
+  revenuePerTotalMileCents: number | null;
+  revenuePerLoadedMileCents: number | null;
+  basis: 'actual' | 'expected';
+  invoiceStatus: string | null;
+  invoiceTotalCents: number | null;
+}
+
+const INVOICE_STATUS_TONE: Record<string, 'ok' | 'warn' | 'neutral'> = {
+  draft: 'neutral',
+  sent: 'warn',
+  paid: 'ok',
+  void: 'neutral',
+};
+
+/**
+ * What one load actually made — PHASE_1_PLAN.md section 4's per-load gap.
+ * `basis` matters here more than in the table's own per-mile column: the
+ * table already shows the estimate everywhere, so this is where "is that
+ * number real yet" gets said plainly.
+ */
+function LoadMarginDetail({ loadId }: { loadId: string }) {
+  const margin = useQuery({
+    queryKey: ['load-margin', loadId],
+    queryFn: () => request<LoadMargin>(`/v1/loads/${loadId}/margin`),
+  });
+
+  if (!margin.data) return null;
+  const m = margin.data;
+
+  return (
+    <Card title={`Load ${m.reference} — what it made`}>
+      <div className="grid gap-3 sm:grid-cols-4">
+        <div>
+          <Label>Revenue</Label>
+          <div className="num mt-1 text-lg">
+            {m.revenueCents !== null ? <Money cents={m.revenueCents} /> : '—'}
+          </div>
+          <span className="field-label text-mute">
+            {m.basis === 'actual' ? 'reconciled' : 'estimated, not yet reconciled'}
+          </span>
+        </div>
+        <div>
+          <Label>Per total mile</Label>
+          <div className="num mt-1 text-lg">
+            {m.revenuePerTotalMileCents !== null
+              ? `$${(m.revenuePerTotalMileCents / 100).toFixed(2)}`
+              : 'no deadhead recorded'}
+          </div>
+        </div>
+        <div>
+          <Label>Per loaded mile</Label>
+          <div className="num mt-1 text-lg">
+            {m.revenuePerLoadedMileCents !== null
+              ? `$${(m.revenuePerLoadedMileCents / 100).toFixed(2)}`
+              : '—'}
+          </div>
+        </div>
+        <div>
+          <Label>Invoice</Label>
+          <div className="mt-1">
+            {m.invoiceStatus ? (
+              <>
+                <Pill tone={INVOICE_STATUS_TONE[m.invoiceStatus] ?? 'neutral'}>
+                  {m.invoiceStatus}
+                </Pill>
+                {m.invoiceTotalCents !== null && (
+                  <span className="num ml-2 text-sm text-slate">
+                    <Money cents={m.invoiceTotalCents} />
+                  </span>
+                )}
+              </>
+            ) : (
+              <span className="text-sm text-mute">not invoiced yet</span>
+            )}
+          </div>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
 export function LoadsScreen() {
   const [adding, setAdding] = useState(false);
   const [filter, setFilter] = useState<LoadStatus | ''>('');
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const session = useSession();
   const orgs = useOrgs();
 
@@ -412,9 +499,14 @@ export function LoadsScreen() {
                   const pickup = load.stops.find((s) => s.type === 'pickup');
                   const delivery = [...load.stops].reverse().find((s) => s.type === 'delivery');
                   return (
-                    <tr key={load.id}>
+                    <tr key={load.id} className={selectedId === load.id ? 'bg-wash' : undefined}>
                       <td>
-                        <span className="num block font-medium">{load.reference}</span>
+                        <button
+                          className="num block text-left font-medium hover:underline"
+                          onClick={() => setSelectedId(load.id)}
+                        >
+                          {load.reference}
+                        </button>
                         <span className="block text-xs text-mute">
                           {load.brokerName ?? 'no broker'}
                         </span>
@@ -476,6 +568,8 @@ export function LoadsScreen() {
           </div>
         )}
       </Card>
+
+      {selectedId && <LoadMarginDetail loadId={selectedId} />}
     </div>
   );
 }

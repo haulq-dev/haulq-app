@@ -28,7 +28,23 @@ import { closeDatabase, createDatabase, type Database } from '../client.ts';
 import type { Scope } from '../context.ts';
 import { createTestOrg, createTestUser, destroyTestOrg, destroyTestUser, setLoadActualsForTest, testScope } from '../testing.ts';
 import { createLoad, updateLoadStatus } from './loads.ts';
-import { insightsSummary, revenueByBroker, revenueByLane, revenueByTruck } from './insights.ts';
+import {
+  insightsSummary,
+  loadMargin,
+  paymentPerformance,
+  revenueByBroker,
+  revenueByLane,
+  revenueByTruck,
+} from './insights.ts';
+import {
+  assembleFactoringPacket,
+  createFactoringCompany,
+  generateInvoice,
+  recordFactoringResponse,
+  recordPayment,
+  sendInvoice,
+  submitFactoringPacket,
+} from './pay.ts';
 import { createTruck } from './trucks.ts';
 
 const url = process.env['DATABASE_URL'];
@@ -344,6 +360,134 @@ suite('insights', () => {
       }
       const rows = await revenueByBroker(s, { limit: 2 });
       assert.equal(rows.length, 2);
+    });
+  });
+
+  describe('loadMargin', () => {
+    it('reports no invoice for a load never invoiced', async () => {
+      const s = await freshOrg('No Invoice Co');
+      const load = await delivered(s, {
+        rate: { amount: 40000, currency: 'USD' },
+        expectedLoadedMiles: 127,
+        expectedDeadheadMiles: 176,
+      });
+
+      const margin = await loadMargin(s, load.id);
+      assert.ok(margin);
+      assert.equal(margin!.reference, load.reference);
+      assert.equal(margin!.revenueCents, 40000);
+      assert.equal(margin!.basis, 'expected');
+      assert.equal(margin!.invoiceStatus, null);
+      assert.equal(margin!.invoiceTotalCents, null);
+    });
+
+    it('reports the open invoice once one is generated', async () => {
+      const s = await freshOrg('With Invoice Co');
+      const load = await delivered(s, { rate: { amount: 40000, currency: 'USD' } });
+      await generateInvoice(s, {
+        loadId: load.id,
+        lineItems: [{ code: 'linehaul', description: 'Linehaul', amountCents: 40000 }],
+      });
+
+      const margin = await loadMargin(s, load.id);
+      assert.equal(margin!.invoiceStatus, 'draft');
+      assert.equal(margin!.invoiceTotalCents, 40000);
+    });
+
+    it('switches to actual basis once the load is reconciled', async () => {
+      const s = await freshOrg('Reconciled Margin Co');
+      const load = await delivered(s, {
+        rate: { amount: 40000, currency: 'USD' },
+        expectedLoadedMiles: 100,
+        expectedDeadheadMiles: 20,
+      });
+      await setLoadActualsForTest(db, load.id, {
+        actualRevenueAmount: 50000,
+        actualLoadedMiles: 120,
+        actualDeadheadMiles: 10,
+      });
+
+      const margin = await loadMargin(s, load.id);
+      assert.equal(margin!.basis, 'actual');
+      assert.equal(margin!.revenueCents, 50000);
+    });
+
+    it('is invisible from another tenant', async () => {
+      const s = await freshOrg('Margin Owner Co');
+      const other = await freshOrg('Margin Other Co');
+      const load = await delivered(s);
+
+      assert.equal(await loadMargin(other, load.id), undefined);
+    });
+  });
+
+  describe('paymentPerformance', () => {
+    it('is zeros and nulls with nothing paid', async () => {
+      const s = await freshOrg('Nothing Paid Co');
+      const perf = await paymentPerformance(s);
+      assert.equal(perf.paidInvoiceCount, 0);
+      assert.equal(perf.avgDaysToPayment, null);
+      assert.equal(perf.exceptionRate, null);
+      assert.equal(perf.factoringRejectedCount, 0);
+    });
+
+    it('does not count an on-time payment as late', async () => {
+      const s = await freshOrg('On Time Co');
+      const load = await delivered(s);
+      const futureDue = new Date(Date.now() + 5 * 86_400_000).toISOString();
+      const invoice = await generateInvoice(s, {
+        loadId: load.id,
+        lineItems: [{ code: 'linehaul', description: 'A', amountCents: 10000 }],
+        dueAt: futureDue,
+      });
+      await sendInvoice(s, invoice.id);
+      await recordPayment(s, { invoiceId: invoice.id, amountCents: 10000, source: 'broker_direct' });
+
+      const perf = await paymentPerformance(s);
+      assert.equal(perf.paidInvoiceCount, 1);
+      assert.equal(perf.lateCount, 0);
+      assert.equal(perf.exceptionRate, 0);
+      assert.ok(perf.avgDaysToPayment !== null && perf.avgDaysToPayment >= 0);
+    });
+
+    it('flags a payment landing after the due date as late', async () => {
+      const s = await freshOrg('Late Payment Co');
+      const load = await delivered(s);
+      const pastDue = new Date(Date.now() - 5 * 86_400_000).toISOString();
+      const invoice = await generateInvoice(s, {
+        loadId: load.id,
+        lineItems: [{ code: 'linehaul', description: 'A', amountCents: 10000 }],
+        dueAt: pastDue,
+      });
+      await sendInvoice(s, invoice.id);
+      await recordPayment(s, { invoiceId: invoice.id, amountCents: 10000, source: 'broker_direct' });
+
+      const perf = await paymentPerformance(s);
+      assert.equal(perf.lateCount, 1);
+      assert.equal(perf.exceptionRate, 1);
+    });
+
+    it('counts a factoring rejection separately from late payments', async () => {
+      const s = await freshOrg('Rejected Factor Co');
+      const load = await delivered(s);
+      const invoice = await generateInvoice(s, {
+        loadId: load.id,
+        lineItems: [{ code: 'linehaul', description: 'A', amountCents: 10000 }],
+      });
+      await sendInvoice(s, invoice.id);
+      const factor = await createFactoringCompany(s, { name: 'Reject Capital' });
+      const packet = await assembleFactoringPacket(s, {
+        invoiceId: invoice.id,
+        factoringCompanyId: factor.id,
+        documentIds: [],
+      });
+      await submitFactoringPacket(s, packet.id);
+      await recordFactoringResponse(s, packet.id, { outcome: 'rejected', reason: 'Missing POD' });
+
+      const perf = await paymentPerformance(s);
+      assert.equal(perf.factoringRejectedCount, 1);
+      // Never paid, so it does not also show up as a late payment.
+      assert.equal(perf.paidInvoiceCount, 0);
     });
   });
 });

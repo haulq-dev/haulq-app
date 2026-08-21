@@ -31,6 +31,7 @@
 import { and, eq, isNull, sql } from 'drizzle-orm';
 import type { Scope } from '../context.ts';
 import { loads } from '../schema/loads.ts';
+import { factoringPackets, invoices } from '../schema/pay.ts';
 import { carrierProfiles } from '../schema/tenancy.ts';
 
 /** Revenue: what actually came in, falling back to what was agreed. */
@@ -235,4 +236,156 @@ export async function revenueByTruck(s: Scope, q: InsightsWindow & { limit?: num
     sql`coalesce((select t.label from trucks t where t.id = ${loads.truckId}), 'No truck recorded')`,
     q.limit ?? 15,
   );
+}
+
+// ---------------------------------------------------------------------------
+// Per-load detail
+// ---------------------------------------------------------------------------
+//
+// PHASE_1_PLAN.md section 4, item 1: the one gap in this file that was never
+// blocked on Pay — a single-row read using the columns already on `loads`,
+// not a new aggregation engine. Named here rather than in Pay's own
+// repository because it is Insights' question ("what did this load make"),
+// answered with a Pay fact (the invoice) folded in.
+
+export interface LoadMargin {
+  loadId: string;
+  reference: number;
+  revenueCents: number | null;
+  loadedMiles: number | null;
+  deadheadMiles: number | null;
+  revenuePerTotalMileCents: number | null;
+  revenuePerLoadedMileCents: number | null;
+  /** Single load, so this is binary — "mixed" only means anything across a
+   *  group of loads, which `BreakdownRow.basis` already covers. */
+  basis: 'actual' | 'expected';
+  /** The load's current open invoice, if it has one. Null either side means
+   *  no invoice has been generated yet, not that one failed. */
+  invoiceStatus: string | null;
+  invoiceTotalCents: number | null;
+}
+
+export async function loadMargin(s: Scope, loadId: string): Promise<LoadMargin | undefined> {
+  const [row] = await s.db
+    .select({
+      reference: loads.reference,
+      revenueCents: REVENUE,
+      loadedMiles: LOADED,
+      deadheadMiles: DEADHEAD,
+      isActual: sql<boolean>`${loads.actualRevenueAmount} is not null`,
+      // A scalar subquery rather than a join: `invoices_load_key` guarantees
+      // at most one non-void invoice per load, so this can never multiply
+      // the row the way a join risks if that constraint is ever loosened.
+      //
+      // `loads.id` is written as literal SQL text, not `${loads.id}`: with a
+      // single-table `.from(loads)`, drizzle renders an interpolated column
+      // reference unqualified (bare `"id"`), and inside this correlated
+      // subquery that bare identifier resolves to `invoices.id` — the
+      // subquery's own closer scope — not the outer load's id. The
+      // condition silently becomes `i.load_id = i.id`, which never matches,
+      // and every load reads back with no invoice. Caught by
+      // `insights.test.ts`'s `loadMargin` suite against real Postgres;
+      // `tsc` has no way to see it since the generated SQL is only wrong at
+      // runtime.
+      invoiceStatus: sql<string | null>`(select i.status from invoices i where i.load_id = loads.id and i.status <> 'void' limit 1)`,
+      invoiceTotalCents: sql<number | null>`(select i.total_amount from invoices i where i.load_id = loads.id and i.status <> 'void' limit 1)`,
+    })
+    .from(loads)
+    .where(and(eq(loads.orgId, s.ctx.orgId), eq(loads.id, loadId), isNull(loads.deletedAt)))
+    .limit(1);
+
+  if (!row) return undefined;
+
+  const revenueCents = row.revenueCents === null ? null : Number(row.revenueCents);
+  const loadedMiles = row.loadedMiles === null ? null : Number(row.loadedMiles);
+  const deadheadMiles = row.deadheadMiles === null ? null : Number(row.deadheadMiles);
+  const measurable = revenueCents !== null && loadedMiles !== null && loadedMiles > 0 && deadheadMiles !== null;
+
+  return {
+    loadId,
+    reference: row.reference,
+    revenueCents,
+    loadedMiles,
+    deadheadMiles,
+    revenuePerTotalMileCents: measurable
+      ? Math.round(revenueCents! / (loadedMiles! + deadheadMiles!))
+      : null,
+    revenuePerLoadedMileCents:
+      revenueCents !== null && loadedMiles ? Math.round(revenueCents / loadedMiles) : null,
+    basis: row.isActual ? 'actual' : 'expected',
+    invoiceStatus: row.invoiceStatus,
+    invoiceTotalCents: row.invoiceTotalCents === null ? null : Number(row.invoiceTotalCents),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Payment speed and exceptions
+// ---------------------------------------------------------------------------
+//
+// PHASE_1_PLAN.md section 4, item 3: "entirely gated on 1b — there is nothing
+// to measure until an invoice has a paid date." Pay now writes `sentAt` and
+// `paidAt`, so this reads them rather than aggregating anything new on the
+// load side.
+
+export interface PaymentPerformance {
+  /** Invoices that reached `paid` within the window. */
+  paidInvoiceCount: number;
+  /** Days from `sentAt` to `paidAt`, averaged. Null with nothing paid yet. */
+  avgDaysToPayment: number | null;
+  /** Paid, but after `dueAt`. Invoices with no due date can't be late. */
+  lateCount: number;
+  /** `lateCount / paidInvoiceCount`. The single number for "how often does
+   *  this go wrong" — not currently-overdue invoices, which is what
+   *  `receivablesAging` in Pay already answers. */
+  exceptionRate: number | null;
+  /** Factoring submissions a factor turned down in the window — a different
+   *  kind of exception, kept separate rather than folded into one rate that
+   *  would average two unrelated failure modes together. */
+  factoringRejectedCount: number;
+  periodDays: number;
+}
+
+export async function paymentPerformance(
+  s: Scope,
+  q: InsightsWindow = {},
+): Promise<PaymentPerformance> {
+  const days = q.days ?? 90;
+
+  const [row] = await s.db
+    .select({
+      paidCount: sql<number>`count(*)::int`,
+      avgDays: sql<string | null>`avg(extract(epoch from (${invoices.paidAt} - ${invoices.sentAt})) / 86400)`,
+      lateCount: sql<number>`count(*) filter (where ${invoices.dueAt} is not null and ${invoices.paidAt} > ${invoices.dueAt})::int`,
+    })
+    .from(invoices)
+    .where(
+      and(
+        eq(invoices.orgId, s.ctx.orgId),
+        eq(invoices.status, 'paid'),
+        sql`${invoices.paidAt} >= now() - ${`${days} days`}::interval`,
+      ),
+    );
+
+  const [rejected] = await s.db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(factoringPackets)
+    .where(
+      and(
+        eq(factoringPackets.orgId, s.ctx.orgId),
+        eq(factoringPackets.status, 'rejected'),
+        sql`${factoringPackets.respondedAt} >= now() - ${`${days} days`}::interval`,
+      ),
+    );
+
+  const paidInvoiceCount = Number(row?.paidCount ?? 0);
+  const lateCount = Number(row?.lateCount ?? 0);
+
+  return {
+    paidInvoiceCount,
+    avgDaysToPayment: row?.avgDays != null ? Number(row.avgDays) : null,
+    lateCount,
+    exceptionRate: paidInvoiceCount > 0 ? lateCount / paidInvoiceCount : null,
+    factoringRejectedCount: Number(rejected?.n ?? 0),
+    periodDays: days,
+  };
 }

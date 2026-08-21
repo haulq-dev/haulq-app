@@ -11,6 +11,7 @@
 
 import {
   insightsSummary,
+  paymentPerformance,
   revenueByBroker,
   revenueByLane,
   revenueByTruck,
@@ -32,13 +33,14 @@ export async function insightsRoutes(app: FastifyInstance) {
       );
     }
 
-    const [summary, byBroker, byLane, byTruck] = await Promise.all([
+    const [summary, byBroker, byLane, byTruck, payment] = await Promise.all([
       insightsSummary(s, { days }),
       revenueByBroker(s, { days }),
       revenueByLane(s, { days }),
       revenueByTruck(s, { days }),
+      paymentPerformance(s, { days }),
     ]);
 
-    return { summary, byBroker, byLane, byTruck };
+    return { summary, byBroker, byLane, byTruck, payment };
   });
 }
