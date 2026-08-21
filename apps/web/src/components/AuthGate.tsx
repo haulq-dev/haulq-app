@@ -42,15 +42,19 @@ import { Logo } from './Logo.tsx';
 /**
  * Paths that render for a signed-out visitor.
  *
- * Only one so far, and it earns it: an invitation link is opened by someone who
- * has no HaulQ account yet — that is the normal case, not the edge one. Bouncing
- * them to a sign-in screen with no explanation of what they are signing in to
- * is how an invitation gets ignored.
+ * An invitation link is opened by someone who has no HaulQ account yet — that
+ * is the normal case, not the edge one. Bouncing them to a sign-in screen with
+ * no explanation of what they are signing in to is how an invitation gets
+ * ignored.
  *
- * The preview endpoint behind it is unauthenticated for the same reason, and
- * discloses nothing the holder of the token does not already have.
+ * `/track/` is the same shape for a different visitor: a broker watching a
+ * load was never meant to have a HaulQ account at all — PHASE_2_PLAN.md
+ * section 4's exit gate says so directly, "a broker can watch it happen
+ * without an account." The read endpoint behind it is unauthenticated for the
+ * same reason `/v1/invitations/:token` is, and discloses nothing the holder
+ * of the token does not already have.
  */
-const PUBLIC_PREFIXES = ['/invite/'] as const;
+const PUBLIC_PREFIXES = ['/invite/', '/track/'] as const;
 
 function isPublicPath(pathname: string): boolean {
   return PUBLIC_PREFIXES.some((p) => pathname.startsWith(p));

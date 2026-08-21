@@ -598,3 +598,43 @@ export const RecordPaymentSchema = z.object({
   factoringPacketId: z.string().uuid().optional(),
 });
 export type RecordPayment = z.infer<typeof RecordPaymentSchema>;
+
+// ---------------------------------------------------------------------------
+// Track — Phase 2a
+// ---------------------------------------------------------------------------
+//
+// PHASE_2_PLAN.md section 4. `apps/api/src/routes/track.ts`'s public routes
+// validate against these before a token is even looked up, same discipline
+// every other write path in this file follows.
+
+/** The four checkpoints `load_stops`' detention-evidence columns record. */
+export const STOP_MILESTONES = [
+  'arrived',
+  'loading_started',
+  'loading_ended',
+  'departed',
+] as const;
+export type StopMilestone = (typeof STOP_MILESTONES)[number];
+
+export const RecordStopCheckinSchema = z.object({
+  milestone: z.enum(STOP_MILESTONES),
+  /** Backdating, for a stop reported after the fact on a spotty connection. */
+  occurredAt: z.string().datetime().optional(),
+});
+export type RecordStopCheckin = z.infer<typeof RecordStopCheckinSchema>;
+
+/**
+ * A GPS fix. Bounds are the coordinate system's own limits, not a US-only
+ * assumption — HaulQ has no reason to reject a real fix from anywhere.
+ */
+export const RecordPositionSchema = z.object({
+  lat: z.number().min(-90).max(90),
+  lng: z.number().min(-180).max(180),
+  recordedAt: z.string().datetime().optional(),
+});
+export type RecordPosition = z.infer<typeof RecordPositionSchema>;
+
+export const IssueCheckinLinkSchema = z.object({
+  driverId: z.string().uuid().optional(),
+});
+export type IssueCheckinLink = z.infer<typeof IssueCheckinLinkSchema>;

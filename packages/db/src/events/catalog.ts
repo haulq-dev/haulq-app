@@ -512,6 +512,58 @@ export const eventCatalog = {
       `until this is fixed.`,
     topic: 'board_credential.failed',
   }),
+
+  // --- track — Phase 2a --------------------------------------------------
+  //
+  // PHASE_2_PLAN.md section 4's exit gate, restated: a driver can report
+  // arrival, loading and departure without a phone call, a broker can watch
+  // it happen without an account. `load_stop.checkin` collapses the four
+  // milestones into one verb with a `milestone` field — same reasoning
+  // `load.status_changed` already applies to five near-identical load
+  // transitions: five near-identical sentences are five places to drift.
+  // Position pings are deliberately absent — see `track.ts`'s module note
+  // on why they are telemetry, not an event.
+
+  'load_stop.checkin': define<{
+    reference: number;
+    stopSeq: number;
+    stopType: string;
+    city: string;
+    state: string;
+    milestone: 'arrived' | 'loading_started' | 'loading_ended' | 'departed';
+  }>({
+    subjectType: 'load',
+    describe: (p) => {
+      const place = formatPlace(p.city, p.state);
+      const verb: Record<typeof p.milestone, string> = {
+        arrived: `Arrived at stop ${p.stopSeq}`,
+        loading_started: `Started loading at stop ${p.stopSeq}`,
+        loading_ended: `Finished loading at stop ${p.stopSeq}`,
+        departed: `Departed stop ${p.stopSeq}`,
+      };
+      return `${verb[p.milestone]} (${place}) on ${formatLoad(p.reference)}.`;
+    },
+  }),
+
+  'track.checkin_link_issued': define<{ reference: number }>({
+    subjectType: 'load',
+    describe: (p) => `Issued a driver check-in link for ${formatLoad(p.reference)}.`,
+  }),
+
+  'track.checkin_link_revoked': define<{ reference: number }>({
+    subjectType: 'load',
+    describe: (p) => `Revoked the driver check-in link for ${formatLoad(p.reference)}.`,
+  }),
+
+  'track.visibility_link_issued': define<{ reference: number }>({
+    subjectType: 'load',
+    describe: (p) => `Issued a tracking link for ${formatLoad(p.reference)}.`,
+  }),
+
+  'track.visibility_link_revoked': define<{ reference: number }>({
+    subjectType: 'load',
+    describe: (p) => `Revoked the tracking link for ${formatLoad(p.reference)}.`,
+  }),
 } as const;
 
 export type EventVerb = keyof typeof eventCatalog;

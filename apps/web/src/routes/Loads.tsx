@@ -410,6 +410,78 @@ function LoadMarginDetail({ loadId }: { loadId: string }) {
   );
 }
 
+/**
+ * A broker's tracking link — PHASE_2_PLAN.md section 4's exit gate, the
+ * carrier-facing half. The driver check-in link is deliberately not offered
+ * here: which surface a driver reaches it through (a web page, a native
+ * app) is an open decision in the plan, and a "send to driver" button that
+ * points at a page nobody has built yet is worse than no button.
+ *
+ * The token is shown once, matching `inviteMember`'s own contract — it is
+ * never retrievable again, only its hash is stored.
+ */
+function TrackingLink({ loadId, reference }: { loadId: string; reference: number }) {
+  const [issuedUrl, setIssuedUrl] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  const issue = useMutation({
+    mutationFn: () =>
+      request<{ token: string }>(`/v1/loads/${loadId}/visibility-links`, { method: 'POST' }),
+    onSuccess: (res) => {
+      setIssuedUrl(`${window.location.origin}/track/${res.token}`);
+      setCopied(false);
+    },
+  });
+
+  const revoke = useMutation({
+    mutationFn: () => request(`/v1/loads/${loadId}/visibility-links`, { method: 'DELETE' }),
+    onSuccess: () => setIssuedUrl(null),
+  });
+
+  const copy = async () => {
+    if (!issuedUrl) return;
+    await navigator.clipboard.writeText(issuedUrl);
+    setCopied(true);
+  };
+
+  return (
+    <Card title={`Load ${reference} — broker tracking link`}>
+      {issuedUrl ? (
+        <div className="space-y-3">
+          <p className="text-sm text-slate">
+            Send this to the broker. It works with no HaulQ account, and is
+            shown only once — copy it now.
+          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <code className="break-all border border-line bg-wash px-3 py-2 text-xs">
+              {issuedUrl}
+            </code>
+            <button className="hq-btn hq-btn-ghost" onClick={copy}>
+              {copied ? 'Copied' : 'Copy'}
+            </button>
+          </div>
+          <button
+            className="hq-btn hq-btn-ghost text-bad"
+            disabled={revoke.isPending}
+            onClick={() => revoke.mutate()}
+          >
+            {revoke.isPending ? 'Revoking…' : 'Revoke this link'}
+          </button>
+        </div>
+      ) : (
+        <button
+          className="hq-btn hq-btn-brand"
+          disabled={issue.isPending}
+          onClick={() => issue.mutate()}
+        >
+          {issue.isPending ? 'Creating…' : 'Create tracking link'}
+        </button>
+      )}
+      <ErrorNote error={issue.error ?? revoke.error} />
+    </Card>
+  );
+}
+
 export function LoadsScreen() {
   const [adding, setAdding] = useState(false);
   const [filter, setFilter] = useState<LoadStatus | ''>('');
@@ -570,6 +642,12 @@ export function LoadsScreen() {
       </Card>
 
       {selectedId && <LoadMarginDetail loadId={selectedId} />}
+      {selectedId && canWrite && (
+        <TrackingLink
+          loadId={selectedId}
+          reference={items.find((l) => l.id === selectedId)?.reference ?? 0}
+        />
+      )}
     </div>
   );
 }

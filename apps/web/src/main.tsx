@@ -30,6 +30,7 @@ import { OnboardingScreen } from './routes/Onboarding.tsx';
 import { PayScreen } from './routes/Pay.tsx';
 import { ProfileScreen } from './routes/Profile.tsx';
 import { TimelineScreen } from './routes/Timeline.tsx';
+import { TrackScreen } from './routes/Track.tsx';
 import { TrucksScreen } from './routes/Trucks.tsx';
 import './styles.css';
 
@@ -55,8 +56,12 @@ const queryClient = new QueryClient({
  *
  * Kept as a pathname check rather than a second route tree: one screen does not
  * justify a layout hierarchy, and this is the only place that has to know.
+ *
+ * `/track/` joins it for the same reason: a broker watching a load has no
+ * carrier nav to show and, per `AuthGate.tsx`'s `PUBLIC_PREFIXES`, no account
+ * to show it to.
  */
-const CHROMELESS = ['/invite/'];
+const CHROMELESS = ['/invite/', '/track/'];
 
 function RootLayout() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
@@ -133,6 +138,11 @@ const inviteRoute = createRoute({
   path: '/invite/$token',
   component: InviteScreen,
 });
+const trackRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/track/$token',
+  component: TrackScreen,
+});
 
 const routeTree = rootRoute.addChildren([
   indexRoute,
@@ -147,6 +157,7 @@ const routeTree = rootRoute.addChildren([
   importRoute,
   timelineRoute,
   inviteRoute,
+  trackRoute,
 ]);
 
 const router = createRouter({ routeTree });

@@ -42,6 +42,7 @@ import { orgRoutes } from './routes/orgs.ts';
 import { payRoutes } from './routes/pay.ts';
 import { postmarkInboundRoutes } from './routes/postmark-inbound.ts';
 import { timelineRoutes } from './routes/timeline.ts';
+import { trackRoutes } from './routes/track.ts';
 import { webhookRoutes } from './routes/webhooks.ts';
 import { truckRoutes } from './routes/trucks.ts';
 
@@ -203,6 +204,7 @@ export async function buildServer(
   await app.register(truckRoutes);
   await app.register(driverRoutes);
   await app.register(loadRoutes);
+  await app.register(trackRoutes);
   await app.register(payRoutes);
   await app.register(insightsRoutes);
   await app.register(importRoutes);

@@ -190,3 +190,10 @@ alter table payments drop constraint if exists payments_amount_positive;
 alter table payments add constraint payments_amount_positive check (
   payment_amount > 0
 );
+
+-- --- track — Phase 2a --------------------------------------------------
+
+alter table truck_positions drop constraint if exists truck_positions_source_ck;
+alter table truck_positions add constraint truck_positions_source_ck check (
+  source in ('eld', 'driver_app', 'manual')
+);
