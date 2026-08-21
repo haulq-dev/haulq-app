@@ -18,6 +18,7 @@ import { and, eq, isNull, sql } from 'drizzle-orm';
 import type { Database } from './client.ts';
 import { scope, type Actor, type Scope } from './context.ts';
 import { eventLog, eventOutbox } from './schema/events.ts';
+import { loads } from './schema/loads.ts';
 import { orgInvitations, orgMemberships, orgs, users } from './schema/tenancy.ts';
 
 export interface TestOrg {
@@ -217,6 +218,34 @@ export async function findTestUserByExternalId(
     .from(users)
     .where(eq(users.externalAuthId, externalAuthId));
   return row;
+}
+
+/**
+ * Set a load's `actual_*` columns directly.
+ *
+ * No repository function does this outside the CSV importer — reconciling
+ * expected against actual is Insights' whole reason to exist, and Insights is
+ * read-only, so there is nothing to call. Direct like the trigger dance above,
+ * for the same reason: keeping test files free of `drizzle-orm`.
+ */
+export async function setLoadActualsForTest(
+  db: Database,
+  loadId: string,
+  actuals: {
+    actualRevenueAmount?: number;
+    actualLoadedMiles?: number;
+    actualDeadheadMiles?: number;
+    deliveredAt?: Date;
+  },
+): Promise<void> {
+  await db
+    .update(loads)
+    .set(
+      actuals.actualRevenueAmount !== undefined
+        ? { ...actuals, actualRevenueCurrency: 'USD' }
+        : actuals,
+    )
+    .where(eq(loads.id, loadId));
 }
 
 export async function setTestUserEmail(
