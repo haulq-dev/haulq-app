@@ -153,6 +153,26 @@ export const eventCatalog = {
     describe: (p) => `Removed ${p.email} from the account.`,
   }),
 
+  // --- brokers ---------------------------------------------------------------
+
+  /**
+   * PHASE_2_PLAN.md section 7's detention-threshold decision, landed:
+   * per-broker, same reasoning `paymentTermsDays` already gets. Worth its
+   * own line because it changes what the tracking page calls detention on
+   * every future load with this broker — a carrier revisiting why a load
+   * did or didn't show detention needs to find when this changed.
+   */
+  'broker.detention_threshold_updated': define<{
+    brokerName: string;
+    freeMinutes: number | null;
+  }>({
+    subjectType: 'broker',
+    describe: (p) =>
+      p.freeMinutes === null
+        ? `Cleared ${p.brokerName}'s detention free time — back to the two-hour default.`
+        : `Set ${p.brokerName}'s detention free time to ${p.freeMinutes} minutes.`,
+  }),
+
   // --- fleet ---------------------------------------------------------------
 
   'truck.added': define<{ label: string; equipment: string }>({

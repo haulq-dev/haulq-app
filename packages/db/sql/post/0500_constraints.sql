@@ -197,3 +197,11 @@ alter table truck_positions drop constraint if exists truck_positions_source_ck;
 alter table truck_positions add constraint truck_positions_source_ck check (
   source in ('eld', 'driver_app', 'manual')
 );
+
+-- A day's worth of free time is already generous; anything past that is
+-- someone fat-fingering hours as minutes.
+alter table brokers drop constraint if exists brokers_detention_free_minutes_range;
+alter table brokers add constraint brokers_detention_free_minutes_range check (
+  detention_free_minutes is null
+  or (detention_free_minutes >= 0 and detention_free_minutes <= 1440)
+);

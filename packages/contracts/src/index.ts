@@ -361,6 +361,13 @@ const StopBase = z.object({
   state: StateCode,
   postalCode: z.string().max(12).optional(),
   /**
+   * Optional — nothing geocodes an address yet. Present so a caller who
+   * already has coordinates can supply them; Track's ETA is null for a
+   * stop without them.
+   */
+  lat: z.number().min(-90).max(90).optional(),
+  lng: z.number().min(-180).max(180).optional(),
+  /**
    * Both ends optional, and that is deliberate. Boards routinely post a date
    * with no time, and inventing "00:00" would make an HOS feasibility check in
    * Phase 3 confidently wrong rather than merely unknown.
@@ -638,3 +645,13 @@ export const IssueCheckinLinkSchema = z.object({
   driverId: z.string().uuid().optional(),
 });
 export type IssueCheckinLink = z.infer<typeof IssueCheckinLinkSchema>;
+
+/**
+ * PHASE_2_PLAN.md section 7's detention-threshold decision: per-broker.
+ * `null` clears an override back to the default rather than requiring the
+ * caller to know what the default is.
+ */
+export const UpdateBrokerDetentionSchema = z.object({
+  freeMinutes: z.number().int().min(0).max(1440).nullable(),
+});
+export type UpdateBrokerDetention = z.infer<typeof UpdateBrokerDetentionSchema>;

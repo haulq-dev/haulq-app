@@ -6,18 +6,21 @@
  * — nobody signs in to see this, so it renders outside `AuthGate`'s wall the
  * same way `Invite.tsx` does, see `main.tsx`'s `PUBLIC_PREFIXES`.
  *
- * Deliberately does not show an ETA or a detention countdown. Both are open
- * questions in PHASE_2_PLAN.md section 7 — the routing method for one, where
- * the free-time threshold lives for the other — and showing a number here
- * would be answering a question the plan says is not settled yet. What is
- * shown instead: status, each stop's own timestamps, and the truck's last
- * known position with its age, which is the part that is not in question.
+ * ETA and detention both answer open questions from plan section 7, landed
+ * on later in the same session that scoped this page: ETA reuses the
+ * dispatcher core's haversine approximation (`repositories/track.ts`'s
+ * `geo.ts` import) rather than waiting on Phase 3's routing-provider
+ * decision, and the free-time threshold lives per-broker. Both are
+ * screening-grade — good enough to say "should arrive around 3pm" or "over
+ * by 40 minutes," not good enough to settle a dispute without the
+ * timestamps underneath them, which is why the timestamps stay on screen
+ * too rather than being replaced by the summary.
  */
 
 import { useQuery } from '@tanstack/react-query';
 import { useParams } from '@tanstack/react-router';
 import { ApiRequestError, request } from '../lib/api.ts';
-import { Card, Empty, ErrorNote, Pill } from '../components/ui.tsx';
+import { Card, Empty, ErrorNote, Num, Pill } from '../components/ui.tsx';
 import { Logo } from '../components/Logo.tsx';
 
 interface TrackingStop {
@@ -32,6 +35,14 @@ interface TrackingStop {
   loadingStartedAt: string | null;
   loadingEndedAt: string | null;
   departedAt: string | null;
+  detentionMinutes: number | null;
+  stillOnSite: boolean;
+}
+
+interface TrackingEta {
+  stopSeq: number;
+  milesRemaining: number;
+  arrivalAt: string;
 }
 
 interface TrackingView {
@@ -46,6 +57,7 @@ interface TrackingView {
     positionAt: string | null;
   } | null;
   stops: TrackingStop[];
+  eta: TrackingEta | null;
 }
 
 const STATUS_TONE: Record<string, 'ok' | 'warn' | 'neutral'> = {
@@ -77,6 +89,28 @@ const when = (iso: string) =>
     minute: '2-digit',
   });
 
+/** "1h 20m", "45m" — how a dispatcher actually says a duration out loud. */
+function formatMinutes(total: number): string {
+  const hours = Math.floor(total / 60);
+  const minutes = total % 60;
+  if (hours === 0) return `${minutes}m`;
+  return `${hours}h ${minutes}m`;
+}
+
+function DetentionBadge({ stop }: { stop: TrackingStop }) {
+  if (stop.detentionMinutes === null) return null;
+  if (stop.detentionMinutes === 0) {
+    return stop.stillOnSite ? (
+      <Pill tone="neutral">on time so far</Pill>
+    ) : null; // Departed inside free time — nothing worth flagging.
+  }
+  return (
+    <Pill tone="warn">
+      {stop.stillOnSite ? 'in detention' : 'was in detention'} — {formatMinutes(stop.detentionMinutes)} over
+    </Pill>
+  );
+}
+
 function StopRow({ stop }: { stop: TrackingStop }) {
   const checkpoints: Array<{ label: string; at: string | null }> = [
     { label: 'Arrived', at: stop.arrivedAt },
@@ -98,9 +132,12 @@ function StopRow({ stop }: { stop: TrackingStop }) {
             {stop.city}, {stop.state}
           </p>
         </div>
-        {stop.windowStart && (
-          <span className="text-sm text-mute">Appointment {when(stop.windowStart)}</span>
-        )}
+        <div className="flex items-center gap-2">
+          <DetentionBadge stop={stop} />
+          {stop.windowStart && (
+            <span className="text-sm text-mute">Appointment {when(stop.windowStart)}</span>
+          )}
+        </div>
       </div>
 
       {reached.length > 0 ? (
@@ -179,6 +216,17 @@ export function TrackScreen() {
                     </p>
                   ) : (
                     <p className="mt-1 text-sm text-mute">No position reported yet.</p>
+                  )}
+                  {view.data.eta && (
+                    <p className="mt-3 border-t border-line pt-3 text-sm text-slate">
+                      Estimated arrival at stop {view.data.eta.stopSeq}:{' '}
+                      <span className="num font-medium text-ink">
+                        {when(view.data.eta.arrivalAt)}
+                      </span>
+                      <span className="ml-2 text-mute">
+                        (<Num value={view.data.eta.milesRemaining} /> mi, estimated)
+                      </span>
+                    </p>
                   )}
                 </div>
               ) : (

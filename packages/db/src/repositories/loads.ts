@@ -38,6 +38,8 @@ export type LoadSource = Load['source'];
 export interface LoadWithStops extends Load {
   stops: LoadStop[];
   brokerName: string | null;
+  /** Null means the broker has no override — see `repositories/track.ts`'s `DEFAULT_DETENTION_FREE_MINUTES`. */
+  brokerDetentionFreeMinutes: number | null;
   truckLabel: string | null;
   driverName: string | null;
 }
@@ -68,6 +70,15 @@ export interface StopInput {
   facilityName?: string | undefined;
   addressLine1?: string | undefined;
   postalCode?: string | undefined;
+  /**
+   * Optional today because nothing geocodes an address yet — a caller who
+   * already has coordinates (a future geocoding step, a carrier pasting
+   * them, a board that reports them) can pass them straight through. Track's
+   * ETA (`repositories/track.ts`'s `previewTracking`) is null for any stop
+   * without them, which is the honest answer until geocoding exists.
+   */
+  lat?: number | undefined;
+  lng?: number | undefined;
   windowStart?: string | undefined;
   windowEnd?: string | undefined;
   appointmentRequired?: boolean | undefined;
@@ -134,24 +145,24 @@ function endpoints(stops: StopInput[] | LoadStop[]): {
 async function resolveBroker(
   tx: Scope,
   name: string | undefined,
-): Promise<{ id: string | null; name: string | null }> {
-  if (!name?.trim()) return { id: null, name: null };
+): Promise<{ id: string | null; name: string | null; detentionFreeMinutes: number | null }> {
+  if (!name?.trim()) return { id: null, name: null, detentionFreeMinutes: null };
 
   const key = brokerMatchKey(name);
   const existing = await tx.db
-    .select({ id: brokers.id, name: brokers.name })
+    .select({ id: brokers.id, name: brokers.name, detentionFreeMinutes: brokers.detentionFreeMinutes })
     .from(brokers)
     .where(and(eq(brokers.orgId, tx.ctx.orgId), isNull(brokers.deletedAt)));
 
   const match = existing.find((b) => brokerMatchKey(b.name) === key);
-  if (match) return { id: match.id, name: match.name };
+  if (match) return match;
 
   const [created] = await tx.db
     .insert(brokers)
     .values({ orgId: tx.ctx.orgId, name: name.trim() })
-    .returning({ id: brokers.id, name: brokers.name });
+    .returning({ id: brokers.id, name: brokers.name, detentionFreeMinutes: brokers.detentionFreeMinutes });
 
-  return { id: created!.id, name: created!.name };
+  return created!;
 }
 
 export async function createLoad(
@@ -234,6 +245,8 @@ export async function createLoad(
           facilityName: stop.facilityName ?? null,
           addressLine1: stop.addressLine1 ?? null,
           postalCode: stop.postalCode ?? null,
+          lat: stop.lat ?? null,
+          lng: stop.lng ?? null,
           windowStart: stop.windowStart ? new Date(stop.windowStart) : null,
           windowEnd: stop.windowEnd ? new Date(stop.windowEnd) : null,
           appointmentRequired: stop.appointmentRequired ?? false,
@@ -282,6 +295,7 @@ export async function createLoad(
       ...row,
       stops: stopRows,
       brokerName: broker.name,
+      brokerDetentionFreeMinutes: broker.detentionFreeMinutes,
       truckLabel: null,
       driverName: null,
     };
@@ -310,6 +324,7 @@ export async function listLoads(s: Scope, q: ListLoadsQuery = {}): Promise<LoadW
     .select({
       load: loads,
       brokerName: brokers.name,
+      brokerDetentionFreeMinutes: brokers.detentionFreeMinutes,
       truckLabel: trucks.label,
       driverName: drivers.fullName,
     })
@@ -345,6 +360,7 @@ export async function listLoads(s: Scope, q: ListLoadsQuery = {}): Promise<LoadW
     ...r.load,
     stops: byLoad.get(r.load.id) ?? [],
     brokerName: r.brokerName,
+    brokerDetentionFreeMinutes: r.brokerDetentionFreeMinutes,
     truckLabel: r.truckLabel,
     driverName: r.driverName,
   }));
@@ -355,6 +371,7 @@ export async function getLoad(s: Scope, id: string): Promise<LoadWithStops | und
     .select({
       load: loads,
       brokerName: brokers.name,
+      brokerDetentionFreeMinutes: brokers.detentionFreeMinutes,
       truckLabel: trucks.label,
       driverName: drivers.fullName,
     })
@@ -378,6 +395,7 @@ export async function getLoad(s: Scope, id: string): Promise<LoadWithStops | und
     ...row.load,
     stops,
     brokerName: row.brokerName,
+    brokerDetentionFreeMinutes: row.brokerDetentionFreeMinutes,
     truckLabel: row.truckLabel,
     driverName: row.driverName,
   };

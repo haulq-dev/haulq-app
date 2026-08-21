@@ -24,6 +24,8 @@ import type { Database } from '../client.ts';
 import type { Scope } from '../context.ts';
 import { eventLog } from '../schema/events.ts';
 import { recordEvent } from '../events/record.ts';
+import { estimatedArrival } from '../geo.ts';
+import { brokers } from '../schema/brokers.ts';
 import { drivers, trucks } from '../schema/fleet.ts';
 import { loads, loadStops } from '../schema/loads.ts';
 import { orgs } from '../schema/tenancy.ts';
@@ -490,6 +492,14 @@ export async function revokeVisibilityLink(s: Scope, loadId: string): Promise<vo
   });
 }
 
+/**
+ * Free time before detention accrues, when a broker has no override of their
+ * own. Two hours is the near-universal industry rule of thumb, not a figure
+ * this plan researched — see `schema/brokers.ts`'s note on
+ * `detentionFreeMinutes`.
+ */
+export const DEFAULT_DETENTION_FREE_MINUTES = 120;
+
 export interface TrackingStop {
   seq: number;
   type: string;
@@ -502,6 +512,20 @@ export interface TrackingStop {
   loadingStartedAt: Date | null;
   loadingEndedAt: Date | null;
   departedAt: Date | null;
+  /**
+   * Minutes over the broker's free time, or null if the truck has not
+   * arrived yet. Computed against `departedAt`, or against now while
+   * `stillOnSite` — a stop already departed still shows what it cost, which
+   * is the evidence a detention dispute actually needs.
+   */
+  detentionMinutes: number | null;
+  stillOnSite: boolean;
+}
+
+export interface TrackingEta {
+  stopSeq: number;
+  milesRemaining: number;
+  arrivalAt: Date;
 }
 
 export interface TrackingView {
@@ -516,13 +540,19 @@ export interface TrackingView {
     positionAt: Date | null;
   } | null;
   stops: TrackingStop[];
+  /**
+   * Screening-grade, not invoicing-grade — see `geo.ts`'s module note. Null
+   * whenever there is nothing left to estimate against: no truck position,
+   * no next stop with coordinates, or nothing left to arrive at.
+   */
+  eta: TrackingEta | null;
 }
 
 /**
- * What a broker sees. Read-only, unauthenticated, and deliberately does not
- * compute an ETA or a detention badge — both are open questions in plan
- * section 7 (routing method; where the free-time threshold lives). Adding
- * either here would be answering a question this plan says is not settled.
+ * What a broker sees. Read-only, unauthenticated. Detention and ETA both
+ * answer open questions from plan section 7 — per-broker free time, and the
+ * dispatcher core's haversine approximation reused rather than waiting on
+ * Phase 3's routing-provider decision.
  */
 export async function previewTracking(db: Database, token: string): Promise<TrackingView> {
   const hash = hashToken(token);
@@ -562,21 +592,27 @@ export async function previewTracking(db: Database, token: string): Promise<Trac
       truckLabel: trucks.label,
       currentCity: trucks.currentCity,
       currentState: trucks.currentState,
+      currentLat: trucks.currentLat,
+      currentLng: trucks.currentLng,
       positionAt: trucks.positionAt,
+      detentionFreeMinutes: brokers.detentionFreeMinutes,
     })
     .from(loads)
     .leftJoin(trucks, eq(trucks.id, loads.truckId))
+    .leftJoin(brokers, eq(brokers.id, loads.brokerId))
     .where(eq(loads.id, row.link.loadId));
 
   if (!load) throw new TrackError('not_found', 'load gone', 'That load no longer exists.');
 
-  const stops = await db
+  const stopRows = await db
     .select({
       seq: loadStops.seq,
       type: loadStops.type,
       city: loadStops.city,
       state: loadStops.state,
       facilityName: loadStops.facilityName,
+      lat: loadStops.lat,
+      lng: loadStops.lng,
       windowStart: loadStops.windowStart,
       windowEnd: loadStops.windowEnd,
       arrivedAt: loadStops.arrivedAt,
@@ -587,6 +623,49 @@ export async function previewTracking(db: Database, token: string): Promise<Trac
     .from(loadStops)
     .where(eq(loadStops.loadId, row.link.loadId))
     .orderBy(loadStops.seq);
+
+  const freeMinutes = load.detentionFreeMinutes ?? DEFAULT_DETENTION_FREE_MINUTES;
+  const now = Date.now();
+
+  const stops: TrackingStop[] = stopRows.map((stop) => {
+    let detentionMinutes: number | null = null;
+    const stillOnSite = stop.arrivedAt !== null && stop.departedAt === null;
+
+    if (stop.arrivedAt) {
+      const end = stop.departedAt ?? new Date(now);
+      const dwellMinutes = Math.round((end.getTime() - stop.arrivedAt.getTime()) / 60_000);
+      detentionMinutes = Math.max(0, dwellMinutes - freeMinutes);
+    }
+
+    return {
+      seq: stop.seq,
+      type: stop.type,
+      city: stop.city,
+      state: stop.state,
+      facilityName: stop.facilityName,
+      windowStart: stop.windowStart,
+      windowEnd: stop.windowEnd,
+      arrivedAt: stop.arrivedAt,
+      loadingStartedAt: stop.loadingStartedAt,
+      loadingEndedAt: stop.loadingEndedAt,
+      departedAt: stop.departedAt,
+      detentionMinutes,
+      stillOnSite,
+    };
+  });
+
+  // The next stop nobody has reached yet, with coordinates to aim at.
+  const nextStop = stopRows.find((s) => s.arrivedAt === null && s.lat !== null && s.lng !== null);
+  const eta: TrackingEta | null =
+    nextStop && load.currentLat !== null && load.currentLng !== null
+      ? {
+          stopSeq: nextStop.seq,
+          ...estimatedArrival(
+            { lat: load.currentLat, lng: load.currentLng },
+            { lat: nextStop.lat!, lng: nextStop.lng! },
+          ),
+        }
+      : null;
 
   return {
     orgName: row.orgName,
@@ -602,6 +681,7 @@ export async function previewTracking(db: Database, token: string): Promise<Trac
         }
       : null,
     stops,
+    eta,
   };
 }
 

@@ -1,0 +1,1 @@
+ALTER TABLE "brokers" ADD COLUMN "detention_free_minutes" integer;

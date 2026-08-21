@@ -20,6 +20,7 @@ import {
   destroyTestUser,
   testScope,
 } from '../testing.ts';
+import { updateBrokerDetentionThreshold } from './brokers.ts';
 import { createDriver } from './drivers.ts';
 import { createLoad, updateLoadStatus } from './loads.ts';
 import {
@@ -299,6 +300,164 @@ suite('track repository', () => {
         () => previewTracking(db, 'definitely-not-issued'),
         (e: TrackError) => e.code === 'invalid_token',
       );
+    });
+  });
+
+  describe('previewTracking — detention', () => {
+    it('flags detention past the default two-hour free time', async () => {
+      const load = await aDispatchedLoad();
+      const { token: checkin } = await issueCheckinLink(s, load.id);
+      const preview = await previewCheckin(db, checkin);
+
+      const threeHoursAgo = new Date(Date.now() - 3 * 3_600_000).toISOString();
+      await recordStopCheckin(db, {
+        token: checkin,
+        stopId: preview.stops[0]!.id,
+        milestone: 'arrived',
+        occurredAt: threeHoursAgo,
+        correlationId: 'test',
+      });
+
+      const { token: tracking } = await issueVisibilityLink(s, load.id);
+      const view = await previewTracking(db, tracking);
+      const stop = view.stops[0]!;
+
+      assert.equal(stop.stillOnSite, true);
+      assert.ok(stop.detentionMinutes !== null && stop.detentionMinutes >= 55 && stop.detentionMinutes <= 65);
+    });
+
+    it('uses the broker\'s own free time once set', async () => {
+      const load = await aDispatchedLoad();
+      await updateBrokerDetentionThreshold(s, load.brokerId!, 30);
+
+      const { token: checkin } = await issueCheckinLink(s, load.id);
+      const preview = await previewCheckin(db, checkin);
+      const oneHourAgo = new Date(Date.now() - 3_600_000).toISOString();
+      await recordStopCheckin(db, {
+        token: checkin,
+        stopId: preview.stops[0]!.id,
+        milestone: 'arrived',
+        occurredAt: oneHourAgo,
+        correlationId: 'test',
+      });
+
+      const { token: tracking } = await issueVisibilityLink(s, load.id);
+      const view = await previewTracking(db, tracking);
+      // 60 minutes on site, 30 free -> ~30 minutes of detention, not the
+      // ~0 the 120-minute default would report.
+      assert.ok(view.stops[0]!.detentionMinutes! >= 25 && view.stops[0]!.detentionMinutes! <= 35);
+    });
+
+    it('reports zero detention and null for a stop not yet reached', async () => {
+      const load = await aDispatchedLoad();
+      const { token } = await issueVisibilityLink(s, load.id);
+      const view = await previewTracking(db, token);
+
+      assert.equal(view.stops[0]!.detentionMinutes, null);
+      assert.equal(view.stops[0]!.stillOnSite, false);
+    });
+
+    it('still shows detention after departure, for a load already gone', async () => {
+      const load = await aDispatchedLoad();
+      const { token: checkin } = await issueCheckinLink(s, load.id);
+      const preview = await previewCheckin(db, checkin);
+      const stopId = preview.stops[0]!.id;
+
+      const fourHoursAgo = new Date(Date.now() - 4 * 3_600_000).toISOString();
+      const oneHourAgo = new Date(Date.now() - 3_600_000).toISOString();
+      await recordStopCheckin(db, {
+        token: checkin,
+        stopId,
+        milestone: 'arrived',
+        occurredAt: fourHoursAgo,
+        correlationId: 'test',
+      });
+      await recordStopCheckin(db, {
+        token: checkin,
+        stopId,
+        milestone: 'departed',
+        occurredAt: oneHourAgo,
+        correlationId: 'test',
+      });
+
+      const { token: tracking } = await issueVisibilityLink(s, load.id);
+      const view = await previewTracking(db, tracking);
+      const stop = view.stops[0]!;
+      assert.equal(stop.stillOnSite, false);
+      // On site 09:00 -> 12:00 relative to now = 180 minutes, 120 free -> ~60.
+      assert.ok(stop.detentionMinutes! >= 55 && stop.detentionMinutes! <= 65);
+    });
+  });
+
+  describe('previewTracking — ETA', () => {
+    const wichitaToDenverWithCoords = [
+      { type: 'pickup' as const, city: 'Wichita', state: 'KS', lat: 37.6872, lng: -97.3301 },
+      { type: 'delivery' as const, city: 'Denver', state: 'CO', lat: 39.7392, lng: -104.9903 },
+    ];
+
+    it('estimates arrival at the next stop with coordinates, from the truck\'s last position', async () => {
+      const load = await createLoad(s, {
+        status: 'dispatched',
+        brokerName: 'Prairie Freight',
+        truckId,
+        stops: wichitaToDenverWithCoords,
+      });
+      const { token: checkin } = await issueCheckinLink(s, load.id);
+      // Somewhere between the two, so there is real remaining distance.
+      await recordCheckinPosition(db, { token: checkin, lat: 38.5, lng: -101 });
+
+      const { token: tracking } = await issueVisibilityLink(s, load.id);
+      const view = await previewTracking(db, tracking);
+
+      assert.ok(view.eta);
+      assert.equal(view.eta!.stopSeq, 1);
+      assert.ok(view.eta!.milesRemaining > 0);
+      assert.ok(view.eta!.arrivalAt.getTime() > Date.now());
+    });
+
+    it('is null with no truck position', async () => {
+      const load = await createLoad(s, {
+        status: 'dispatched',
+        brokerName: 'Prairie Freight',
+        truckId,
+        stops: wichitaToDenverWithCoords,
+      });
+      const { token } = await issueVisibilityLink(s, load.id);
+      const view = await previewTracking(db, token);
+      assert.equal(view.eta, null);
+    });
+
+    it('is null when the next stop has no coordinates', async () => {
+      const load = await aDispatchedLoad(); // wichitaToDenver has no lat/lng
+      const { token: checkin } = await issueCheckinLink(s, load.id);
+      await recordCheckinPosition(db, { token: checkin, lat: 38.5, lng: -101 });
+
+      const { token: tracking } = await issueVisibilityLink(s, load.id);
+      const view = await previewTracking(db, tracking);
+      assert.equal(view.eta, null);
+    });
+
+    it('moves to the second stop once the first has been reached', async () => {
+      const load = await createLoad(s, {
+        status: 'dispatched',
+        brokerName: 'Prairie Freight',
+        truckId,
+        stops: wichitaToDenverWithCoords,
+      });
+      const { token: checkin } = await issueCheckinLink(s, load.id);
+      const preview = await previewCheckin(db, checkin);
+      await recordStopCheckin(db, {
+        token: checkin,
+        stopId: preview.stops[0]!.id,
+        milestone: 'arrived',
+        correlationId: 'test',
+      });
+      await recordCheckinPosition(db, { token: checkin, lat: 37.6872, lng: -97.3301 });
+
+      const { token: tracking } = await issueVisibilityLink(s, load.id);
+      const view = await previewTracking(db, tracking);
+      assert.ok(view.eta);
+      assert.equal(view.eta!.stopSeq, 2);
     });
   });
 

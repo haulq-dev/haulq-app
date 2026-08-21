@@ -33,6 +33,7 @@ import { buildDocumentReader, buildMailer, buildModelReader, buildStorage } from
 import type { ModelDocumentReader } from './documents/model-reader.ts';
 import type { DocumentReader } from './documents/reader.ts';
 import { requestContextPlugin } from './plugins/request-context.ts';
+import { brokerRoutes } from './routes/brokers.ts';
 import { documentRoutes } from './routes/documents.ts';
 import { driverRoutes } from './routes/drivers.ts';
 import { importRoutes } from './routes/imports.ts';
@@ -210,6 +211,7 @@ export async function buildServer(
   await app.register(truckRoutes);
   await app.register(driverRoutes);
   await app.register(loadRoutes);
+  await app.register(brokerRoutes);
   await app.register(trackRoutes);
   await app.register(payRoutes);
   await app.register(insightsRoutes);

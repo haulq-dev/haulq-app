@@ -63,6 +63,18 @@ export const brokers = pgTable(
      */
     paymentTermsDays: integer('payment_terms_days'),
 
+    /**
+     * Free time before detention accrues, in minutes. PHASE_2_PLAN.md section
+     * 7 named three places this could live — a carrier-wide default, a
+     * per-broker column, a per-load override — and landed on per-broker,
+     * same reasoning `paymentTermsDays` already gets: a carrier's terms vary
+     * by relationship, not by fleet. Null falls back to the industry-standard
+     * two hours (`DEFAULT_DETENTION_FREE_MINUTES` in `repositories/track.ts`)
+     * rather than requiring every broker to be configured before the
+     * tracking page's detention display means anything.
+     */
+    detentionFreeMinutes: integer('detention_free_minutes'),
+
     notes: text('notes'),
 
     /**

@@ -44,7 +44,10 @@ interface Load {
   reference: number;
   status: LoadStatus;
   source: string;
+  brokerId: string | null;
   brokerName: string | null;
+  /** Null means the broker has no override — the tracking page falls back to a two-hour default. */
+  brokerDetentionFreeMinutes: number | null;
   brokerLoadNumber: string | null;
   equipment: string;
   commodity: string | null;
@@ -482,6 +485,66 @@ function TrackingLink({ loadId, reference }: { loadId: string; reference: number
   );
 }
 
+/**
+ * The per-broker detention free time — PHASE_2_PLAN.md section 7's
+ * threshold question, landed on per-broker rather than a carrier-wide
+ * default. Edited here, on the load a carrier is already looking at,
+ * rather than a separate broker-management screen that does not exist yet
+ * — the setting applies to every load with this broker, not just this one,
+ * which the copy says plainly so it is not mistaken for a per-load override.
+ */
+function DetentionThreshold({
+  brokerId,
+  brokerName,
+  freeMinutes,
+}: {
+  brokerId: string;
+  brokerName: string;
+  freeMinutes: number | null;
+}) {
+  const queryClient = useQueryClient();
+  const [value, setValue] = useState(freeMinutes !== null ? String(freeMinutes) : '');
+
+  const save = useMutation({
+    mutationFn: (minutes: number | null) =>
+      request(`/v1/brokers/${brokerId}/detention-threshold`, {
+        method: 'PATCH',
+        body: { freeMinutes: minutes },
+      }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['loads'] });
+    },
+  });
+
+  return (
+    <Card title={`${brokerName} — detention free time`}>
+      <p className="mb-3 text-sm text-slate">
+        Applies to every load with this broker, not just this one. Leave
+        blank to use the two-hour default.
+      </p>
+      <div className="flex flex-wrap items-center gap-2">
+        <input
+          className="hq-input w-32"
+          data-numeric="true"
+          inputMode="numeric"
+          placeholder="120"
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+        />
+        <span className="text-sm text-mute">minutes</span>
+        <button
+          className="hq-btn hq-btn-brand"
+          disabled={save.isPending}
+          onClick={() => save.mutate(value.trim() ? Number(value) : null)}
+        >
+          {save.isPending ? 'Saving…' : 'Save'}
+        </button>
+      </div>
+      <ErrorNote error={save.error} />
+    </Card>
+  );
+}
+
 export function LoadsScreen() {
   const [adding, setAdding] = useState(false);
   const [filter, setFilter] = useState<LoadStatus | ''>('');
@@ -648,6 +711,24 @@ export function LoadsScreen() {
           reference={items.find((l) => l.id === selectedId)?.reference ?? 0}
         />
       )}
+      {selectedId &&
+        canWrite &&
+        (() => {
+          const selected = items.find((l) => l.id === selectedId);
+          if (!selected?.brokerId || !selected.brokerName) return null;
+          return (
+            // Keyed on the broker, not the load: switching to a different
+            // load for the same broker should not remount, but switching
+            // brokers must — the input's initial value only reads its prop
+            // once, on mount.
+            <DetentionThreshold
+              key={selected.brokerId}
+              brokerId={selected.brokerId}
+              brokerName={selected.brokerName}
+              freeMinutes={selected.brokerDetentionFreeMinutes}
+            />
+          );
+        })()}
     </div>
   );
 }
