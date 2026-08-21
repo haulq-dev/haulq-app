@@ -15,7 +15,8 @@
     "test": "turbo run test --concurrency=1",
     "lint": "turbo run lint",
     "db:generate": "pnpm --filter @haulq/db generate",
-    "db:migrate": "pnpm --filter @haulq/db migrate"
+    "db:migrate": "pnpm --filter @haulq/db migrate",
+    "db:keypair": "pnpm --filter @haulq/db keypair"
   },
   "devDependencies": {
     "turbo": "^2.3.0",

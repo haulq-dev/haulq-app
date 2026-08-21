@@ -11,6 +11,7 @@
   "scripts": {
     "generate": "drizzle-kit generate",
     "migrate": "node --experimental-strip-types src/migrate.ts",
+    "keypair": "node --experimental-strip-types src/scripts/generate-credential-keypair.ts",
     "push": "drizzle-kit push",
     "studio": "drizzle-kit studio",
     "typecheck": "tsc --noEmit",
