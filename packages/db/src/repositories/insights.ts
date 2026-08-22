@@ -208,7 +208,15 @@ export async function revenueByBroker(s: Scope, q: InsightsWindow & { limit?: nu
     s,
     q.days ?? 90,
     sql`coalesce(${loads.brokerId}::text, 'none')`,
-    sql`coalesce((select b.name from brokers b where b.id = ${loads.brokerId}), 'No broker recorded')`,
+    // `loads.broker_id` is literal SQL text, not `${loads.brokerId}` — same
+    // reasoning `loadMargin` documents above: with a single-table
+    // `.from(loads)`, drizzle renders an interpolated column reference
+    // unqualified, and `brokers` has no column literally named `broker_id`.
+    // Unlike `loadMargin`'s version of this bug, `brokers` has nothing for
+    // the bare identifier to resolve to at all, so this was not a silent
+    // wrong answer — it was `column "broker_id" does not exist` on every
+    // call, which is the 500 a carrier actually saw on Insights.
+    sql`coalesce((select b.name from brokers b where b.id = loads.broker_id), 'No broker recorded')`,
     q.limit ?? 15,
   );
 }
@@ -221,8 +229,12 @@ export async function revenueByBroker(s: Scope, q: InsightsWindow & { limit?: nu
  * which tells nobody anything.
  */
 export async function revenueByLane(s: Scope, q: InsightsWindow & { limit?: number } = {}) {
-  const origin = sql`(select st.state from load_stops st where st.load_id = ${loads.id} and st.type = 'pickup' order by st.seq limit 1)`;
-  const dest = sql`(select st.state from load_stops st where st.load_id = ${loads.id} and st.type = 'delivery' order by st.seq desc limit 1)`;
+  // `loads.id` literal, not `${loads.id}` — here `load_stops` *does* have its
+  // own `id` column, so this was `loadMargin`'s exact failure mode: a silent
+  // `st.load_id = st.id` that never matches, rather than a thrown error.
+  // Every lane read back as "?? → ??" instead of a state pair.
+  const origin = sql`(select st.state from load_stops st where st.load_id = loads.id and st.type = 'pickup' order by st.seq limit 1)`;
+  const dest = sql`(select st.state from load_stops st where st.load_id = loads.id and st.type = 'delivery' order by st.seq desc limit 1)`;
   const lane = sql`coalesce(${origin}, '??') || ' → ' || coalesce(${dest}, '??')`;
 
   return breakdown(s, q.days ?? 90, lane, lane, q.limit ?? 15);
@@ -233,7 +245,9 @@ export async function revenueByTruck(s: Scope, q: InsightsWindow & { limit?: num
     s,
     q.days ?? 90,
     sql`coalesce(${loads.truckId}::text, 'none')`,
-    sql`coalesce((select t.label from trucks t where t.id = ${loads.truckId}), 'No truck recorded')`,
+    // Literal `loads.truck_id`, same reasoning as `revenueByBroker` above —
+    // `trucks` has no column named `truck_id` either.
+    sql`coalesce((select t.label from trucks t where t.id = loads.truck_id), 'No truck recorded')`,
     q.limit ?? 15,
   );
 }
