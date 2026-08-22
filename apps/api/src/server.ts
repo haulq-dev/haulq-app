@@ -27,6 +27,7 @@ import { DevAuthenticator } from './auth/dev-authenticator.ts';
 import type { Env } from './env.ts';
 import type { Mailer } from './email/postmark.ts';
 import { startExceptionScanRunner } from './exceptions/runner.ts';
+import { startMotiveSyncRunner } from './integrations/motive-sync-runner.ts';
 import { buildOutboxGroups } from './outbox/handlers.ts';
 import { startOutboxRunner } from './outbox/runner.ts';
 import { buildDocumentReader, buildMailer, buildModelReader, buildStorage } from './runtime.ts';
@@ -176,6 +177,36 @@ export async function buildServer(
     intervalMs: env.EXCEPTION_SCAN_POLL_MS,
     thresholdHours: env.EXCEPTION_THRESHOLD_HOURS,
   });
+
+  // Same guard `routes/integrations.ts`'s `requireMotiveConfig`/
+  // `requireEncryptionConfig` apply per-request: nothing here can run
+  // without all five values, and a deployment that sets the poll interval
+  // but forgets one of them should skip the sync rather than crash the
+  // whole process on boot.
+  if (
+    env.MOTIVE_SYNC_POLL_MS > 0 &&
+    env.MOTIVE_CLIENT_ID &&
+    env.MOTIVE_CLIENT_SECRET &&
+    env.MOTIVE_REDIRECT_URI &&
+    env.CREDENTIAL_ENCRYPTION_PUBLIC_KEY &&
+    env.CREDENTIAL_ENCRYPTION_PRIVATE_KEY
+  ) {
+    startMotiveSyncRunner(app, {
+      intervalMs: env.MOTIVE_SYNC_POLL_MS,
+      config: {
+        clientId: env.MOTIVE_CLIENT_ID,
+        clientSecret: env.MOTIVE_CLIENT_SECRET,
+        redirectUri: env.MOTIVE_REDIRECT_URI,
+      },
+      publicKey: env.CREDENTIAL_ENCRYPTION_PUBLIC_KEY,
+      privateKey: env.CREDENTIAL_ENCRYPTION_PRIVATE_KEY,
+    });
+  } else if (env.MOTIVE_SYNC_POLL_MS > 0) {
+    app.log.warn(
+      {},
+      'MOTIVE_SYNC_POLL_MS is set but Motive or credential-encryption config is incomplete — sync will not run',
+    );
+  }
 
   await app.register(helmet);
   // Marketing (haulq.ai) and the app (app.haulq.ai) are separate origins by

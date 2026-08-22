@@ -143,6 +143,14 @@ const EnvSchema = z.object({
    */
   CREDENTIAL_ENCRYPTION_PUBLIC_KEY: z.string().optional(),
   CREDENTIAL_ENCRYPTION_PRIVATE_KEY: z.string().optional(),
+
+  /**
+   * How often the Motive position sync sweeps every connected org, in
+   * milliseconds. 0 is off — same default and same reasoning as
+   * `OUTBOX_POLL_MS`/`EXCEPTION_SCAN_POLL_MS`: a poller that starts itself
+   * runs in every test and every local `pnpm dev`.
+   */
+  MOTIVE_SYNC_POLL_MS: z.coerce.number().int().min(0).default(0),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

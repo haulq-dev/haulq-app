@@ -18,7 +18,8 @@
  * function exists, using it is not optional.
  */
 
-import { and, asc, eq, isNull } from 'drizzle-orm';
+import { and, asc, eq, isNotNull, isNull } from 'drizzle-orm';
+import type { Database } from '../client.ts';
 import type { Scope } from '../context.ts';
 import { recordEvent } from '../events/record.ts';
 import { trucks } from '../schema/fleet.ts';
@@ -65,6 +66,81 @@ export async function getTruck(s: Scope, id: string): Promise<Truck | undefined>
     // not the same as being an authorization check.
     .where(and(eq(trucks.id, id), eq(trucks.orgId, s.ctx.orgId)));
   return row;
+}
+
+/**
+ * This org's trucks that have been matched to a Motive vehicle, keyed by
+ * that vehicle id. Takes `db` directly rather than a `Scope` — called from
+ * `integrations/motive-sync.ts`'s sweep across every org, one org at a
+ * time, not from inside a single org's request.
+ */
+export async function trucksByMotiveVehicleId(db: Database, orgId: string): Promise<Map<number, string>> {
+  const rows = await db
+    .select({ id: trucks.id, motiveVehicleId: trucks.motiveVehicleId })
+    .from(trucks)
+    .where(and(eq(trucks.orgId, orgId), isNotNull(trucks.motiveVehicleId)));
+  return new Map(rows.map((r) => [r.motiveVehicleId!, r.id]));
+}
+
+export class TruckError extends Error {
+  readonly code: string;
+  readonly explanation: string;
+
+  constructor(code: string, message: string, explanation: string) {
+    super(message);
+    this.name = 'TruckError';
+    this.code = code;
+    this.explanation = explanation;
+  }
+}
+
+/**
+ * Match this truck to a Motive vehicle, or clear the match.
+ *
+ * `null` clears it — a carrier disconnecting a truck from Motive (it was
+ * sold, or mismatched) without having to know which vehicle id to type
+ * over it. `trucks_org_motive_vehicle_key` is the enforcement against two
+ * trucks claiming the same vehicle; this only translates that constraint
+ * violation into a sentence a carrier can read.
+ */
+export async function setTruckMotiveVehicleId(
+  s: Scope,
+  id: string,
+  motiveVehicleId: number | null,
+): Promise<Truck> {
+  return withTransaction(s, async (tx) => {
+    const current = await getTruck(tx, id);
+    if (!current) {
+      throw new TruckError('not_found', `truck ${id} not found`, 'That truck is not on this account.');
+    }
+
+    let row: Truck | undefined;
+    try {
+      [row] = await tx.db
+        .update(trucks)
+        .set({ motiveVehicleId, updatedAt: new Date() })
+        .where(and(eq(trucks.id, id), eq(trucks.orgId, tx.ctx.orgId)))
+        .returning();
+    } catch (err) {
+      const pg = err as { code?: string; constraint_name?: string };
+      if (pg.code === '23505' && pg.constraint_name === 'trucks_org_motive_vehicle_key') {
+        throw new TruckError(
+          'already_matched',
+          `motive vehicle ${motiveVehicleId} already matched to another truck`,
+          'Another truck is already matched to that Motive vehicle.',
+        );
+      }
+      throw err;
+    }
+    if (!row) throw new Error('truck motive-vehicle update returned nothing');
+
+    await recordEvent(tx, 'truck.motive_vehicle_matched', {
+      subjectId: id,
+      payload: { label: row.label, motiveVehicleId },
+    });
+
+    return row;
+  });
 }
 
 export async function createTruck(

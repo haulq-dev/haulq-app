@@ -207,6 +207,14 @@ export const eventCatalog = {
       `Took ${p.label} out of service${p.reason ? `: ${p.reason}` : '.'}`,
   }),
 
+  'truck.motive_vehicle_matched': define<{ label: string; motiveVehicleId: number | null }>({
+    subjectType: 'truck',
+    describe: (p) =>
+      p.motiveVehicleId === null
+        ? `Unmatched ${p.label} from its Motive vehicle.`
+        : `Matched ${p.label} to Motive vehicle ${p.motiveVehicleId} — its position now syncs automatically.`,
+  }),
+
   'driver.added': define<{ name: string }>({
     subjectType: 'driver',
     describe: (p) => `Added driver ${p.name}.`,

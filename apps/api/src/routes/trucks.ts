@@ -10,8 +10,8 @@
  * file.
  */
 
-import { CreateTruckSchema } from '@haulq/contracts';
-import { createTruck, listTrucks } from '@haulq/db';
+import { CreateTruckSchema, SetTruckMotiveVehicleSchema } from '@haulq/contracts';
+import { createTruck, listTrucks, setTruckMotiveVehicleId, TruckError } from '@haulq/db';
 import type { FastifyInstance } from 'fastify';
 import { HttpError, requireRole, requireScope } from '../plugins/request-context.ts';
 
@@ -39,5 +39,31 @@ export async function truckRoutes(app: FastifyInstance) {
 
     const truck = await createTruck(s, parsed.data);
     return reply.code(201).send(truck);
+  });
+
+  app.patch('/v1/trucks/:id/motive-vehicle', async (request) => {
+    const s = await requireScope(request);
+    requireRole(request, 'owner', 'dispatcher');
+    const { id } = request.params as { id: string };
+
+    const parsed = SetTruckMotiveVehicleSchema.safeParse(request.body);
+    if (!parsed.success) {
+      throw new HttpError(
+        400,
+        'invalid_request',
+        parsed.error.issues
+          .map((i) => `${i.path.join('.') || 'body'}: ${i.message}`)
+          .join('; '),
+      );
+    }
+
+    try {
+      return await setTruckMotiveVehicleId(s, id, parsed.data.motiveVehicleId);
+    } catch (err) {
+      if (err instanceof TruckError) {
+        throw new HttpError(err.code === 'not_found' ? 404 : 409, err.code, err.explanation);
+      }
+      throw err;
+    }
   });
 }

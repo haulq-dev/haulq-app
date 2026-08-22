@@ -36,6 +36,13 @@
       "when": 1787349495958,
       "tag": "0004_worthless_rocket_racer",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1787434927342,
+      "tag": "0005_lush_slipstream",
+      "breakpoints": true
     }
   ]
 }

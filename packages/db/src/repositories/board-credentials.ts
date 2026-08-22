@@ -10,6 +10,7 @@
  */
 
 import { and, eq } from 'drizzle-orm';
+import type { Database } from '../client.ts';
 import type { Scope } from '../context.ts';
 import { recordEvent } from '../events/record.ts';
 import { boardCredentials } from '../schema/tenancy.ts';
@@ -48,6 +49,19 @@ export async function getBoardCredential(s: Scope, board: string): Promise<Board
     .from(boardCredentials)
     .where(and(eq(boardCredentials.orgId, s.ctx.orgId), eq(boardCredentials.board, board)));
   return row;
+}
+
+/**
+ * Every org with an active connection for `board`. No tenant — a sweep
+ * across the whole table, same shape `findExceptionCandidates` already has
+ * in `repositories/track.ts`, for the same reason: a sync job runs on a
+ * schedule, not inside one org's request.
+ */
+export async function listActiveOAuthCredentials(db: Database, board: string): Promise<BoardCredential[]> {
+  return db
+    .select()
+    .from(boardCredentials)
+    .where(and(eq(boardCredentials.board, board), eq(boardCredentials.status, 'active')));
 }
 
 export interface StoreOAuthCredentialInput {

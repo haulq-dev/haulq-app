@@ -36,6 +36,73 @@ const EQUIPMENT = [
 const pretty = (equipment: string) =>
   equipment.toLowerCase().replace(/_/g, ' ');
 
+/**
+ * The Motive vehicle id, editable inline. No dedicated integration-mapping
+ * screen exists yet — this is where a carrier who has connected Motive
+ * (`/integrations`) actually tells HaulQ which vehicle is which truck, or
+ * `integrations/motive-sync.ts` has positions with nowhere to write them.
+ */
+function MotiveVehicleCell({ truck }: { truck: Truck }) {
+  const queryClient = useQueryClient();
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(String(truck.motiveVehicleId ?? ''));
+
+  const save = useMutation({
+    mutationFn: (motiveVehicleId: number | null) =>
+      request(`/v1/trucks/${truck.id}/motive-vehicle`, {
+        method: 'PATCH',
+        body: { motiveVehicleId },
+      }),
+    onSuccess: async () => {
+      setEditing(false);
+      await queryClient.invalidateQueries();
+    },
+  });
+
+  if (!editing) {
+    return (
+      <button
+        className="text-left hover:underline"
+        onClick={() => {
+          setValue(String(truck.motiveVehicleId ?? ''));
+          setEditing(true);
+        }}
+      >
+        {truck.motiveVehicleId !== null ? (
+          <span className="num">{truck.motiveVehicleId}</span>
+        ) : (
+          <span className="text-sm text-mute">Not matched</span>
+        )}
+      </button>
+    );
+  }
+
+  return (
+    <div className="flex items-center gap-1.5">
+      <input
+        className="hq-input w-28 py-1 text-sm"
+        data-numeric="true"
+        inputMode="numeric"
+        autoFocus
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        placeholder="Vehicle id"
+      />
+      <button
+        className="hq-btn hq-btn-ghost px-2 py-1 text-xs"
+        disabled={save.isPending}
+        onClick={() => save.mutate(value.trim() ? Number(value) : null)}
+      >
+        Save
+      </button>
+      <button className="hq-btn hq-btn-ghost px-2 py-1 text-xs" onClick={() => setEditing(false)}>
+        Cancel
+      </button>
+      <ErrorNote error={save.error} />
+    </div>
+  );
+}
+
 function AddTruck({ onDone }: { onDone: () => void }) {
   const [label, setLabel] = useState('');
   const [equipment, setEquipment] = useState<string>('STRAIGHT_BOX');
@@ -197,6 +264,7 @@ export function TrucksScreen() {
                   <th className="field-label">Equipment</th>
                   <th className="field-label">Max weight</th>
                   <th className="field-label">Can do</th>
+                  <th className="field-label">Motive vehicle</th>
                 </tr>
               </thead>
               <tbody>
@@ -228,6 +296,9 @@ export function TrucksScreen() {
                             Nothing set — loads needing equipment may be hidden
                           </span>
                         )}
+                      </td>
+                      <td>
+                        <MotiveVehicleCell truck={truck} />
                       </td>
                     </tr>
                   );

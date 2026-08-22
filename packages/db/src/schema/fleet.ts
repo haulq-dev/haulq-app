@@ -28,6 +28,7 @@ import {
   text,
   timestamp,
   unique,
+  uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core';
 import { pk, timestamps } from './_shared.ts';
@@ -83,6 +84,18 @@ export const trucks = pgTable(
     /** See the module note. Determines whether ELD data can be relied on. */
     shortHaulExempt: boolean('short_haul_exempt').notNull().default(false),
 
+    /**
+     * Motive's own numeric vehicle id, when this truck has been matched to
+     * one. Phase 2b's own vehicle, not a HaulQ id — set once by a carrier
+     * connecting Motive (`repositories/trucks.ts`'s `setTruckMotiveVehicleId`),
+     * read by `integrations/motive-sync.ts` to know which `truck_positions`
+     * row a fetched location becomes. Matching by label/number instead was
+     * considered and rejected: a carrier renaming a truck, or Motive's
+     * vehicle "number" not matching HaulQ's label, would silently stop the
+     * sync rather than failing loudly.
+     */
+    motiveVehicleId: integer('motive_vehicle_id'),
+
     active: boolean('active').notNull().default(true),
     ...timestamps,
   },
@@ -90,6 +103,10 @@ export const trucks = pgTable(
     index('trucks_org_idx').on(t.orgId),
     index('trucks_org_active_idx').on(t.orgId, t.active),
     unique('trucks_org_label_key').on(t.orgId, t.label),
+    /** Partial — most trucks have no Motive vehicle yet, and null must not collide with null. */
+    uniqueIndex('trucks_org_motive_vehicle_key')
+      .on(t.orgId, t.motiveVehicleId)
+      .where(sql`${t.motiveVehicleId} is not null`),
   ],
 );
 

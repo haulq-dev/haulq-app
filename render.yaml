@@ -106,6 +106,11 @@ services:
     #   EXCEPTION_THRESHOLD_HOURS=4     unset, same as OUTBOX_POLL_MS: nothing
     #                                   fires while the poll interval is 0
     #   CREDENTIAL_ENCRYPTION_PUBLIC_KEY / _PRIVATE_KEY
+    #   MOTIVE_CLIENT_ID, MOTIVE_CLIENT_SECRET, MOTIVE_REDIRECT_URI
+    #   MOTIVE_SYNC_POLL_MS=300000   Phase 2b's position sync — unset means
+    #                                nothing polls Motive, same OUTBOX_POLL_MS
+    #                                pattern; also needs the encryption
+    #                                keypair above to actually run
     #
     # DATABASE_URL is now copied by hand, which `fromDatabase` used to do. Take
     # the INTERNAL connection string from the haulq-db dashboard — same region,

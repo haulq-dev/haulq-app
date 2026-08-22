@@ -127,6 +127,12 @@ export const TruckSchema = CreateTruckSchema.extend({
 });
 export type Truck = z.infer<typeof TruckSchema>;
 
+/** `null` clears an existing match. See `repositories/trucks.ts`'s `setTruckMotiveVehicleId`. */
+export const SetTruckMotiveVehicleSchema = z.object({
+  motiveVehicleId: z.number().int().positive().nullable(),
+});
+export type SetTruckMotiveVehicle = z.infer<typeof SetTruckMotiveVehicleSchema>;
+
 // ---------------------------------------------------------------------------
 // Org and carrier profile
 // ---------------------------------------------------------------------------

@@ -87,9 +87,13 @@ export function IntegrationsScreen() {
       <div>
         <h1 className="text-3xl">Integrations</h1>
         <p className="mt-1 max-w-prose text-slate">
-          Boards and ELDs connected to this account. Motive's own position
-          reports will feed Track the same way a driver's check-in does,
-          once the adapter that reads them is built.
+          Boards and ELDs connected to this account. Once connected, match
+          each truck to its Motive vehicle from the{' '}
+          <a href="/trucks" className="underline">
+            Trucks
+          </a>{' '}
+          screen — that is what tells the sync which position belongs to
+          which truck.
         </p>
       </div>
 

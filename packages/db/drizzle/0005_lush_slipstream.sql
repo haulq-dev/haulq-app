@@ -1,0 +1,2 @@
+ALTER TABLE "trucks" ADD COLUMN "motive_vehicle_id" integer;--> statement-breakpoint
+CREATE UNIQUE INDEX "trucks_org_motive_vehicle_key" ON "trucks" USING btree ("org_id","motive_vehicle_id") WHERE "trucks"."motive_vehicle_id" is not null;

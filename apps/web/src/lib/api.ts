@@ -192,6 +192,8 @@ export interface Truck {
   maxWeightLbs: number | null;
   capabilities: Record<string, boolean>;
   shortHaulExempt: boolean;
+  /** Set once a carrier matches this truck to a vehicle in Motive. Null until then. */
+  motiveVehicleId: number | null;
 }
 
 export interface CarrierProfile {

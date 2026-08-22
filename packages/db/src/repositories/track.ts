@@ -364,6 +364,52 @@ export async function recordStopCheckin(
  * `event_log`. No `Scope` needed for the same reason: nothing here produces
  * an auditable action, only a fact about where the truck was.
  */
+export type PositionSource = 'driver_app' | 'eld' | 'manual';
+
+/**
+ * One write, two destinations — the module note's whole reason
+ * `truck_positions` exists as a table separate from `trucks.current*`.
+ * Shared by every source that reports a position: the driver check-in link
+ * calls this with `'driver_app'`, and 2b's Motive adapter
+ * (`integrations/motive-sync.ts`) calls it with `'eld'` — same sink, same
+ * guarantee, no source-specific write path to keep in sync by hand.
+ */
+export async function recordTruckPosition(
+  db: Database,
+  args: {
+    orgId: string;
+    truckId: string;
+    lat: number;
+    lng: number;
+    recordedAt: Date;
+    source: PositionSource;
+    raw?: unknown;
+  },
+): Promise<void> {
+  await db.transaction(async (tx) => {
+    await tx.insert(truckPositions).values({
+      orgId: args.orgId,
+      truckId: args.truckId,
+      lat: args.lat,
+      lng: args.lng,
+      recordedAt: args.recordedAt,
+      source: args.source,
+      raw: args.raw ?? null,
+    });
+
+    await tx
+      .update(trucks)
+      .set({
+        currentLat: args.lat,
+        currentLng: args.lng,
+        positionAt: args.recordedAt,
+        positionSource: args.source,
+        updatedAt: new Date(),
+      })
+      .where(eq(trucks.id, args.truckId));
+  });
+}
+
 export async function recordCheckinPosition(
   db: Database,
   args: {
@@ -388,29 +434,13 @@ export async function recordCheckinPosition(
     );
   }
 
-  const recordedAt = args.recordedAt ? new Date(args.recordedAt) : new Date();
-  const truckId = load.truckId;
-
-  await db.transaction(async (tx) => {
-    await tx.insert(truckPositions).values({
-      orgId: found.orgId,
-      truckId,
-      lat: args.lat,
-      lng: args.lng,
-      recordedAt,
-      source: 'driver_app',
-    });
-
-    await tx
-      .update(trucks)
-      .set({
-        currentLat: args.lat,
-        currentLng: args.lng,
-        positionAt: recordedAt,
-        positionSource: 'driver_app',
-        updatedAt: new Date(),
-      })
-      .where(eq(trucks.id, truckId));
+  await recordTruckPosition(db, {
+    orgId: found.orgId,
+    truckId: load.truckId,
+    lat: args.lat,
+    lng: args.lng,
+    recordedAt: args.recordedAt ? new Date(args.recordedAt) : new Date(),
+    source: 'driver_app',
   });
 }
 
