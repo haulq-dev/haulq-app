@@ -242,9 +242,20 @@ function InboundEmailPanel({ slug }: { slug: string }) {
 // Attaching
 // ---------------------------------------------------------------------------
 
+/**
+ * Attach, or re-attach to a different load.
+ *
+ * Not gated on `document.loadId === null` — a rejected document is corrected
+ * by pointing it at the right load, not by some separate "move" action, and
+ * `attachToLoad` on the API side already treats re-attaching as a normal
+ * write, not a special case. `choice` starts on the document's current load
+ * so the dropdown reflects where it already is, and the button disables on
+ * a no-op re-selection of the same one rather than firing a request that
+ * would just return the row unchanged.
+ */
 function AttachControl({ document }: { document: DocumentRow }) {
   const queryClient = useQueryClient();
-  const [choice, setChoice] = useState('');
+  const [choice, setChoice] = useState(document.loadId ?? '');
 
   const loads = useQuery({
     queryKey: ['loads'],
@@ -273,7 +284,7 @@ function AttachControl({ document }: { document: DocumentRow }) {
   return (
     <span className="flex flex-wrap items-center gap-2">
       <select
-        aria-label="Attach to load"
+        aria-label={document.loadId ? 'Re-attach to a different load' : 'Attach to load'}
         className="border border-line bg-white px-2 py-1 text-sm"
         value={choice}
         onChange={(e) => setChoice(e.target.value)}
@@ -288,10 +299,10 @@ function AttachControl({ document }: { document: DocumentRow }) {
       <button
         type="button"
         className="border border-line px-3 py-1 text-sm disabled:opacity-40"
-        disabled={!choice || attach.isPending}
+        disabled={!choice || choice === document.loadId || attach.isPending}
         onClick={() => attach.mutate(choice)}
       >
-        {attach.isPending ? 'Attaching…' : 'Attach'}
+        {attach.isPending ? 'Attaching…' : document.loadId ? 'Re-attach' : 'Attach'}
       </button>
       <ErrorNote error={attach.error} />
     </span>
@@ -568,7 +579,7 @@ export function DocumentsScreen() {
 
                   <Pill tone={STATUS_TONE[doc.status] ?? 'neutral'}>{doc.status}</Pill>
 
-                  {doc.loadId === null && <AttachControl document={doc} />}
+                  <AttachControl document={doc} />
                 </div>
 
                 {open === doc.id && <Detail document={doc} />}
