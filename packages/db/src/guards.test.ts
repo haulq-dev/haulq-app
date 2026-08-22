@@ -18,6 +18,7 @@
 import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
 import postgres from 'postgres';
+import { sslFor } from './ssl.ts';
 
 const url = process.env['DATABASE_URL'];
 const suite = url ? describe : describe.skip;
@@ -54,7 +55,11 @@ async function rejects(
 
 suite('database guards', () => {
   before(async () => {
-    sql = postgres(url!, { max: 1 });
+    // Same TLS negotiation `migrate.ts` and `client.ts` do — without it, a
+    // connection string from Render's "External" tab fails with a `28000`
+    // ("SSL/TLS required") that Node's driver often surfaces as a bare
+    // ECONNRESET instead, which reads like a network blip and is not one.
+    sql = postgres(url!, { max: 1, ssl: sslFor(url!) });
     const [org] = await sql<{ id: string }[]>`
       insert into orgs (name, slug, contact_email)
       values ('Guard Test Carrier', ${'guard-' + Date.now()}, 'test@example.com')

@@ -9,6 +9,7 @@
  */
 
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
 import { after, before, describe, it } from 'node:test';
 import { closeDatabase, createDatabase, type Database } from '../client.ts';
 import type { Scope } from '../context.ts';
@@ -167,7 +168,7 @@ suite('track repository', () => {
         token,
         stopId: pickup.id,
         milestone: 'arrived',
-        correlationId: 'test',
+        correlationId: randomUUID(),
       });
 
       assert.ok(stop.arrivedAt);
@@ -184,7 +185,7 @@ suite('track repository', () => {
         token,
         stopId: preview.stops[0]!.id,
         milestone: 'arrived',
-        correlationId: 'test',
+        correlationId: randomUUID(),
       });
 
       const events = await readEvents(s, load.id);
@@ -204,7 +205,7 @@ suite('track repository', () => {
         token,
         stopId,
         milestone: 'departed',
-        correlationId: 'test',
+        correlationId: randomUUID(),
       });
       assert.ok(stop.departedAt);
       assert.equal(stop.arrivedAt, null);
@@ -222,7 +223,7 @@ suite('track repository', () => {
             token,
             stopId: previewB.stops[0]!.id,
             milestone: 'arrived',
-            correlationId: 'test',
+            correlationId: randomUUID(),
           }),
         (e: TrackError) => e.code === 'not_found',
       );
@@ -315,7 +316,7 @@ suite('track repository', () => {
         stopId: preview.stops[0]!.id,
         milestone: 'arrived',
         occurredAt: threeHoursAgo,
-        correlationId: 'test',
+        correlationId: randomUUID(),
       });
 
       const { token: tracking } = await issueVisibilityLink(s, load.id);
@@ -338,7 +339,7 @@ suite('track repository', () => {
         stopId: preview.stops[0]!.id,
         milestone: 'arrived',
         occurredAt: oneHourAgo,
-        correlationId: 'test',
+        correlationId: randomUUID(),
       });
 
       const { token: tracking } = await issueVisibilityLink(s, load.id);
@@ -358,7 +359,16 @@ suite('track repository', () => {
     });
 
     it('still shows detention after departure, for a load already gone', async () => {
-      const load = await aDispatchedLoad();
+      // A distinct broker name, not 'Prairie Freight' — the "uses the
+      // broker's own free time" test above already overrode that broker's
+      // threshold to 30 minutes, and this test's math assumes the untouched
+      // 120-minute default.
+      const load = await createLoad(s, {
+        status: 'dispatched',
+        brokerName: 'Departed Freight Co',
+        truckId,
+        stops: wichitaToDenver,
+      });
       const { token: checkin } = await issueCheckinLink(s, load.id);
       const preview = await previewCheckin(db, checkin);
       const stopId = preview.stops[0]!.id;
@@ -370,14 +380,14 @@ suite('track repository', () => {
         stopId,
         milestone: 'arrived',
         occurredAt: fourHoursAgo,
-        correlationId: 'test',
+        correlationId: randomUUID(),
       });
       await recordStopCheckin(db, {
         token: checkin,
         stopId,
         milestone: 'departed',
         occurredAt: oneHourAgo,
-        correlationId: 'test',
+        correlationId: randomUUID(),
       });
 
       const { token: tracking } = await issueVisibilityLink(s, load.id);
@@ -416,10 +426,14 @@ suite('track repository', () => {
     });
 
     it('is null with no truck position', async () => {
+      // A truck of its own — the shared `truckId` picks up a position from
+      // the test right above this one, which would make "no position"
+      // false before this test ever runs.
+      const freshTruck = await createTruck(s, { label: 'Truck 2' });
       const load = await createLoad(s, {
         status: 'dispatched',
         brokerName: 'Prairie Freight',
-        truckId,
+        truckId: freshTruck.id,
         stops: wichitaToDenverWithCoords,
       });
       const { token } = await issueVisibilityLink(s, load.id);
@@ -450,7 +464,7 @@ suite('track repository', () => {
         token: checkin,
         stopId: preview.stops[0]!.id,
         milestone: 'arrived',
-        correlationId: 'test',
+        correlationId: randomUUID(),
       });
       await recordCheckinPosition(db, { token: checkin, lat: 37.6872, lng: -97.3301 });
 
@@ -464,12 +478,21 @@ suite('track repository', () => {
   // --- exception alerts ----------------------------------------------------
 
   describe('findExceptionCandidates / raiseExceptionAlert', () => {
-    /** A load dispatched `hoursAgo` in the past, with nothing reported since. */
+    /**
+     * A load dispatched `hoursAgo` in the past, with nothing reported since —
+     * on its own truck, not the shared `truckId`. `findExceptionCandidates`
+     * looks at the truck's last position as much as the load's own
+     * timestamps, and other tests in this file (and this block — a position
+     * ping is exactly what "counts as activity" tests record) ping the
+     * shared truck constantly. Sharing it here would make "quiet" depend on
+     * test execution order.
+     */
     async function aQuietLoad(hoursAgo: number) {
+      const truck = await createTruck(s, { label: `Quiet Truck ${randomUUID().slice(0, 8)}` });
       const load = await createLoad(s, {
         status: 'booked', // no dispatchedAt yet — see the note in loads.ts
         brokerName: 'Prairie Freight',
-        truckId,
+        truckId: truck.id,
         stops: wichitaToDenver,
       });
       const at = new Date(Date.now() - hoursAgo * 3_600_000).toISOString();
@@ -497,7 +520,7 @@ suite('track repository', () => {
         token,
         stopId: preview.stops[0]!.id,
         milestone: 'arrived',
-        correlationId: 'test',
+        correlationId: randomUUID(),
       });
 
       const candidates = await findExceptionCandidates(db, 4);
@@ -526,7 +549,11 @@ suite('track repository', () => {
 
     it('raises an alert once, then again only after activity moves the clock', async () => {
       const load = await aQuietLoad(6);
-      const [candidate] = await findExceptionCandidates(db, 4);
+      // Found by loadId, not `[0]` — the scan is system-wide with no
+      // tenant filter, so anything else quiet at the time this runs would
+      // otherwise make this test order-dependent on data it does not own.
+      const candidates = await findExceptionCandidates(db, 4);
+      const candidate = candidates.find((c) => c.loadId === load.id);
       assert.ok(candidate);
 
       const first = await raiseExceptionAlert(db, candidate!);
@@ -541,10 +568,13 @@ suite('track repository', () => {
       assert.match(alerts[0]!.explanation, /No check-in or position update/);
 
       // The load goes quiet again after new activity moves the baseline —
-      // simulated here the same way `aQuietLoad` backdates the first one.
+      // `lastActivityAt` has to land *after* the first alert's own
+      // `occurredAt` for that to be true, not further in the past. The
+      // dedup rule is "no alert since this activity"; backdating it again
+      // would still be before the alert that already fired.
       const later: typeof candidate = {
         ...candidate!,
-        lastActivityAt: new Date(Date.now() - 5 * 3_600_000),
+        lastActivityAt: new Date(),
       };
       const third = await raiseExceptionAlert(db, later);
       assert.equal(third, true, 'a fresh silence window should alert again');
