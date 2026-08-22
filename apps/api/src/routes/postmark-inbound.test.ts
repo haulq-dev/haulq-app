@@ -230,19 +230,53 @@ suite('postmark inbound', () => {
     store.reset();
 
     const res = await deliver(
-      payload(org.slug, [
-        {
-          Name: 'logo.png',
-          Content: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]),
-          ContentType: 'image/png',
-          ContentID: 'cid:logo123',
-        },
-      ]),
+      payload(
+        org.slug,
+        [
+          {
+            Name: 'logo.png',
+            Content: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]),
+            ContentType: 'image/png',
+            ContentID: 'logo123',
+          },
+        ],
+        // The signal is the body actually referencing it, not the header alone
+        // — see the next test.
+        { HtmlBody: '<div>Thanks — <img src="cid:logo123"></div>' },
+      ),
     );
 
     assert.equal(res.statusCode, 200);
     assert.equal(res.json().documents.length, 0);
     assert.equal(store.puts, 0);
+  });
+
+  it('stores an attachment that carries a ContentID nothing in the body references', async () => {
+    // Found against a real send 2026-08-22: Gmail stamps a ContentID on every
+    // attachment, inline or not. Treating the header's mere presence as "this
+    // is a signature logo" silently dropped a real rate confirmation with an
+    // empty HtmlBody and no cid: reference anywhere in it.
+    const org = await newOrg('Gmail Sender Co');
+    store.reset();
+
+    const res = await deliver(
+      payload(
+        org.slug,
+        [
+          {
+            Name: 'ratecon-email.pdf',
+            Content: pdf('gmail-contentid'),
+            ContentType: 'application/pdf',
+            ContentID: 'f_mt4n5lqo0',
+          },
+        ],
+        { HtmlBody: '<div dir="ltr"><br></div>\n' },
+      ),
+    );
+
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.json().documents.length, 1, 'a real attachment must not be silently dropped');
+    assert.equal(store.puts, 1);
   });
 
   it('skips an attachment the pipeline cannot read', async () => {

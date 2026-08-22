@@ -18,9 +18,14 @@ export const PostmarkAttachmentSchema = z.object({
   ContentType: z.string(),
   ContentLength: z.number().int().nonnegative(),
   /**
-   * Set only for content referenced from the HTML body — a signature logo, a
-   * tracking pixel — via `cid:`. A genuine attachment never carries one, which
-   * is the whole filter the route needs to skip inline images.
+   * Set for content Postmark's parser noticed *could* be referenced from the
+   * HTML body via `cid:` — a signature logo, a tracking pixel. **Presence
+   * alone does not mean it is.** Gmail stamps a `ContentID` on every
+   * attachment part, inline or not — confirmed against a real send: a plain
+   * PDF attachment came through with a `ContentID` and an `HtmlBody` that
+   * never mentions it. The route has to check whether the body actually
+   * contains `cid:{ContentID}` before treating this as inline; the field by
+   * itself is not the filter.
    */
   ContentID: z.string().nullable().optional(),
 });
@@ -38,6 +43,8 @@ export const PostmarkInboundSchema = z.object({
    * This is how one shared inbound address routes to a tenant.
    */
   MailboxHash: z.string().optional().default(''),
+  /** What an inline attachment's `cid:` would actually be referenced from. */
+  HtmlBody: z.string().optional().default(''),
   Attachments: z.array(PostmarkAttachmentSchema).optional().default([]),
 });
 export type PostmarkInboundPayload = z.infer<typeof PostmarkInboundSchema>;

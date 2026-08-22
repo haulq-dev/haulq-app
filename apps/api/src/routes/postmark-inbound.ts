@@ -96,9 +96,13 @@ export async function postmarkInboundRoutes(app: FastifyInstance) {
     const results: Array<{ filename: string; documentId: string; deduped: boolean }> = [];
 
     for (const attachment of payload.Attachments) {
-      // Referenced from the HTML body — a signature logo, a tracking pixel —
-      // not something the sender attached. A real attachment never has one.
-      if (attachment.ContentID) continue;
+      // `ContentID` alone does not mean "inline" — see the schema note.
+      // Gmail sets it on ordinary attachments too. The actual signal is
+      // whether the HTML body references it as `cid:{id}`, the way a
+      // signature logo or a tracking pixel genuinely would.
+      if (attachment.ContentID && payload.HtmlBody.includes(`cid:${attachment.ContentID}`)) {
+        continue;
+      }
 
       let body: Buffer;
       try {

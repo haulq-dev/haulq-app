@@ -156,11 +156,14 @@ since it is at-least-once by design.
       `document.received` is not.
 
 **If your email signature has an inline logo image**, check that it did
-**not** also appear as a separate document. A signature image carries a
-`ContentID` in Postmark's parsed payload — that is what marks it as content
-referenced from the HTML body rather than something you attached, and the
-route skips it on exactly that basis. If it does show up as a document, that
-is a real bug, not a maybe.
+**not** also appear as a separate document. The route only skips an
+attachment carrying a `ContentID` when the message's `HtmlBody` actually
+references it as `cid:{id}` — not on `ContentID` being present alone, since
+Gmail stamps one on every attachment, inline or not, and treating presence
+alone as the signal silently dropped real attachments sent from Gmail (found
+and fixed 2026-08-22). If a signature logo shows up as a document, or — the
+more serious direction — a real attachment silently does not, both are real
+bugs, not a maybe.
 
 **Resend the same email** (most clients have a literal "resend" — if not,
 forward it to yourself and back, or just send the identical attachment
