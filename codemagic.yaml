@@ -21,15 +21,15 @@ workflows:
     environment:
       ios_signing:
         distribution_type: app_store
-        bundle_identifier: ai.haulq.driver
+        # Not 'ai.haulq.driver' — Apple wouldn't take that when the account
+        # actually tried to register it, only 'ai.haulq.app'. Matches
+        # capacitor.config.ts, the Xcode project, and android/app/build.gradle,
+        # all updated together when this changed.
+        bundle_identifier: ai.haulq.app
       vars:
         XCODE_WORKSPACE: "ios/App/App.xcworkspace"
         XCODE_SCHEME: "App"
-        # The numeric App Store Connect app id — only exists once the app
-        # is registered there (My Apps → + → New App, bundle id
-        # ai.haulq.driver, matching what capacitor.config.ts already sets).
-        # Find it under App Information → General Information → Apple ID.
-        APP_STORE_APP_ID: 0000000000
+        APP_STORE_APP_ID: 6804486951
       node: 22.18.0
       xcode: latest
       cocoapods: default

@@ -19,7 +19,14 @@
 import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
-  appId: 'ai.haulq.driver',
+  // Matches what actually got registered in App Store Connect — Apple
+  // wouldn't take 'ai.haulq.driver' when the account tried, only
+  // 'ai.haulq.app'. Every native project (ios/, android/) was already
+  // generated against the old id and had to be updated by hand to match;
+  // if this ever needs to change again, `ios/App/App.xcodeproj/project.pbxproj`'s
+  // two `PRODUCT_BUNDLE_IDENTIFIER` lines and `android/app/build.gradle`'s
+  // `namespace`/`applicationId` need the same edit, not just this file.
+  appId: 'ai.haulq.app',
   appName: 'HaulQ Driver',
   webDir: 'dist',
 };

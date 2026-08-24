@@ -1,10 +1,10 @@
 apply plugin: 'com.android.application'
 
 android {
-    namespace "ai.haulq.driver"
+    namespace "ai.haulq.app"
     compileSdk rootProject.ext.compileSdkVersion
     defaultConfig {
-        applicationId "ai.haulq.driver"
+        applicationId "ai.haulq.app"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1

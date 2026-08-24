@@ -1,4 +1,4 @@
-package ai.haulq.driver;
+package ai.haulq.app;
 
 import com.getcapacitor.BridgeActivity;
 
