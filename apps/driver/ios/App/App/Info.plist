@@ -22,6 +22,16 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<!-- Export compliance: the app only talks HTTPS to HaulQ's own API
+	     through iOS's standard networking stack — no proprietary or
+	     custom cryptography ships inside the app itself (the sealed-box
+	     credential encryption in this codebase runs server-side, never in
+	     the app binary), and none of the three Capacitor plugins in use
+	     (core, app, geolocation) bundle their own crypto SDK either. That
+	     qualifies as exempt, so this is set once here rather than
+	     answered by hand on every future upload. -->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>HaulQ shares your truck's position with the broker while a load is in transit, so nobody has to call for a status update.</string>
 	<key>UILaunchStoryboardName</key>
