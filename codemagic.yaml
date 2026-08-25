@@ -77,6 +77,21 @@ workflows:
             --type IOS_APP_STORE \
             --create
 
+      - name: Add the fetched certificate to the keychain
+        # fetch-signing-files only *saves* the cert+key as a .p12 under
+        # ~/Library/Developer/Xcode/UserData/Certificates — it does not
+        # import it into the keychain keychain initialize set up.
+        # xcodebuild's code-signing search only looks at the keychain, not
+        # that folder, which is exactly why the archive step failed with
+        # "No iOS Distribution signing certificate ... with a private key
+        # was found" even though fetch-signing-files had just reported
+        # creating and saving one successfully. No --certificate-password:
+        # nothing here ever set one, so the .p12 is unencrypted, matching
+        # CERTIFICATE_PRIVATE_KEY's own unencrypted PEM.
+        script: |
+          keychain add-certificates \
+            --certificate "$HOME/Library/Developer/Xcode/UserData/Certificates/*.p12"
+
       - name: Set up code signing
         working_directory: apps/driver
         script: xcode-project use-profiles
