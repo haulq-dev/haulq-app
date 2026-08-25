@@ -82,7 +82,12 @@ workflows:
         script: xcode-project use-profiles
 
       - name: Increment the build number
-        working_directory: apps/driver
+        # Not apps/driver — agvtool takes no path argument, it operates on
+        # whatever directory it's run from, and that has to actually
+        # contain the .xcodeproj. Everything else in this file references
+        # the project by path ($XCODE_WORKSPACE etc.) and can run from
+        # apps/driver; this step is the one exception.
+        working_directory: apps/driver/ios/App
         script: |
           LATEST=$(app-store-connect get-latest-app-store-build-number "$APP_STORE_APP_ID")
           agvtool new-version -all $(($LATEST + 1))
