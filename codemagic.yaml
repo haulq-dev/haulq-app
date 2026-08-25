@@ -19,14 +19,20 @@ workflows:
       app_store_connect: haulq
 
     environment:
-      ios_signing:
-        distribution_type: app_store
+      # No `ios_signing:` block, deliberately — that shorthand only fetches
+      # signing files that already exist, and mixing it with the explicit
+      # `app-store-connect fetch-signing-files` script below (which can
+      # create them) is exactly what produced "No matching profiles found
+      # for bundle identifier ai.haulq.app" on the first real run: nothing
+      # had ever generated a distribution certificate or an App Store
+      # provisioning profile for this bundle id, and the shorthand has no
+      # `--create` equivalent to fall back on.
+      vars:
         # Not 'ai.haulq.driver' — Apple wouldn't take that when the account
         # actually tried to register it, only 'ai.haulq.app'. Matches
         # capacitor.config.ts, the Xcode project, and android/app/build.gradle,
         # all updated together when this changed.
-        bundle_identifier: ai.haulq.app
-      vars:
+        BUNDLE_ID: "ai.haulq.app"
         XCODE_WORKSPACE: "ios/App/App.xcworkspace"
         XCODE_SCHEME: "App"
         APP_STORE_APP_ID: 6804486951
@@ -53,6 +59,15 @@ workflows:
       - name: Install CocoaPods dependencies
         working_directory: apps/driver/ios/App
         script: pod install
+
+      - name: Initialize the build keychain
+        script: keychain initialize
+
+      - name: Fetch or create the App Store signing files
+        script: |
+          app-store-connect fetch-signing-files "$BUNDLE_ID" \
+            --type IOS_APP_STORE \
+            --create
 
       - name: Set up code signing
         working_directory: apps/driver
