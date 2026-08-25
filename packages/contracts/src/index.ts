@@ -150,7 +150,7 @@ const StateCode = z
  * Normalizing on the way in means the FMCSA lookup in Phase 0b has one format
  * to handle, and `brokers.mc_number` can be joined on without a cleanup pass.
  */
-const DocketNumber = z
+export const DocketNumber = z
   .string()
   .transform((s) => s.replace(/\D/g, ''))
   .pipe(z.string().min(4).max(9));
@@ -661,3 +661,18 @@ export const UpdateBrokerDetentionSchema = z.object({
   freeMinutes: z.number().int().min(0).max(1440).nullable(),
 });
 export type UpdateBrokerDetention = z.infer<typeof UpdateBrokerDetentionSchema>;
+
+/**
+ * PHASE_0B_PLAN.md's 0b-i: a carrier has to be able to put a broker's MC or
+ * USDOT number on file before there is anything for `POST
+ * /v1/brokers/:id/verify` to check it against — `resolveBroker` only ever
+ * learns a broker's name from a load, never a docket number. Both optional
+ * and independently settable, since a carrier may know one before the
+ * other. `null` clears a number the same way `UpdateBrokerDetentionSchema`
+ * clears its own field.
+ */
+export const UpdateBrokerDocketSchema = z.object({
+  mcNumber: DocketNumber.nullable().optional(),
+  usdotNumber: DocketNumber.nullable().optional(),
+});
+export type UpdateBrokerDocket = z.infer<typeof UpdateBrokerDocketSchema>;

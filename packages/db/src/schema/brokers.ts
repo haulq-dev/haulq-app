@@ -8,9 +8,13 @@
  * boolean appears on this table someone will read it six months stale and route
  * a load against it.
  *
- * Verify's output lands in `broker_verifications` in Phase 0b: one row per
- * check, each with its source, the raw response, and the time it was fetched.
- * This table will gain a pointer to the latest one and nothing more.
+ * Verify's output lands in `broker_verifications` (`verify.ts`, Phase 0b): one
+ * row per check, each with its source, the raw response, and the time it was
+ * fetched. `latestVerificationId` below is that promised pointer — a bare
+ * `uuid` with no `.references()`, since a real FK would need this file to
+ * import `verify.ts` while `verify.ts` already imports this one for
+ * `brokerId`. The application sets it right after the insert it points at;
+ * see `repositories/verify.ts`'s `recordVerification`.
  *
  * Scoped per org rather than global. Two carriers can hold different, equally
  * valid opinions of the same broker, and a shared row invites one tenant's
@@ -76,6 +80,9 @@ export const brokers = pgTable(
     detentionFreeMinutes: integer('detention_free_minutes'),
 
     notes: text('notes'),
+
+    /** See the module note. Set by `recordVerification`, read nowhere else. */
+    latestVerificationId: uuid('latest_verification_id'),
 
     /**
      * Whatever the load board reported about the posting company. Kept raw and

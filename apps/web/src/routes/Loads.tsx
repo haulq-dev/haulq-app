@@ -545,6 +545,112 @@ function DetentionThreshold({
   );
 }
 
+interface BrokerVerificationResponse {
+  mcNumber: string | null;
+  usdotNumber: string | null;
+  verification: {
+    source: string;
+    operatingStatus: string | null;
+    checkedAt: string;
+  } | null;
+}
+
+/**
+ * Check a broker against FMCSA — PHASE_0B_PLAN.md's 0b-i, on the load a
+ * carrier is already looking at, same reasoning `DetentionThreshold` above
+ * already gives for not having a separate broker-management screen. Reads
+ * and writes the docket number here too, since `resolveBroker` never learns
+ * one from a load and this is the one place a carrier would think to put it.
+ */
+function VerifyBroker({ brokerId, brokerName }: { brokerId: string; brokerName: string }) {
+  const queryClient = useQueryClient();
+  const [mcNumber, setMcNumber] = useState('');
+
+  const info = useQuery({
+    queryKey: ['broker-verification', brokerId],
+    queryFn: () => request<BrokerVerificationResponse>(`/v1/brokers/${brokerId}/verification`),
+  });
+
+  const saveDocket = useMutation({
+    mutationFn: () =>
+      request(`/v1/brokers/${brokerId}/docket`, {
+        method: 'PATCH',
+        body: { mcNumber: mcNumber.trim() || null },
+      }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['broker-verification', brokerId] });
+    },
+  });
+
+  const verify = useMutation({
+    mutationFn: () => request(`/v1/brokers/${brokerId}/verify`, { method: 'POST' }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['broker-verification', brokerId] });
+    },
+  });
+
+  const onFile = info.data?.mcNumber ?? info.data?.usdotNumber ?? null;
+  const status = info.data?.verification?.operatingStatus ?? null;
+
+  return (
+    <Card title={`${brokerName} — verify`}>
+      <p className="mb-3 text-sm text-slate">
+        Checks this broker's operating authority against FMCSA. Free, and
+        never automatic — nothing here books or blocks a load on its own.
+      </p>
+
+      {onFile ? (
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          <span className="num text-sm text-slate">
+            {info.data?.mcNumber ? `MC ${info.data.mcNumber}` : `DOT ${info.data?.usdotNumber}`}
+          </span>
+          {status && (
+            <Pill tone={status === 'Authorized' ? 'ok' : status === 'Not authorized' ? 'warn' : 'neutral'}>
+              {status}
+            </Pill>
+          )}
+          {!status && info.data?.verification === null && (
+            <span className="text-xs text-mute">not checked yet</span>
+          )}
+          <button
+            className="hq-btn hq-btn-brand"
+            disabled={verify.isPending}
+            onClick={() => verify.mutate()}
+          >
+            {verify.isPending ? 'Checking…' : status ? 'Check again' : 'Check now'}
+          </button>
+        </div>
+      ) : (
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          <input
+            className="hq-input w-40"
+            placeholder="MC 123456"
+            value={mcNumber}
+            onChange={(e) => setMcNumber(e.target.value)}
+          />
+          <button
+            className="hq-btn hq-btn-brand"
+            disabled={saveDocket.isPending || !mcNumber.trim()}
+            onClick={() => saveDocket.mutate()}
+          >
+            {saveDocket.isPending ? 'Saving…' : 'Save'}
+          </button>
+          <span className="text-xs text-mute">Needed before this broker can be checked.</span>
+        </div>
+      )}
+
+      {info.data?.verification?.checkedAt && (
+        <p className="text-xs text-mute">
+          Last checked {new Date(info.data.verification.checkedAt).toLocaleString()} via{' '}
+          {info.data.verification.source}.
+        </p>
+      )}
+
+      <ErrorNote error={saveDocket.error ?? verify.error} />
+    </Card>
+  );
+}
+
 export function LoadsScreen() {
   const [adding, setAdding] = useState(false);
   const [filter, setFilter] = useState<LoadStatus | ''>('');
@@ -721,12 +827,19 @@ export function LoadsScreen() {
             // load for the same broker should not remount, but switching
             // brokers must — the input's initial value only reads its prop
             // once, on mount.
-            <DetentionThreshold
-              key={selected.brokerId}
-              brokerId={selected.brokerId}
-              brokerName={selected.brokerName}
-              freeMinutes={selected.brokerDetentionFreeMinutes}
-            />
+            <>
+              <VerifyBroker
+                key={`verify-${selected.brokerId}`}
+                brokerId={selected.brokerId}
+                brokerName={selected.brokerName}
+              />
+              <DetentionThreshold
+                key={selected.brokerId}
+                brokerId={selected.brokerId}
+                brokerName={selected.brokerName}
+                freeMinutes={selected.brokerDetentionFreeMinutes}
+              />
+            </>
           );
         })()}
     </div>

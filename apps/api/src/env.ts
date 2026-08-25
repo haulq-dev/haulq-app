@@ -151,6 +151,17 @@ const EnvSchema = z.object({
    * runs in every test and every local `pnpm dev`.
    */
   MOTIVE_SYNC_POLL_MS: z.coerce.number().int().min(0).default(0),
+
+  /**
+   * FMCSA QCMobile, for Phase 0b's broker lookup. A single platform-level
+   * developer credential, not a per-org secret — `HAULQ_BUILD_PLAN.md` §11's
+   * own note: "separate from a carrier's own USDOT/MC or FMCSA Portal
+   * account." Optional, same degrade-rather-than-fail pattern as every other
+   * external service here: without it, `POST /v1/brokers/:id/verify` 503s.
+   */
+  FMCSA_WEBKEY: z.string().optional(),
+  /** Override for tests only — production never sets this. */
+  FMCSA_BASE_URL: z.string().url().optional(),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

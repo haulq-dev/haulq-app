@@ -173,6 +173,34 @@ export const eventCatalog = {
         : `Set ${p.brokerName}'s detention free time to ${p.freeMinutes} minutes.`,
   }),
 
+  /**
+   * Phase 0b. A carrier putting a broker's MC/USDOT number on file — the
+   * fact `resolveBroker` never learns from a load, and the one
+   * `recordVerification` needs before there is anything to check.
+   */
+  'broker.docket_updated': define<{ brokerName: string; changed: string[] }>({
+    subjectType: 'broker',
+    describe: (p) => `Updated ${p.brokerName}'s ${p.changed.join(' and ')}.`,
+  }),
+
+  /**
+   * Phase 0b. `operatingStatus` is null when the source found nothing at
+   * all for the number on file — worth its own sentence rather than folding
+   * into "Unknown", since a broker with no FMCSA record is a different
+   * problem than one FMCSA simply has no authority opinion on.
+   */
+  'broker.verified': define<{
+    brokerName: string;
+    operatingStatus: string | null;
+    source: string;
+  }>({
+    subjectType: 'broker',
+    describe: (p) =>
+      p.operatingStatus
+        ? `Checked ${p.brokerName} against ${p.source}: ${p.operatingStatus.toLowerCase()}.`
+        : `Checked ${p.brokerName} against ${p.source} — nothing found for the number on file.`,
+  }),
+
   // --- fleet ---------------------------------------------------------------
 
   'truck.added': define<{ label: string; equipment: string }>({

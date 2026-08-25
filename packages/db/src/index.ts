@@ -24,5 +24,6 @@ export * from './repositories/orgs.ts';
 export * from './repositories/pay.ts';
 export * from './repositories/track.ts';
 export * from './repositories/trucks.ts';
+export * from './repositories/verify.ts';
 export * from './testing.ts';
 export * as schema from './schema/index.ts';
