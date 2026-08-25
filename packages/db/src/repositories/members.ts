@@ -413,6 +413,39 @@ export async function acceptInvitation(
   };
 
   return withTransaction(scopeForOrg, async (tx) => {
+    // The dangerous case this whole block exists for: the person opening
+    // the link is already an *active* member of this org — most often the
+    // owner themselves, testing or forwarding an invite while still signed
+    // in — and the upsert below would silently overwrite their own role
+    // with whatever the invitation says. If that role is a demotion and
+    // they are the org's only owner, accepting would leave the account
+    // with nobody who can invite anyone, change billing, or fix this —
+    // exactly the state `changeRole` and `removeMember` already refuse to
+    // produce. Checked before the invitation is claimed, so a refusal here
+    // does not burn the link — the intended recipient can still use it.
+    const [existingMembership] = await tx.db
+      .select({ role: orgMemberships.role })
+      .from(orgMemberships)
+      .where(
+        and(
+          eq(orgMemberships.orgId, invitation.orgId),
+          eq(orgMemberships.userId, args.userId),
+          eq(orgMemberships.status, 'active'),
+        ),
+      );
+
+    if (
+      existingMembership?.role === 'owner' &&
+      invitation.role !== 'owner' &&
+      (await ownerCount(tx)) === 1
+    ) {
+      throw new MemberError(
+        'last_owner',
+        'accepting would demote the org\'s only owner',
+        'You are the only owner on this account. Accepting this invitation would change your own role and leave the account with no owner — make someone else an owner first, or have the intended recipient accept it from their own account.',
+      );
+    }
+
     // Re-checked inside the transaction. Two clicks on the same link, or a
     // click racing a revoke, must not produce two memberships.
     const [claimed] = await tx.db
@@ -448,6 +481,7 @@ export async function acceptInvitation(
       })
       // Already a member of this org in some other capacity — accepting should
       // apply the invited role rather than fail on the unique constraint.
+      // (Never the org's last owner losing their role — guarded above.)
       .onConflictDoUpdate({
         target: [orgMemberships.orgId, orgMemberships.userId],
         set: { role: invitation.role, status: 'active', acceptedAt: new Date() },

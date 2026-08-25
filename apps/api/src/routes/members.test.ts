@@ -339,6 +339,25 @@ suite('members', () => {
       assert.match(res.json().explanation, /Make someone else an owner first/);
     });
 
+    it('refuses when the only owner accepts someone else\'s invitation while still signed in', async () => {
+      // The real incident this guards: an owner invites a driver, then opens
+      // the link themselves without signing out first. Without this check,
+      // acceptInvitation's upsert silently overwrites the owner's own
+      // membership with the invited role — the exact lockout `changeRole`
+      // and `removeMember` already refuse, reached through a different door.
+      const orgId = await newOrg('Self-Accept Co');
+      const token = (await invite(orgId, 'driver@example.com', 'driver')).json().token;
+
+      const res = await accept(token, ownerId);
+      assert.equal(res.statusCode, 409);
+      assert.match(res.json().explanation, /only owner on this account/);
+
+      // Refused before the invitation was claimed — still usable by whoever
+      // it was actually meant for.
+      const stillGood = await accept(token, (await newUser()).id);
+      assert.equal(stillGood.statusCode, 200);
+    });
+
     it('allows it once a second owner exists', async () => {
       const orgId = await newOrg('Succession Co');
       const successor = await newUser();
