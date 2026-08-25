@@ -1,18 +1,24 @@
 /**
- * The driver app's styling, sharing the same brand system apps/web already
- * duplicated from haulq-site.
+ * The driver app's styling — deliberately its OWN visual language, not a
+ * fourth copy of the brand system apps/web and haulq-site share.
  *
- * A third copy, on purpose — the same trade `apps/web/src/styles.css`
- * documents: this app is a separate deploy target (a Capacitor shell, not a
- * Vite dev server behind Render), and a shared package for ~60 lines of CSS
- * would couple deploys that are deliberately independent. If the brand
- * changes, all three files change.
+ * Every other HaulQ surface is intentionally plain — "an instrument, not a
+ * consumer app," square corners, hairline borders. That reads right on a
+ * desktop dispatcher screen. It read as dry on a phone in a driver's hand,
+ * which is the entire surface this app is — so this follows typical iOS
+ * visual language instead: grouped-list cards, system typography, a real
+ * tint color, and press feedback that actually feels tactile. Brand color
+ * (the orange) stays as the accent; the "instrument" framing does not.
+ *
+ * System font stack, not the DM Sans/Fraunces webfonts the rest of HaulQ
+ * loads — nothing reads as more "web page in a box" than a page that
+ * ignores the OS's own type rendering. `-apple-system` is SF Pro on iOS,
+ * the same stack resolves to Roboto on Android. JetBrains Mono stays for
+ * tabular figures only; that's a detail, not a brand-identity conflict.
  */
 
 @import 'tailwindcss';
 
-@import '@fontsource-variable/fraunces';
-@import '@fontsource-variable/dm-sans';
 @import '@fontsource-variable/jetbrains-mono';
 
 @theme {
@@ -21,31 +27,33 @@
   --color-brand-100: #ffe2cc;
   --color-brand-50: #fff4ec;
 
-  --color-ink: #123a63;
-  --color-ink-900: #0c2b4a;
-  --color-tail-from: #d8410f;
-  --color-tail-to: #ff8412;
-  --color-slate: #334155;
-  --color-mute: #94a3b8;
+  --color-ink: #1c1c1e;
+  --color-ink-900: #000000;
+  --color-slate: #3c3c43;
+  --color-mute: #8e8e93;
 
-  --color-wash: #f8fafc;
-  --color-line: #d8dfe8;
-  --color-rule: #0f2e4e;
+  /* iOS's own systemGroupedBackground/secondarySystemGroupedBackground pair —
+     cards are white, the page behind them is this soft gray. */
+  --color-wash: #f2f2f7;
+  --color-card: #ffffff;
+  --color-line: #e5e5ea;
 
-  --color-ok: #157f4d;
-  --color-ok-50: #eefaf3;
-  --color-warn: #9a6700;
-  --color-warn-50: #fff8e6;
-  --color-bad: #b42318;
-  --color-bad-50: #fef3f2;
+  --color-ok: #248a3d;
+  --color-ok-50: #e7f8ed;
+  --color-warn: #b25000;
+  --color-warn-50: #fff2e5;
+  --color-bad: #d70015;
+  --color-bad-50: #ffebe9;
 
-  --font-display: 'Fraunces Variable', Georgia, serif;
-  --font-sans: 'DM Sans Variable', system-ui, -apple-system, sans-serif;
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, sans-serif;
   --font-mono: 'JetBrains Mono Variable', ui-monospace, SFMono-Regular, monospace;
 
-  --radius-none: 0px;
-  --radius-sm: 2px;
-  --radius-md: 3px;
+  /* iOS's actual corner radii — 10 for controls, 14 for grouped cards,
+     pill-round for badges. Nothing here is the old 2-3px "instrument" scale. */
+  --radius-sm: 10px;
+  --radius-md: 14px;
+  --radius-full: 999px;
 }
 
 body {
@@ -53,6 +61,7 @@ body {
   color: var(--color-ink);
   background: var(--color-wash);
   -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
   /* The shell has no browser chrome to absorb the notch/home-indicator. */
   padding-top: env(safe-area-inset-top);
   padding-bottom: env(safe-area-inset-bottom);
@@ -60,11 +69,10 @@ body {
 
 h1,
 h2,
-h3,
-.display {
-  font-family: var(--font-display);
-  font-variation-settings: 'SOFT' 0, 'WONK' 1, 'opsz' 9;
-  letter-spacing: -0.025em;
+h3 {
+  font-family: var(--font-sans);
+  font-weight: 700;
+  letter-spacing: -0.02em;
 }
 
 .num {
@@ -75,11 +83,12 @@ h3,
 }
 
 .field-label {
-  font-family: var(--font-mono);
-  font-size: 0.6875rem;
-  line-height: 1;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
+  font-family: var(--font-sans);
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: 0.01em;
+  color: var(--color-mute);
 }
 
 ::selection {
@@ -90,29 +99,29 @@ h3,
 :focus-visible {
   outline: 2px solid var(--color-brand);
   outline-offset: 2px;
-  border-radius: 0;
 }
 
-/* See apps/web/src/styles.css's note on why these live in a layer: a bare
-   rule loses to a same-order Tailwind utility on nothing, but a layered one
-   loses on everything, and `.hq-btn`'s display/padding utilities need to win. */
 @layer components {
   .hq-input {
     width: 100%;
-    border: 1px solid var(--color-line);
+    border: none;
     border-radius: var(--radius-sm);
-    padding: 0.625rem 0.75rem;
+    padding: 0.75rem 0.875rem;
     font-family: var(--font-sans);
     font-size: 1rem;
     color: var(--color-ink);
-    background: #fff;
+    background: var(--color-card);
+    box-shadow: inset 0 0 0 1px var(--color-line);
   }
   .hq-input:focus {
-    border-color: var(--color-ink);
     outline: 2px solid var(--color-brand);
-    outline-offset: -1px;
+    outline-offset: 0;
   }
 
+  /* The one thing a WebView never gives you for free: a native-feeling
+     tap. Fast scale-down on press, same idea iOS's own UIKit controls use,
+     restored by `active:scale-100` in markup rather than a CSS reset here —
+     keeps the transition declaration in one place. */
   .hq-btn {
     display: inline-flex;
     align-items: center;
@@ -122,40 +131,52 @@ h3,
     padding: 0.75rem 1rem;
     font-weight: 600;
     font-size: 0.9375rem;
-    border: 1px solid transparent;
+    border: none;
     cursor: pointer;
+    transition: transform 0.1s ease-out, opacity 0.1s ease-out;
     /* A gloved thumb, not a mouse pointer. */
     min-height: 2.75rem;
   }
+  .hq-btn:active:not(:disabled) {
+    transform: scale(0.97);
+    opacity: 0.9;
+  }
   .hq-btn:disabled {
-    opacity: 0.55;
+    opacity: 0.4;
     cursor: not-allowed;
   }
   .hq-btn-primary {
     background: var(--color-ink);
     color: #fff;
   }
-  .hq-btn-primary:hover:not(:disabled) {
-    background: var(--color-ink-900);
-  }
   .hq-btn-brand {
     background: var(--color-brand);
     color: #fff;
   }
-  .hq-btn-brand:hover:not(:disabled) {
-    background: var(--color-brand-600);
-  }
   .hq-btn-ghost {
-    background: #fff;
+    background: var(--color-card);
     color: var(--color-ink);
-    border-color: var(--color-line);
-  }
-  .hq-btn-ghost:hover:not(:disabled) {
-    border-color: var(--color-ink);
+    box-shadow: inset 0 0 0 1px var(--color-line);
   }
   .hq-btn-done {
     background: var(--color-ok-50);
     color: var(--color-ok);
-    border-color: var(--color-ok);
+  }
+
+  /* Grouped-table card: white on gray, radius instead of a border,
+     a whisper of shadow instead of a hairline. */
+  .hq-card {
+    background: var(--color-card);
+    border-radius: var(--radius-md);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 1px 8px rgba(0, 0, 0, 0.04);
+  }
+
+  .hq-pill {
+    display: inline-flex;
+    align-items: center;
+    border-radius: var(--radius-full);
+    padding: 0.25rem 0.625rem;
+    font-size: 0.75rem;
+    font-weight: 600;
   }
 }

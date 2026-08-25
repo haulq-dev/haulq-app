@@ -26,6 +26,7 @@ import {
 } from '../lib/api.ts';
 import { Card, Empty, ErrorNote, Pill } from '../components/ui.tsx';
 import { Logo } from '../components/Logo.tsx';
+import { successFeedback, tapFeedback } from '../lib/haptics.ts';
 
 /** How often the app pings a position while this screen is open. Foreground
  *  only — continuous background tracking is what an ELD buys (2b), not this
@@ -61,6 +62,22 @@ const when = (iso: string) =>
     minute: '2-digit',
   });
 
+/** SF Symbols-weight checkmark — the done state reads as "checked off," not just muted text. */
+function CheckIcon() {
+  return (
+    <svg viewBox="0 0 20 20" className="h-4 w-4 shrink-0" fill="none" aria-hidden>
+      <circle cx="10" cy="10" r="9" fill="currentColor" fillOpacity="0.15" />
+      <path
+        d="M6 10.5l2.5 2.5L14 7.5"
+        stroke="currentColor"
+        strokeWidth="1.75"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 /** Extracts a token from a pasted link or a bare code — a driver copying a
  *  text message rarely strips the URL down to just the token. */
 function tokenFromInput(raw: string): string {
@@ -91,7 +108,7 @@ function TokenEntry({ onSubmit }: { onSubmit: (token: string) => void }) {
         autoCorrect="off"
       />
       <button
-        className="hq-btn hq-btn-brand mt-4"
+        className="hq-btn hq-btn-brand mt-4 w-full"
         disabled={!value.trim()}
         onClick={() => onSubmit(tokenFromInput(value))}
       >
@@ -114,15 +131,18 @@ function StopCard({ token, stop }: { token: string; stop: CheckinStop }) {
       });
     },
     onSettled: () => setPending(null),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['checkin', token] }),
+    onSuccess: () => {
+      successFeedback();
+      void queryClient.invalidateQueries({ queryKey: ['checkin', token] });
+    },
   });
 
   return (
-    <li className="border-b border-line py-4 last:border-b-0">
+    <li className="hq-card p-4">
       <span className="field-label text-brand">
         {stop.type === 'pickup' ? 'Pickup' : 'Delivery'}
       </span>
-      <p className="mt-0.5 text-xl">
+      <p className="mt-0.5 text-xl font-semibold">
         {stop.facilityName ? `${stop.facilityName} — ` : ''}
         {stop.city}, {stop.state}
       </p>
@@ -136,9 +156,10 @@ function StopCard({ token, stop }: { token: string; stop: CheckinStop }) {
           if (at) {
             return (
               <div key={milestone} className="hq-btn hq-btn-done" aria-disabled="true">
-                <span>
+                <CheckIcon />
+                <span className="text-left">
                   {MILESTONE_LABEL[milestone]}
-                  <span className="block text-xs opacity-80">{when(at)}</span>
+                  <span className="block text-xs opacity-70">{when(at)}</span>
                 </span>
               </div>
             );
@@ -148,7 +169,10 @@ function StopCard({ token, stop }: { token: string; stop: CheckinStop }) {
               key={milestone}
               className="hq-btn hq-btn-ghost"
               disabled={tap.isPending}
-              onClick={() => tap.mutate(milestone)}
+              onClick={() => {
+                tapFeedback();
+                tap.mutate(milestone);
+              }}
             >
               {pending === milestone && tap.isPending ? 'Sending…' : MILESTONE_LABEL[milestone]}
             </button>
@@ -174,6 +198,7 @@ function PositionControl({ token }: { token: string }) {
         body: { lat: position.coords.latitude, lng: position.coords.longitude },
       });
       setStatus('sent');
+      successFeedback();
     } catch (err) {
       setError(err);
       setStatus('error');
@@ -191,9 +216,12 @@ function PositionControl({ token }: { token: string }) {
   return (
     <Card title="Location">
       <button
-        className="hq-btn hq-btn-primary"
+        className="hq-btn hq-btn-primary w-full"
         disabled={status === 'sending'}
-        onClick={() => void sendPosition()}
+        onClick={() => {
+          tapFeedback();
+          void sendPosition();
+        }}
       >
         {status === 'sending' ? 'Sending…' : 'Send my location now'}
       </button>
@@ -232,28 +260,26 @@ function CheckinView({ token }: { token: string }) {
   const data = preview.data!;
 
   return (
-    <div className="mx-auto max-w-md px-4 py-6">
-      <div className="mb-4 flex items-center justify-between">
+    <div className="mx-auto max-w-md space-y-4 px-4 py-6">
+      <div className="flex items-center justify-between">
         <h1 className="text-2xl">Load {data.loadReference}</h1>
         <Pill tone={STATUS_TONE[data.status] ?? 'neutral'}>{data.status.replace('_', ' ')}</Pill>
       </div>
-      {data.truckLabel && <p className="mb-4 text-sm text-mute">{data.truckLabel}</p>}
+      {data.truckLabel && <p className="-mt-2 text-sm text-mute">{data.truckLabel}</p>}
 
-      <Card title="Stops">
-        {data.stops.length === 0 ? (
+      {data.stops.length === 0 ? (
+        <div className="hq-card p-4">
           <Empty>No stops on this load.</Empty>
-        ) : (
-          <ul>
-            {data.stops.map((stop) => (
-              <StopCard key={stop.id} token={token} stop={stop} />
-            ))}
-          </ul>
-        )}
-      </Card>
+        </div>
+      ) : (
+        <ul className="space-y-3">
+          {data.stops.map((stop) => (
+            <StopCard key={stop.id} token={token} stop={stop} />
+          ))}
+        </ul>
+      )}
 
-      <div className="mt-4">
-        <PositionControl token={token} />
-      </div>
+      <PositionControl token={token} />
     </div>
   );
 }
@@ -273,7 +299,7 @@ export function CheckinScreen() {
 
   return (
     <div className="min-h-screen bg-wash">
-      <header className="border-b border-line bg-white px-4 py-3">
+      <header className="bg-card px-4 py-3">
         <Logo />
       </header>
       {token ? <CheckinView token={token} /> : <TokenEntry onSubmit={chooseToken} />}

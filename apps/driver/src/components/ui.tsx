@@ -1,7 +1,9 @@
 /**
  * The handful of shared pieces, trimmed from `apps/web/src/components/ui.tsx`
  * to the ones this single-screen app actually uses. Same duplication trade
- * `styles.css` documents — two independent deploys, not a shared package.
+ * `styles.css` documents — two independent deploys, not a shared package —
+ * except this copy diverges further: iOS grouped-card language (`.hq-card`,
+ * `.hq-pill` from styles.css), not apps/web's square hairline-border look.
  */
 
 import type { ReactNode } from 'react';
@@ -15,10 +17,10 @@ export function Card({
   children: ReactNode;
 }) {
   return (
-    <section className="border border-line bg-white">
+    <section className="hq-card overflow-hidden">
       {title && (
-        <header className="border-b border-line px-4 py-3">
-          <h2 className="text-lg">{title}</h2>
+        <header className="px-4 pt-4 pb-1">
+          <h2 className="text-base text-mute">{title}</h2>
         </header>
       )}
       <div className="p-4">{children}</div>
@@ -34,13 +36,11 @@ export function Pill({
   children: ReactNode;
 }) {
   const tones = {
-    ok: 'bg-ok-50 text-ok border-ok',
-    warn: 'bg-warn-50 text-warn border-warn',
-    neutral: 'bg-wash text-slate border-line',
+    ok: 'bg-ok-50 text-ok',
+    warn: 'bg-warn-50 text-warn',
+    neutral: 'bg-wash text-slate',
   } as const;
-  return (
-    <span className={`field-label border px-2 py-1 ${tones[tone]}`}>{children}</span>
-  );
+  return <span className={`hq-pill ${tones[tone]}`}>{children}</span>;
 }
 
 export function Empty({ children }: { children: ReactNode }) {
@@ -58,7 +58,7 @@ export function ErrorNote({ error }: { error: unknown }) {
         : String(error);
 
   return (
-    <p className="border-l-2 border-bad bg-bad-50 px-3 py-2 text-sm text-bad" role="alert">
+    <p className="hq-card bg-bad-50 px-3 py-2.5 text-sm text-bad shadow-none" role="alert">
       {message}
     </p>
   );
