@@ -27,6 +27,14 @@ workflows:
       # had ever generated a distribution certificate or an App Store
       # provisioning profile for this bundle id, and the shorthand has no
       # `--create` equivalent to fall back on.
+      #
+      # Every Codemagic env var belongs to a group, and a workflow only
+      # sees a group's variables if it's imported here — adding
+      # CERTIFICATE_PRIVATE_KEY in the dashboard alone did nothing until
+      # this existed. "Certificate" is the group name it was actually
+      # added under.
+      groups:
+        - Certificate
       vars:
         # Not 'ai.haulq.driver' — Apple wouldn't take that when the account
         # actually tried to register it, only 'ai.haulq.app'. Matches
