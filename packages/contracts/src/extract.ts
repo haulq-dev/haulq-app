@@ -94,6 +94,21 @@ interface FieldRule {
    * than a cleanup pass afterwards.
    */
   excludeLine?: RegExp;
+  /**
+   * Reject a captured value that has no digit in it.
+   *
+   * Every real load, order, PRO, PO, invoice and B/L number in this file's
+   * test fixtures — and in six different real brokers' paperwork checked
+   * against this file — has at least one. Without this, a label whose
+   * `(?:number|no|#)?` suffix is optional can key on a nearby word that has
+   * nothing to do with the field: "Load At Some Shipper" reads as a load
+   * number of "At", confidently wrong, because "At" satisfies `REF_VALUE` and
+   * `NOT_A_VALUE` has no reason to catch it. Rejecting it is not fatal — the
+   * loop keeps scanning for the same label elsewhere in the document, so a
+   * genuine later match (or a genuinely absent field, which is the honest
+   * answer) still resolves correctly instead of resolving to a wrong one.
+   */
+  requireDigit?: boolean;
 }
 
 const MONEY_VALUE = String.raw`\$?\s*-?[\d,]+(?:\.\d{1,2})?`;
@@ -108,9 +123,17 @@ const REF_VALUE = String.raw`[A-Za-z0-9][A-Za-z0-9\-\/]*`;
  * document's title and then captures the first word of the line below it as the
  * invoice number. Freight templates put a label and its value together; matching
  * happens line by line and nothing bleeds across.
+ *
+ * The `(?:\([^)]*\))?` in the middle tolerates a unit annotation sitting
+ * between the label and its value — "Total Weight (lbs): 2627" is a real
+ * broker's phrasing, not a hypothetical one, and without this the value never
+ * reaches the label it belongs to.
  */
 function labelled(label: string, value: string): RegExp {
-  return new RegExp(`${label}[ \\t]*[:#]?[ \\t]*(${value})`, 'i');
+  return new RegExp(
+    `${label}[ \\t]*(?:\\([^)]*\\))?[ \\t]*[:#]?[ \\t]*(${value})`,
+    'i',
+  );
 }
 
 /** Captures that are plainly part of a label rather than a value. */
@@ -124,6 +147,13 @@ const RATE_CONFIRMATION: FieldRule[] = [
       labelled(String.raw`agreed\s+rate`, MONEY_VALUE),
       labelled(String.raw`carrier\s+pay`, MONEY_VALUE),
       labelled(String.raw`rate`, MONEY_VALUE),
+      // Tried last, after every more specific pattern above. TQL (and likely
+      // others) print only a bare "Total:" with no qualifying word. Safe to
+      // try last because a real "Total Weight"/"Total Pieces"/"Total Miles"
+      // line has a word sitting between "Total" and its value, which this
+      // exact pattern does not allow through — it only matches when the
+      // value follows "Total" directly.
+      labelled(String.raw`total`, MONEY_VALUE),
     ],
     parse: parseMoney,
     expected: true,
@@ -131,7 +161,12 @@ const RATE_CONFIRMATION: FieldRule[] = [
   },
   {
     field: 'linehaulAmount',
-    labels: [labelled(String.raw`line\s*haul`, MONEY_VALUE)],
+    labels: [
+      // Bare "Line Haul" first, then the compound forms — "Line Haul Rate"
+      // and "Line Haul Flat Rate" are both real, not hypothetical.
+      labelled(String.raw`line\s*haul`, MONEY_VALUE),
+      labelled(String.raw`line\s*haul\s+(?:flat\s+)?rate`, MONEY_VALUE),
+    ],
     parse: parseMoney,
   },
   {
@@ -140,9 +175,17 @@ const RATE_CONFIRMATION: FieldRule[] = [
       labelled(String.raw`(?:broker\s+)?load\s*(?:number|no|#)?`, REF_VALUE),
       labelled(String.raw`order\s*(?:number|no|#)?`, REF_VALUE),
       labelled(String.raw`pro\s*(?:number|no|#)?`, REF_VALUE),
+      // The `(?:number|no|#)` here is NOT optional, unlike the three above.
+      // "po" is two letters — bare and optional, it would match inside
+      // "port", "position", "policy", anything starting with those letters,
+      // since `labelled()` has no word-boundary anchor. Requiring the actual
+      // marker after it is what keeps this safe without touching the shared
+      // helper's boundary behavior, which other labels rely on staying as-is.
+      labelled(String.raw`po\s*(?:number|no|#)`, REF_VALUE),
     ],
     parse: (raw) => raw.trim(),
     expected: true,
+    requireDigit: true,
   },
   {
     field: 'weightLbs',
@@ -151,7 +194,12 @@ const RATE_CONFIRMATION: FieldRule[] = [
   },
   {
     field: 'equipment',
-    labels: [labelled(String.raw`(?:equipment|trailer\s+type)`, String.raw`[A-Za-z0-9 '"-]{3,20}`)],
+    labels: [
+      labelled(
+        String.raw`(?:equipment|trailer\s+(?:type|req(?:uirement)?s?))`,
+        String.raw`[A-Za-z0-9 '"\/-]{3,20}`,
+      ),
+    ],
     parse: (raw) => raw.trim(),
   },
 ];
@@ -172,6 +220,7 @@ const INVOICE: FieldRule[] = [
     labels: [labelled(String.raw`invoice\s*(?:number|no|#)?`, REF_VALUE)],
     parse: (raw) => raw.trim(),
     expected: true,
+    requireDigit: true,
   },
 ];
 
@@ -184,6 +233,7 @@ const BOL: FieldRule[] = [
     ],
     parse: (raw) => raw.trim(),
     expected: true,
+    requireDigit: true,
   },
   {
     field: 'weightLbs',
@@ -259,6 +309,7 @@ export function extractDeterministically(input: {
         const match = line.match(label);
         const captured = match?.[1];
         if (!captured || NOT_A_VALUE.test(captured.trim())) continue;
+        if (rule.requireDigit && !/\d/.test(captured)) continue;
 
         const value = rule.parse(captured);
         if (value === null || value === '') continue;

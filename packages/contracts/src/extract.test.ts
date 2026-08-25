@@ -132,6 +132,78 @@ describe('extractDeterministically — what it will not do', () => {
   });
 });
 
+describe('extractDeterministically — real broker layouts', () => {
+  // Every case below is a synthetic fixture reproducing the *structure* of a
+  // real rate confirmation checked by hand against this file's rules on
+  // 2026-08-25 — not the real document, which is a carrier's own business
+  // correspondence and does not belong copied into source control. The
+  // structure is what mattered: which of the seven checked, and why each one
+  // did or did not extract correctly, is what these pin.
+
+  it('reads a bare "Total:" with no qualifying word, tried only after every more specific label', () => {
+    const text = 'TOTAL QUALITY RATE CONFIRMATION\nLoad #: 38058701\nRate Type Total\nTotal: $1,700.00 USD\n';
+    const r = extractDeterministically({ text, kind: 'rate_confirmation' });
+    assert.equal(r.fields['rateAmount']?.value, 170000);
+  });
+
+  it('does not let "Total Weight"/"Total Pieces" satisfy the bare "Total:" fallback', () => {
+    // The word between "Total" and the value is what protects this — see the
+    // fallback's own comment in extract.ts.
+    const text = 'RATE CONFIRMATION\nLoad #: 7\nTotal Weight: 42,000\nTotal Pieces: 12\n';
+    const r = extractDeterministically({ text, kind: 'rate_confirmation' });
+    assert.equal(r.fields['rateAmount'], undefined);
+    assert.ok(r.missing.includes('rateAmount'));
+  });
+
+  it('reads a broker load number given only as "PO#"', () => {
+    const text = 'RATE CONFIRMATION FOR PO# 38058701\nCarrier: Test Carrier LLC\n';
+    const r = extractDeterministically({ text, kind: 'rate_confirmation' });
+    assert.equal(r.fields['brokerLoadNumber']?.value, '38058701');
+  });
+
+  it('does not let a bare "po" match inside an unrelated word', () => {
+    const text = 'RATE CONFIRMATION\nDelivery Location: Port of Long Beach\nLoad Number: 445\n';
+    const r = extractDeterministically({ text, kind: 'rate_confirmation' });
+    assert.equal(r.fields['brokerLoadNumber']?.value, '445');
+  });
+
+  it('skips a stray word satisfying the load-number pattern and finds the real one later', () => {
+    // "Load At <shipper>" appearing before the real "Load #:" in extraction
+    // order — found against a real broker's PDF, where the label furthest
+    // from the header lands first in the text stream.
+    const text =
+      'Stop Information\nLoad At Some Shipper LLC\nEarliest Date 08/24/2026\n' +
+      'CARRIER DISPATCH\nLOAD #: 2937288\n';
+    const r = extractDeterministically({ text, kind: 'rate_confirmation' });
+    assert.equal(r.fields['brokerLoadNumber']?.value, '2937288');
+  });
+
+  it('reports a load number missing rather than a stray word, when no real one exists', () => {
+    const text = 'Stop Information\nLoad At Some Shipper LLC\nEarliest Date 08/24/2026\n';
+    const r = extractDeterministically({ text, kind: 'rate_confirmation' });
+    assert.equal(r.fields['brokerLoadNumber'], undefined);
+    assert.ok(r.missing.includes('brokerLoadNumber'));
+  });
+
+  it('reads a weight with a unit annotation between the label and the colon', () => {
+    const text = 'RATE CONFIRMATION\nLoad #: 9\nTotal Weight (lbs): 2627\n';
+    const r = extractDeterministically({ text, kind: 'rate_confirmation' });
+    assert.equal(r.fields['weightLbs']?.value, 2627);
+  });
+
+  it('reads a linehaul stated as "Line Haul Rate"', () => {
+    const text = 'RATE CONFIRMATION\nLoad #: 9\nLine Haul Rate  2300.00\nTotal Rate  2300.00\n';
+    const r = extractDeterministically({ text, kind: 'rate_confirmation' });
+    assert.equal(r.fields['linehaulAmount']?.value, 230000);
+  });
+
+  it('reads equipment stated as "Trailer Req" rather than "Trailer Type"', () => {
+    const text = 'RATE CONFIRMATION\nLoad #: 9\nTrailer Req: Straight Truck\n';
+    const r = extractDeterministically({ text, kind: 'rate_confirmation' });
+    assert.equal(r.fields['equipment']?.value, 'Straight Truck');
+  });
+});
+
 describe('extractDeterministically — the other kinds', () => {
   it('reads an invoice', () => {
     const text = 'FREIGHT INVOICE\nInvoice Number: 10042\nAmount Due: $2,400.00\n';

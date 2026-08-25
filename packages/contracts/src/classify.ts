@@ -63,6 +63,11 @@ const SIGNALS: Array<{ kind: DocumentKind; phrase: RegExp; weight: number }> = [
   { kind: 'rate_confirmation', phrase: /\bcarrier\s+confirmation\b/i, weight: 0.95 },
   { kind: 'rate_confirmation', phrase: /\brate\s*con(?:f)?\b/i, weight: 0.75 },
   { kind: 'rate_confirmation', phrase: /\bagreed\s+rate\b/i, weight: 0.55 },
+  // Titanium American Logistics' rate confirmation never says "rate
+  // confirmation" anywhere on the page — it calls itself this instead. Found
+  // against a real one; without this the document has no signal above the
+  // filename's 0.35 and always needs a model call.
+  { kind: 'rate_confirmation', phrase: /\bcarrier\s+dispatch\b/i, weight: 0.95 },
 
   // --- bill of lading ------------------------------------------------------
   { kind: 'bol', phrase: /\b(?:straight\s+)?bill\s+of\s+lading\b/i, weight: 0.95 },

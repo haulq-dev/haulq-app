@@ -53,6 +53,16 @@ describe('classifyDeterministically', () => {
     assert.match(c!.reason, /RATE CONFIRMATION/i);
   });
 
+  it('reads a rate confirmation that calls itself a "carrier dispatch" instead', () => {
+    // Found against a real broker's paperwork, which never says "rate
+    // confirmation," "load confirmation" or "carrier confirmation" anywhere
+    // on the page.
+    const text = 'CARRIER DISPATCH\nLOAD #: 2937288\nDispatcher: Test Dispatcher\n';
+    const c = classifyDeterministically({ text });
+    assert.equal(c?.kind, 'rate_confirmation');
+    assert.ok(isConfident(c), `confidence was ${c?.confidence}`);
+  });
+
   it('reads a bill of lading', () => {
     const c = classifyDeterministically({ text: BOL });
     assert.equal(c?.kind, 'bol');
