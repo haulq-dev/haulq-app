@@ -486,6 +486,77 @@ function TrackingLink({ loadId, reference }: { loadId: string; reference: number
 }
 
 /**
+ * The code a driver types into the HaulQ Driver app.
+ *
+ * Deliberately not a URL like `TrackingLink` builds — the driver app has no
+ * web-hosted origin to point one at (it ships as a native iOS/Android build,
+ * not a page on this deployment), so constructing `${origin}/checkin/...`
+ * here would be a link that goes nowhere. The driver app's own paste box
+ * already accepts a bare code for exactly this reason.
+ */
+function CheckinLink({ loadId, reference }: { loadId: string; reference: number }) {
+  const [issuedToken, setIssuedToken] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  const issue = useMutation({
+    mutationFn: () =>
+      request<{ token: string }>(`/v1/loads/${loadId}/checkin-links`, { method: 'POST' }),
+    onSuccess: (res) => {
+      setIssuedToken(res.token);
+      setCopied(false);
+    },
+  });
+
+  const revoke = useMutation({
+    mutationFn: () => request(`/v1/loads/${loadId}/checkin-links`, { method: 'DELETE' }),
+    onSuccess: () => setIssuedToken(null),
+  });
+
+  const copy = async () => {
+    if (!issuedToken) return;
+    await navigator.clipboard.writeText(issuedToken);
+    setCopied(true);
+  };
+
+  return (
+    <Card title={`Load ${reference} — driver check-in code`}>
+      {issuedToken ? (
+        <div className="space-y-3">
+          <p className="text-sm text-slate">
+            Text or read this to the driver. They open the HaulQ Driver app
+            and paste it in — shown only once, copy it now.
+          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <code className="break-all border border-line bg-wash px-3 py-2 text-xs">
+              {issuedToken}
+            </code>
+            <button className="hq-btn hq-btn-ghost" onClick={copy}>
+              {copied ? 'Copied' : 'Copy'}
+            </button>
+          </div>
+          <button
+            className="hq-btn hq-btn-ghost text-bad"
+            disabled={revoke.isPending}
+            onClick={() => revoke.mutate()}
+          >
+            {revoke.isPending ? 'Revoking…' : 'Revoke this code'}
+          </button>
+        </div>
+      ) : (
+        <button
+          className="hq-btn hq-btn-brand"
+          disabled={issue.isPending}
+          onClick={() => issue.mutate()}
+        >
+          {issue.isPending ? 'Creating…' : 'Create a check-in code'}
+        </button>
+      )}
+      <ErrorNote error={issue.error ?? revoke.error} />
+    </Card>
+  );
+}
+
+/**
  * The per-broker detention free time — PHASE_2_PLAN.md section 7's
  * threshold question, landed on per-broker rather than a carrier-wide
  * default. Edited here, on the load a carrier is already looking at,
@@ -813,6 +884,12 @@ export function LoadsScreen() {
       {selectedId && <LoadMarginDetail loadId={selectedId} />}
       {selectedId && canWrite && (
         <TrackingLink
+          loadId={selectedId}
+          reference={items.find((l) => l.id === selectedId)?.reference ?? 0}
+        />
+      )}
+      {selectedId && canWrite && (
+        <CheckinLink
           loadId={selectedId}
           reference={items.find((l) => l.id === selectedId)?.reference ?? 0}
         />
