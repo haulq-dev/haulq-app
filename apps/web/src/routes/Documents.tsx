@@ -241,6 +241,102 @@ function InboundEmailPanel({ slug }: { slug: string }) {
   );
 }
 
+/**
+ * A carrier's own address, forwarding into the one above.
+ *
+ * Not a second inbound address HaulQ actually receives on — Postmark can only
+ * be configured to accept mail for one domain per inbound stream, so giving
+ * every carrier native receiving on their own domain would mean a dedicated
+ * mail server per tenant (see the schema note on
+ * `carrier_profiles.custom_docs_email`). Instead the carrier hands this
+ * address to brokers and sets up a forwarding rule on their own mail
+ * provider to the shared address above; a forwarded message still carries
+ * the plus-address tag, so email intake needs no other change. This panel
+ * just remembers what they told HaulQ they set up.
+ */
+function CustomEmailPanel({ profile }: { profile: CarrierProfile }) {
+  const queryClient = useQueryClient();
+  const current = profile.customDocsEmail;
+  const [editing, setEditing] = useState(!current);
+  const [draft, setDraft] = useState(current ?? '');
+
+  const save = useMutation({
+    mutationFn: (value: string | null) =>
+      request<CarrierProfile>('/v1/org/profile', {
+        method: 'PATCH',
+        body: { customDocsEmail: value },
+      }),
+    onSuccess: () => {
+      setEditing(false);
+      void queryClient.invalidateQueries({ queryKey: ['profile'] });
+    },
+  });
+
+  if (current && !editing) {
+    return (
+      <div className="border-l-2 border-line bg-wash p-4">
+        <p className="field-label text-mute">Also comes in from your own address</p>
+        <p className="mt-2 max-w-prose text-sm text-slate">
+          Mail forwarded from <code className="num">{current}</code> lands here
+          the same way a direct send does — as long as the forward is still set
+          up on your end.
+        </p>
+        <button
+          type="button"
+          className="mt-3 text-xs text-brand underline"
+          onClick={() => {
+            setDraft(current);
+            setEditing(true);
+          }}
+        >
+          Change or remove
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="border-l-2 border-line bg-wash p-4">
+      <p className="field-label text-mute">Use your own email instead</p>
+      <p className="mt-2 max-w-prose text-sm text-slate">
+        Give brokers an address on your own domain —{' '}
+        <code className="num">docs@yourcompany.com</code>, say — instead of the
+        one above. Set up a forwarding rule for it on your mail provider that
+        sends everything to the address above, then tell HaulQ what the
+        address is so it shows up here.
+      </p>
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <input
+          className="hq-input w-auto min-w-0 flex-1"
+          type="email"
+          placeholder="docs@yourcompany.com"
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+        />
+        <button
+          type="button"
+          className="hq-btn hq-btn-primary"
+          disabled={!draft.trim() || save.isPending}
+          onClick={() => save.mutate(draft.trim())}
+        >
+          {save.isPending ? 'Saving…' : 'Save'}
+        </button>
+        {current && (
+          <button
+            type="button"
+            className="hq-btn hq-btn-ghost text-bad"
+            disabled={save.isPending}
+            onClick={() => save.mutate(null)}
+          >
+            Remove
+          </button>
+        )}
+      </div>
+      <ErrorNote error={save.error} />
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Attaching
 // ---------------------------------------------------------------------------
@@ -627,6 +723,7 @@ export function DocumentsScreen() {
       <Dropzone />
 
       {profile.data?.slug && <InboundEmailPanel slug={profile.data.slug} />}
+      {profile.data && <CustomEmailPanel profile={profile.data} />}
 
       {rejected > 0 && (
         <p className="border-l-2 border-bad bg-bad-50 px-3 py-2 text-sm text-bad">

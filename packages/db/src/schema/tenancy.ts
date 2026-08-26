@@ -254,6 +254,23 @@ export const carrierProfiles = pgTable(
     country: text('country').notNull().default('US'),
 
     /**
+     * The address a carrier hands out to brokers instead of the shared
+     * `docs+{slug}@docs.haulq.ai` one — e.g. `docs@theircarrier.com`.
+     *
+     * Not itself an inbound address HaulQ receives on. Postmark only accepts
+     * mail for domains it has been configured to receive, one domain per
+     * inbound stream, so giving every carrier a native address on their own
+     * domain would mean a dedicated mail server per tenant. Instead this is
+     * informational: the carrier sets up a forwarding rule on their own mail
+     * provider from this address to the `docs+{slug}@...` one, and the
+     * existing plus-addressing resolution in the Postmark inbound webhook
+     * handles the rest unchanged — a forwarded message still carries
+     * `MailboxHash`. Purely a record of what the carrier told HaulQ they
+     * configured; nothing here verifies the forward actually exists.
+     */
+    customDocsEmail: text('custom_docs_email'),
+
+    /**
      * Operating facts the scoring engine needs and nobody can guess: cost per
      * mile, fixed weekly cost, fuel economy, target margin. Phase 0's exit gate
      * is a carrier reconciling these against 30–90 days of imported loads.

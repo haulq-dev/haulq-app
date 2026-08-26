@@ -1,0 +1,1 @@
+ALTER TABLE "carrier_profiles" ADD COLUMN "custom_docs_email" text;

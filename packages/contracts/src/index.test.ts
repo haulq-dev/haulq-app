@@ -8,7 +8,7 @@
 
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { CreateTruckSchema, MoneySchema, PageQuerySchema } from './index.ts';
+import { CreateTruckSchema, MoneySchema, PageQuerySchema, UpdateCarrierProfileSchema } from './index.ts';
 
 describe('MoneySchema', () => {
   it('accepts integer minor units', () => {
@@ -28,6 +28,29 @@ describe('MoneySchema', () => {
     // number of cents, and silently rounding it is how a penny goes missing
     // from a settlement.
     assert.throws(() => MoneySchema.parse({ amount: 2400.5, currency: 'USD' }));
+  });
+});
+
+describe('UpdateCarrierProfileSchema — customDocsEmail', () => {
+  it('lower-cases and trims it, same as every other stored address', () => {
+    const parsed = UpdateCarrierProfileSchema.parse({
+      customDocsEmail: '  Docs@ACME-Trucking.com  ',
+    });
+    assert.equal(parsed.customDocsEmail, 'docs@acme-trucking.com');
+  });
+
+  it('refuses something that is not an email', () => {
+    assert.throws(() => UpdateCarrierProfileSchema.parse({ customDocsEmail: 'not an address' }));
+  });
+
+  it('accepts null to clear it', () => {
+    const parsed = UpdateCarrierProfileSchema.parse({ customDocsEmail: null });
+    assert.equal(parsed.customDocsEmail, null);
+  });
+
+  it('is optional — a request that never mentions it changes nothing', () => {
+    const parsed = UpdateCarrierProfileSchema.parse({ legalName: 'Acme Trucking' });
+    assert.equal('customDocsEmail' in parsed, false);
   });
 });
 

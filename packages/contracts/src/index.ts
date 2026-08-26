@@ -175,6 +175,12 @@ export const UpdateCarrierProfileSchema = z.object({
   city: z.string().max(100).nullable().optional(),
   state: StateCode.nullable().optional(),
   postalCode: z.string().max(12).nullable().optional(),
+  /**
+   * The address a carrier gives brokers instead of `docs+{slug}@docs.haulq.ai`
+   * — see the schema note on `carrier_profiles.custom_docs_email`. `null`
+   * clears it, same as every other optional identity field here.
+   */
+  customDocsEmail: z.string().trim().toLowerCase().max(254).email().nullable().optional(),
 });
 export type UpdateCarrierProfile = z.infer<typeof UpdateCarrierProfileSchema>;
 

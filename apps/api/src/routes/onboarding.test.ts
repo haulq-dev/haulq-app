@@ -160,6 +160,38 @@ suite('onboarding', () => {
       assert.equal(profile.json().state, 'KS', 'state upper-cased on the way in');
     });
 
+    it('saves a custom docs email and clears it with null', async () => {
+      const orgId = (await signUp('Custom Email Co')).json().org.id;
+
+      const saved = await app.inject({
+        method: 'PATCH',
+        url: '/v1/org/profile',
+        headers: as(orgId),
+        payload: { customDocsEmail: 'Docs@Custom-Email-Co.com' },
+      });
+      assert.equal(saved.statusCode, 200);
+      assert.equal(saved.json().customDocsEmail, 'docs@custom-email-co.com');
+
+      const cleared = await app.inject({
+        method: 'PATCH',
+        url: '/v1/org/profile',
+        headers: as(orgId),
+        payload: { customDocsEmail: null },
+      });
+      assert.equal(cleared.json().customDocsEmail, null);
+    });
+
+    it('refuses something that is not an email address', async () => {
+      const orgId = (await signUp('Bad Custom Email Co')).json().org.id;
+      const res = await app.inject({
+        method: 'PATCH',
+        url: '/v1/org/profile',
+        headers: as(orgId),
+        payload: { customDocsEmail: 'not an address' },
+      });
+      assert.equal(res.statusCode, 400);
+    });
+
     it("carries the org's slug, for the HaulQ Docs inbound address", async () => {
       // slug lives on orgs, not carrier_profiles — this is the join that makes
       // it visible here, and it is what the web app builds

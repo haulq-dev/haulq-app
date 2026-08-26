@@ -241,6 +241,8 @@ export interface CarrierProfile {
   operatingFactsReconciledAt: string | null;
   /** From `orgs.slug`. `docs+{slug}@docs.haulq.ai` is this org's inbound address. */
   slug: string | null;
+  /** What the carrier hands out to brokers instead, forwarding into the address above. */
+  customDocsEmail: string | null;
 }
 
 export interface FactIssue {

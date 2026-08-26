@@ -182,6 +182,7 @@ export type UpdateCarrierProfileInput = Optional<{
   city: string | null;
   state: string | null;
   postalCode: string | null;
+  customDocsEmail: string | null;
 }>;
 
 /**
