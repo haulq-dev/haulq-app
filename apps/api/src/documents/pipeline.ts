@@ -64,7 +64,7 @@ export interface PipelineDeps {
 
 export type PipelineOutcome =
   /** The document is gone. Nothing to do, and not an error. */
-  | { status: 'skipped'; why: 'not_found' | 'quarantined' | 'already_read' }
+  | { status: 'skipped'; why: 'not_found' | 'quarantined' | 'already_read' | 'manually_read' }
   /** No text could be got off it. An OCR pass is the next thing to try. */
   | { status: 'needs'; needs: 'ocr'; document: Document }
   /** Text, but the rules could not say what it is confidently enough to route on. */
@@ -107,6 +107,14 @@ export async function processDocument(
   if (!document) return { status: 'skipped', why: 'not_found' };
   if (document.status === 'quarantined') {
     return { status: 'skipped', why: 'quarantined' };
+  }
+  // A person's correction outranks a re-run of the automated pipeline. The
+  // outbox redelivers `document.received` at least once by design (see the
+  // module note on `already_read`), and without this check a redelivery
+  // after a manual save would call `recordExtraction`, which overwrites
+  // `extracted` wholesale — silently discarding what the person typed.
+  if (document.extractorVersion === 'manual-entry') {
+    return { status: 'skipped', why: 'manually_read' };
   }
 
   const bytes = await deps.storage.get(document.storageKey);

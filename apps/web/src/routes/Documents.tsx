@@ -27,12 +27,15 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import {
   documentKindLabel,
+  EXPECTED_FIELDS_BY_KIND,
+  FIELD_METADATA,
+  FIELD_NAMES_BY_KIND,
   summarizeValidation,
   type ValidationFinding,
 } from '@haulq/contracts';
 import { request, requestBlob, type CarrierProfile } from '../lib/api.ts';
 import { useSession } from '../components/AuthGate.tsx';
-import { Card, Empty, ErrorNote, Pill } from '../components/ui.tsx';
+import { Card, Empty, ErrorNote, Field, Pill } from '../components/ui.tsx';
 
 interface DocumentRow {
   id: string;
@@ -436,6 +439,114 @@ function Disagreements({ document }: { document: DocumentRow }) {
 }
 
 // ---------------------------------------------------------------------------
+// Manual field entry — for a document automated reading couldn't get through
+// ---------------------------------------------------------------------------
+
+/** What a field's own extraction says was printed, or '' if it was never found. */
+function originalRaw(document: DocumentRow, field: string): string {
+  const found = document.extracted?.[field] as { raw?: unknown } | undefined;
+  return typeof found?.raw === 'string' ? found.raw : '';
+}
+
+/**
+ * Type in what a document says, for a kind the pipeline has field rules for.
+ * Renders nothing for a kind with none (`pod`, `w9`, `insurance_certificate`,
+ * `carrier_packet` and anything else `FIELD_NAMES_BY_KIND` has no entry
+ * for) — there is nothing on those worth typing in.
+ */
+function ManualFieldsForm({ document }: { document: DocumentRow }) {
+  const queryClient = useQueryClient();
+  const names = FIELD_NAMES_BY_KIND[document.kind as keyof typeof FIELD_NAMES_BY_KIND] ?? [];
+  const expected = EXPECTED_FIELDS_BY_KIND[document.kind as keyof typeof EXPECTED_FIELDS_BY_KIND] ?? [];
+
+  const [drafts, setDrafts] = useState<Record<string, string>>(() =>
+    Object.fromEntries(names.map((field) => [field, originalRaw(document, field)])),
+  );
+
+  // A document still sitting `received` has never been read at all, and an
+  // expected field the extraction missed is exactly the case this form
+  // exists for — both open the form without making someone go looking for
+  // the toggle first.
+  const missingExpected = expected.some(
+    (field) => !document.extracted || !(field in document.extracted),
+  );
+  const [open, setOpen] = useState(document.status === 'received' || missingExpected);
+
+  const save = useMutation({
+    mutationFn: (fields: Record<string, string>) =>
+      request(`/v1/documents/${document.id}/manual-fields`, {
+        method: 'POST',
+        body: { fields },
+      }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['documents'] }),
+  });
+
+  if (names.length === 0) return null;
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        className="text-xs text-brand underline"
+        onClick={() => setOpen(true)}
+      >
+        Correct a field
+      </button>
+    );
+  }
+
+  // Only what actually changed goes on the wire. A blank draft is "leave this
+  // alone", not "clear it" — there is no way to un-read a field this form
+  // offers, only to add or correct one.
+  const changed = Object.fromEntries(
+    Object.entries(drafts).filter(([field, value]) => {
+      const trimmed = value.trim();
+      return trimmed !== '' && trimmed !== originalRaw(document, field);
+    }),
+  );
+
+  return (
+    <div className="mt-4 border-t border-line pt-4">
+      <h4 className="field-label mb-2 text-mute">Type in what the document says</h4>
+      <div className="grid gap-4 sm:grid-cols-2">
+        {names.map((field) => {
+          const meta = FIELD_METADATA[field];
+          if (!meta) return null;
+          const was = originalRaw(document, field);
+          const draft = drafts[field] ?? '';
+          const hint = was && draft.trim() !== was ? `Was: ${was}` : undefined;
+          return (
+            <Field key={field} label={meta.label} {...(hint ? { hint } : {})}>
+              <input
+                className="hq-input"
+                {...(meta.type !== 'text'
+                  ? { 'data-numeric': 'true', inputMode: meta.type === 'money' ? 'decimal' : 'numeric' }
+                  : {})}
+                value={draft}
+                onChange={(e) =>
+                  setDrafts((d) => ({ ...d, [field]: e.target.value }))
+                }
+              />
+            </Field>
+          );
+        })}
+      </div>
+      <div className="mt-3 flex items-center gap-2">
+        <button
+          type="button"
+          className="hq-btn hq-btn-primary disabled:opacity-40"
+          disabled={Object.keys(changed).length === 0 || save.isPending}
+          onClick={() => save.mutate(changed)}
+        >
+          {save.isPending ? 'Saving…' : 'Save'}
+        </button>
+        <ErrorNote error={save.error} />
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // The screen
 // ---------------------------------------------------------------------------
 
@@ -473,6 +584,7 @@ function Detail({ document }: { document: DocumentRow }) {
         <div>
           <h3 className="field-label mb-2 text-mute">Against the load</h3>
           <Disagreements document={document} />
+          <ManualFieldsForm document={document} />
         </div>
       </div>
     </div>

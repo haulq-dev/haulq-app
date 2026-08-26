@@ -281,6 +281,52 @@ const RULES: Partial<Record<DocumentKind, FieldRule[]>> = {
 };
 
 /**
+ * Field names a kind's rules can produce, and which of those are expected.
+ *
+ * Derived from `RULES` rather than hand-listed a second time — a field added
+ * above shows up here with no further edit. `extract.test.ts` checks every
+ * name appearing in `FIELD_NAMES_BY_KIND` has a `FIELD_METADATA` entry, so
+ * the one thing that still has to be hand-maintained can't silently drift.
+ * Consumers: the manual-entry form in `apps/web` (which fields to show) and
+ * `apps/api/src/documents/model-reader.ts` (which fields to ask a model for).
+ */
+export const FIELD_NAMES_BY_KIND: Partial<Record<DocumentKind, readonly string[]>> =
+  Object.fromEntries(
+    Object.entries(RULES).map(([kind, rules]) => [kind, rules.map((r) => r.field)]),
+  );
+
+export const EXPECTED_FIELDS_BY_KIND: Partial<Record<DocumentKind, readonly string[]>> =
+  Object.fromEntries(
+    Object.entries(RULES).map(([kind, rules]) => [
+      kind,
+      rules.filter((r) => r.expected).map((r) => r.field),
+    ]),
+  );
+
+/**
+ * Display metadata for a field: what to call it, and how a typed-in value
+ * should be parsed. Hand-authored — `RULES` has a regex per field, not a
+ * human-readable label or a type — so this is the one place that has to be
+ * kept in step with `RULES` by hand, and `extract.test.ts` is what catches it
+ * falling behind.
+ */
+export const FIELD_METADATA: Record<
+  string,
+  { label: string; type: 'money' | 'count' | 'text' }
+> = {
+  rateAmount: { label: 'Total rate', type: 'money' },
+  linehaulAmount: { label: 'Linehaul', type: 'money' },
+  brokerLoadNumber: { label: "Broker's load number", type: 'text' },
+  weightLbs: { label: 'Weight (lbs)', type: 'count' },
+  equipment: { label: 'Equipment', type: 'text' },
+  invoiceAmount: { label: 'Invoice amount', type: 'money' },
+  invoiceNumber: { label: 'Invoice number', type: 'text' },
+  bolNumber: { label: 'B/L number', type: 'text' },
+  pieceCount: { label: 'Piece count', type: 'count' },
+  lumperAmount: { label: 'Lumper fee', type: 'money' },
+};
+
+/**
  * Read what can be read.
  *
  * `missing` lists the expected fields that were not found. An empty `missing` on

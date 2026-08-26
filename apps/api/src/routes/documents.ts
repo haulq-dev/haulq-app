@@ -31,10 +31,20 @@ import {
   getDocument,
   key as storageKey,
   listDocuments,
+  recordManualFields,
   sha256,
   type Document,
 } from '@haulq/db';
-import { DocumentKindSchema } from '@haulq/contracts';
+import {
+  DocumentKindSchema,
+  FIELD_METADATA,
+  FIELD_NAMES_BY_KIND,
+  ManualFieldsSchema,
+  parseCount,
+  parseMoney,
+  type DocumentKind,
+  type ExtractedField,
+} from '@haulq/contracts';
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { HttpError, requireRole, requireScope } from '../plugins/request-context.ts';
 import { safeFilename, sniff, SUPPORTED_DOCUMENT_TYPES } from '../documents/sniff.ts';
@@ -300,6 +310,84 @@ export async function documentRoutes(app: FastifyInstance) {
           err.code,
           err.explanation,
         );
+      }
+      throw err;
+    }
+  });
+
+  /**
+   * Type in what a document says, for one automated reading couldn't get
+   * through — a garbled text layer, an unfamiliar template, or a field the
+   * rules genuinely missed. Not open to drivers, same reasoning as `/attach`:
+   * this corrects dispatch records rather than intaking a photo at the dock.
+   */
+  app.post('/v1/documents/:id/manual-fields', async (request) => {
+    const s = await requireScope(request);
+    requireRole(request, 'owner', 'dispatcher', 'accountant');
+
+    const { id } = request.params as { id: string };
+
+    const parsed = ManualFieldsSchema.safeParse(request.body);
+    if (!parsed.success) {
+      throw new HttpError(400, 'invalid_request', 'Send a fields object of name to typed-in value.');
+    }
+
+    const found = await getDocument(s, id);
+    if (!found) throw new HttpError(404, 'not_found', 'That document is not in this account.');
+
+    const known = new Set(FIELD_NAMES_BY_KIND[found.kind as DocumentKind] ?? []);
+    const fields: Record<string, ExtractedField> = {};
+
+    for (const [field, raw] of Object.entries(parsed.data.fields)) {
+      if (!known.has(field)) {
+        throw new HttpError(
+          400,
+          'unknown_field',
+          `"${field}" is not a field HaulQ tracks on a ${found.kind.replace(/_/g, ' ')}.`,
+        );
+      }
+
+      const meta = FIELD_METADATA[field];
+      // Every name in `known` came from FIELD_NAMES_BY_KIND, which is derived
+      // from the same rules FIELD_METADATA is checked against by a test —
+      // this can only fail if that guard itself has been bypassed.
+      if (!meta) throw new Error(`field ${field} has no display metadata`);
+
+      const trimmed = raw.trim();
+      const value =
+        meta.type === 'money' ? parseMoney(trimmed) : meta.type === 'count' ? parseCount(trimmed) : trimmed;
+
+      if (value === null || value === '') {
+        throw new HttpError(
+          400,
+          'invalid_field_value',
+          `"${raw}" does not look like a valid ${FIELD_METADATA[field]?.label.toLowerCase() ?? field}.`,
+        );
+      }
+
+      fields[field] = { value, raw: trimmed, label: 'manual-entry' };
+    }
+
+    try {
+      await recordManualFields(s, id, { fields });
+
+      // Same pattern as /attach: a manual save is the moment the document
+      // becomes readable, so re-checking it against its load inline (if it
+      // has one) means the disagreement view is fresh without a second round
+      // trip.
+      const validation = found.loadId ? await validateDocument(s, id) : null;
+      const document = await getDocument(s, id);
+
+      return {
+        document: document ? present(document) : null,
+        validation:
+          validation?.status === 'validated'
+            ? { outcome: validation.verdict.outcome, reason: validation.verdict.reason }
+            : null,
+      };
+    } catch (err) {
+      if (err instanceof DocumentError) {
+        throw new HttpError(err.code === 'not_found' ? 404 : 409, err.code, err.explanation);
       }
       throw err;
     }

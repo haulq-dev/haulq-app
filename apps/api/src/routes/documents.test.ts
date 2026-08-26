@@ -425,4 +425,118 @@ suite('document intake', () => {
       assert.equal(res.statusCode, 400);
     });
   });
+
+  describe('POST /v1/documents/:id/manual-fields', () => {
+    it('saves a typed-in field and tags it manual-entry', async () => {
+      const orgId = await newOrg('Manual Co');
+      const { document } = (
+        await upload(orgId, pdf('manual'), '?kind=rate_confirmation')
+      ).json();
+
+      const res = await app.inject({
+        method: 'POST',
+        url: `/v1/documents/${document.id}/manual-fields`,
+        headers: as(orgId),
+        payload: { fields: { rateAmount: '$2,400.00', brokerLoadNumber: '84213' } },
+      });
+
+      assert.equal(res.statusCode, 200);
+      assert.equal(res.json().document.extractorVersion, 'manual-entry');
+      assert.equal(res.json().document.extracted.rateAmount.value, 240000);
+      assert.equal(res.json().document.extracted.rateAmount.raw, '$2,400.00');
+      assert.equal(res.json().document.extracted.brokerLoadNumber.value, '84213');
+    });
+
+    it('is not open to drivers', async () => {
+      const orgId = await newOrg('Manual Driver Co');
+      const { document } = (
+        await upload(orgId, pdf('manual-driver'), '?kind=rate_confirmation')
+      ).json();
+
+      const res = await app.inject({
+        method: 'POST',
+        url: `/v1/documents/${document.id}/manual-fields`,
+        headers: await asDriver(orgId),
+        payload: { fields: { rateAmount: '$2,400.00' } },
+      });
+      assert.equal(res.statusCode, 403);
+    });
+
+    it('refuses a field name this kind does not have', async () => {
+      const orgId = await newOrg('Manual Unknown Field Co');
+      const { document } = (
+        await upload(orgId, pdf('manual-unknown'), '?kind=rate_confirmation')
+      ).json();
+
+      const res = await app.inject({
+        method: 'POST',
+        url: `/v1/documents/${document.id}/manual-fields`,
+        headers: as(orgId),
+        payload: { fields: { shoeSize: '11' } },
+      });
+      assert.equal(res.statusCode, 400);
+      assert.equal(res.json().code, 'unknown_field');
+    });
+
+    it('refuses a money value that does not parse', async () => {
+      const orgId = await newOrg('Manual Bad Money Co');
+      const { document } = (
+        await upload(orgId, pdf('manual-badmoney'), '?kind=rate_confirmation')
+      ).json();
+
+      const res = await app.inject({
+        method: 'POST',
+        url: `/v1/documents/${document.id}/manual-fields`,
+        headers: as(orgId),
+        payload: { fields: { rateAmount: 'see invoice' } },
+      });
+      assert.equal(res.statusCode, 400);
+      assert.equal(res.json().code, 'invalid_field_value');
+    });
+
+    it('re-validates against the load when the document is already attached', async () => {
+      const orgId = await newOrg('Manual Attached Co');
+      const load = await aLoad(orgId);
+      const { document } = (
+        await upload(orgId, pdf('manual-attached'), `?kind=rate_confirmation&loadId=${load.id}`)
+      ).json();
+
+      const res = await app.inject({
+        method: 'POST',
+        url: `/v1/documents/${document.id}/manual-fields`,
+        headers: as(orgId),
+        payload: { fields: { rateAmount: '$2,400.00', brokerLoadNumber: '84213' } },
+      });
+
+      assert.equal(res.statusCode, 200);
+      assert.ok(res.json().validation, 'attached documents get re-checked inline');
+      // The load has nothing recorded yet, so the document is filling in a
+      // thin load rather than disagreeing with a set one — validated, not
+      // rejected. See validate.test.ts's "one side only" suite.
+      assert.equal(res.json().document.status, 'validated');
+    });
+
+    it('merges with, rather than erases, what the pipeline already read', async () => {
+      const orgId = await newOrg('Manual Merge Co');
+      const { document: before } = (
+        await upload(orgId, pdf('manual-merge'), '?kind=rate_confirmation')
+      ).json();
+
+      await app.inject({
+        method: 'POST',
+        url: `/v1/documents/${before.id}/manual-fields`,
+        headers: as(orgId),
+        payload: { fields: { rateAmount: '$2,400.00' } },
+      });
+      const res = await app.inject({
+        method: 'POST',
+        url: `/v1/documents/${before.id}/manual-fields`,
+        headers: as(orgId),
+        payload: { fields: { brokerLoadNumber: '84213' } },
+      });
+
+      assert.equal(res.json().document.extracted.rateAmount.value, 240000);
+      assert.equal(res.json().document.extracted.brokerLoadNumber.value, '84213');
+    });
+  });
 });

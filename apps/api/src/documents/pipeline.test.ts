@@ -293,6 +293,46 @@ suite('document classification and extraction', () => {
     );
   });
 
+  it('does not let a redelivery overwrite a manual correction', async () => {
+    const orgId = await newOrg('Manual Redelivery Co');
+    const doc = await upload(orgId, RATECON, 'ratecon.pdf');
+    await drain();
+
+    // A person corrects a field after the automated pass already ran.
+    const manual = await app.inject({
+      method: 'POST',
+      url: `/v1/documents/${doc.id}/manual-fields`,
+      headers: as(orgId),
+      payload: { fields: { rateAmount: '$2,500.00' } },
+    });
+    assert.equal(manual.statusCode, 200);
+    const afterManual = await fetchDoc(orgId, doc.id);
+    assert.equal(afterManual.extractorVersion, 'manual-entry');
+    assert.equal(afterManual.extracted.rateAmount.value, 250000);
+
+    // The outbox redelivers `document.received` at least once by design —
+    // this is what the guard in pipeline.ts exists to survive.
+    const requeued = await requeueOutboxForTest(app.db, {
+      orgId,
+      topic: 'document.received',
+    });
+    assert.equal(requeued, 1);
+
+    const { logged } = await drain();
+    const afterRedelivery = await fetchDoc(orgId, doc.id);
+
+    assert.equal(
+      afterRedelivery.extracted.rateAmount.value,
+      250000,
+      'the redelivered pipeline must not overwrite the correction',
+    );
+    assert.equal(afterRedelivery.extractorVersion, 'manual-entry');
+    assert.ok(
+      logged.some((l) => l.o['why'] === 'manually_read'),
+      JSON.stringify(logged.map((l) => [l.msg, l.o['why']])),
+    );
+  });
+
   it('leaves a quarantined document alone', async () => {
     const orgId = await newOrg('Quarantine Co');
     const doc = await upload(orgId, RATECON, 'ratecon.pdf');

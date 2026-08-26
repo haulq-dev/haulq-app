@@ -21,6 +21,7 @@ import { after, before, beforeEach, describe, it } from 'node:test';
 import { DOCUMENT_KINDS, type ValidationFinding } from '@haulq/contracts';
 import { closeDatabase, createDatabase, type Database } from '../client.ts';
 import type { Scope } from '../context.ts';
+import { readTimeline } from '../events/record.ts';
 import {
   createTestOrg,
   createTestUser,
@@ -39,6 +40,7 @@ import {
   listDocuments,
   quarantineDocument,
   recordExtraction,
+  recordManualFields,
   recordValidation,
 } from './documents.ts';
 
@@ -51,6 +53,7 @@ let otherOrgId: string;
 let s: Scope;
 let other: Scope;
 let userId: string;
+let userEmail: string;
 
 /** A distinct digest per call, so tests do not dedupe into each other. */
 const digest = () => randomUUID().replace(/-/g, '').repeat(2).slice(0, 64);
@@ -112,6 +115,7 @@ suite('documents repository', () => {
     // assertion, and the failure reads like a repository bug.
     const user = await createTestUser(db);
     userId = user.id;
+    userEmail = user.email;
 
     s = testScope(db, orgId, { type: 'user', id: userId, email: user.email });
     other = testScope(db, otherOrgId, { type: 'system', name: 'test' });
@@ -342,6 +346,73 @@ suite('documents repository', () => {
       });
       assert.equal(row.loadId, null);
       assert.equal(row.status, 'extracted');
+    });
+  });
+
+  describe('recordManualFields', () => {
+    it('writes the fields, tagged as manual entry', async () => {
+      const { document } = await upload();
+      const row = await recordManualFields(s, document.id, {
+        fields: { rateAmount: { value: 240000, raw: '$2,400.00', label: 'manual-entry' } },
+      });
+
+      assert.equal(row.status, 'extracted');
+      assert.equal(row.extractorVersion, 'manual-entry');
+      assert.ok(row.extractedAt instanceof Date);
+      assert.deepEqual(row.extracted, {
+        rateAmount: { value: 240000, raw: '$2,400.00', label: 'manual-entry' },
+      });
+    });
+
+    it('merges into an existing reading rather than replacing it', async () => {
+      const { document } = await upload();
+      await recordExtraction(s, document.id, {
+        extracted: {
+          rateAmount: { value: 1, raw: '$0.01', label: 'rate' },
+          weightLbs: { value: 42000, raw: '42,000', label: 'weight' },
+        },
+        extractorVersion: 'deterministic-v1',
+      });
+
+      const row = await recordManualFields(s, document.id, {
+        fields: { rateAmount: { value: 240000, raw: '$2,400.00', label: 'manual-entry' } },
+      });
+
+      // The corrected field wins, but the field the pipeline already got
+      // right survives — a correction is not a do-over.
+      assert.deepEqual(row.extracted, {
+        rateAmount: { value: 240000, raw: '$2,400.00', label: 'manual-entry' },
+        weightLbs: { value: 42000, raw: '42,000', label: 'weight' },
+      });
+      assert.equal(row.extractorVersion, 'manual-entry');
+    });
+
+    it('records the real signed-in user as the actor, not a synthesized one', async () => {
+      const { document } = await upload();
+      await recordManualFields(s, document.id, {
+        fields: { rateAmount: { value: 240000, raw: '$2,400.00', label: 'manual-entry' } },
+      });
+
+      const events = await readTimeline(s, { subjectId: document.id });
+      const entry = events.find((e) => e.verb === 'document.extracted');
+      assert.ok(entry);
+      assert.equal(entry.actorType, 'user');
+      // `event_log.actor_id` is the display string — a user's email, same as
+      // every other user-authored event — not the raw uuid.
+      assert.equal(entry.actorId, userEmail);
+      assert.match(entry.explanation, /manual-entry/);
+    });
+
+    it('refuses a quarantined document', async () => {
+      const { document } = await upload();
+      await quarantineDocument(s, document.id, 'failed the content check');
+      await assert.rejects(
+        () =>
+          recordManualFields(s, document.id, {
+            fields: { rateAmount: { value: 1, raw: '$0.01', label: 'manual-entry' } },
+          }),
+        (e: DocumentError) => e.code === 'quarantined',
+      );
     });
   });
 

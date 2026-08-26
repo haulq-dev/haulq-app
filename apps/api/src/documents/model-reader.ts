@@ -29,6 +29,7 @@
 
 import {
   DOCUMENT_KINDS,
+  FIELD_NAMES_BY_KIND,
   parseCount,
   parseMoney,
   type Classification,
@@ -84,18 +85,8 @@ const FIELD_PARSERS: Record<string, (raw: string) => string | number | null> = {
   pieceCount: parseCount,
 };
 
-const KNOWN_FIELDS = [
-  'rateAmount',
-  'linehaulAmount',
-  'brokerLoadNumber',
-  'weightLbs',
-  'equipment',
-  'invoiceAmount',
-  'invoiceNumber',
-  'bolNumber',
-  'pieceCount',
-  'lumperAmount',
-] as const;
+/** Every field name any kind's rules can produce, so the prompt and `extract.ts` never drift apart. */
+const KNOWN_FIELDS = [...new Set(Object.values(FIELD_NAMES_BY_KIND).flat())];
 
 const SYSTEM_PROMPT = `You read freight paperwork for a trucking company. You will be shown the text of one document.
 

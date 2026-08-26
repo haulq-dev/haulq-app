@@ -95,6 +95,19 @@ export type ValidationFinding = z.infer<typeof ValidationFindingSchema>;
 
 export const ValidationFindingsSchema = z.array(ValidationFindingSchema);
 
+/**
+ * A person typing in what a document says, for one that automated reading
+ * could not get through — see `extract.ts`'s `FIELD_NAMES_BY_KIND` for which
+ * field names are valid for a given `kind`. Values are raw strings; the route
+ * parses each one per `FIELD_METADATA[field].type` the same way the
+ * deterministic rules do, so a manually-entered rate and a rule-read rate
+ * mean the same thing downstream.
+ */
+export const ManualFieldsSchema = z.object({
+  fields: z.record(z.string(), z.string()),
+});
+export type ManualFields = z.infer<typeof ManualFieldsSchema>;
+
 /** What a set of findings adds up to. */
 export interface ValidationVerdict {
   /** `validated` unless at least one finding is a disagreement at `error`. */

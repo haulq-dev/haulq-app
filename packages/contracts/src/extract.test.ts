@@ -12,7 +12,10 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
   DETERMINISTIC_VERSION,
+  EXPECTED_FIELDS_BY_KIND,
   extractDeterministically,
+  FIELD_METADATA,
+  FIELD_NAMES_BY_KIND,
   parseCount,
   parseMoney,
 } from './extract.ts';
@@ -201,6 +204,35 @@ describe('extractDeterministically — real broker layouts', () => {
     const text = 'RATE CONFIRMATION\nLoad #: 9\nTrailer Req: Straight Truck\n';
     const r = extractDeterministically({ text, kind: 'rate_confirmation' });
     assert.equal(r.fields['equipment']?.value, 'Straight Truck');
+  });
+});
+
+describe('FIELD_NAMES_BY_KIND / FIELD_METADATA', () => {
+  it('gives every field the rules can produce a display entry', () => {
+    const allNames = new Set(Object.values(FIELD_NAMES_BY_KIND).flat());
+    assert.ok(allNames.size > 0);
+    for (const name of allNames) {
+      assert.ok(
+        FIELD_METADATA[name],
+        `${name} appears in FIELD_NAMES_BY_KIND but has no FIELD_METADATA entry`,
+      );
+    }
+  });
+
+  it('lists rateAmount and brokerLoadNumber as expected on a rate confirmation', () => {
+    assert.deepEqual(
+      [...(EXPECTED_FIELDS_BY_KIND.rate_confirmation ?? [])].sort(),
+      ['brokerLoadNumber', 'rateAmount'],
+    );
+  });
+
+  it('every expected field is also a known field name for that kind', () => {
+    for (const [kind, expected] of Object.entries(EXPECTED_FIELDS_BY_KIND)) {
+      const known = new Set(FIELD_NAMES_BY_KIND[kind as keyof typeof FIELD_NAMES_BY_KIND]);
+      for (const field of expected ?? []) {
+        assert.ok(known.has(field), `${kind}: expected field ${field} is not in FIELD_NAMES_BY_KIND`);
+      }
+    }
   });
 });
 

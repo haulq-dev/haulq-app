@@ -89,10 +89,19 @@ export const documents = pgTable(
       .defaultNow(),
 
     // --- extraction, then validation ---------------------------------------
-    /** What the classifier and extractor read off the page. Model output. */
+    /**
+     * What the classifier and extractor read off the page — or, when
+     * automated reading declined, what a person typed in by hand.
+     */
     extracted: jsonb('extracted'),
     extractedAt: timestamp('extracted_at', { withTimezone: true }),
-    /** Which model and version produced `extracted`. Needed to re-run a cohort. */
+    /**
+     * Which model and version produced `extracted`, e.g.
+     * `deterministic-v1`, `azure-di-2024-11-30/rateconf-v3`. `manual-entry`
+     * marks a person's correction rather than a model's — `pipeline.ts`
+     * checks for exactly that value to avoid an outbox redelivery silently
+     * overwriting it.
+     */
     extractorVersion: text('extractor_version'),
 
     /**

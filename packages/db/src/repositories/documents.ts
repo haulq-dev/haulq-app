@@ -38,6 +38,7 @@ import { and, desc, eq, isNull, sql } from 'drizzle-orm';
 import {
   summarizeValidation,
   type DocumentKind,
+  type ExtractedField,
   type ValidationFinding,
   type ValidationVerdict,
 } from '@haulq/contracts';
@@ -406,6 +407,66 @@ export async function recordExtraction(
         kind: row.kind,
         fieldCount: Object.keys(input.extracted).length,
         extractorVersion: input.extractorVersion,
+      },
+    });
+
+    return row;
+  });
+}
+
+export interface RecordManualFieldsInput {
+  /** Field name → what a person typed in. Same shape `recordExtraction` writes, provenance-tagged. */
+  fields: Record<string, ExtractedField>;
+}
+
+/**
+ * Record what a person typed in, for a document the automated pipeline
+ * could not read.
+ *
+ * A genuinely separate function from `recordExtraction` rather than a
+ * `merge?: boolean` flag on it — `recordExtraction`'s own docstring states
+ * wholesale overwrite as a deliberate property the pipeline's idempotency
+ * guard depends on, and this file already keeps `recordExtraction` and
+ * `recordValidation` as two functions on purpose rather than one flag-driven
+ * one. This one merges instead of overwriting: correcting one field a
+ * dispatcher can see is wrong should not discard three the pipeline already
+ * got right.
+ *
+ * Callers must use the signed-in user's own `Scope`, never a synthesized
+ * `{ type: 'agent' }` actor — `event_log` attributing this to the real
+ * person is the mirror image of `pipeline.ts` attributing a model pass to
+ * the model.
+ */
+export async function recordManualFields(
+  s: Scope,
+  documentId: string,
+  input: RecordManualFieldsInput,
+): Promise<Document> {
+  return withTransaction(s, async (tx) => {
+    const existing = await forUpdate(tx, documentId, 'record manual fields for');
+    const merged = {
+      ...((existing.extracted as Record<string, unknown> | null) ?? {}),
+      ...input.fields,
+    };
+
+    const [row] = await tx.db
+      .update(documents)
+      .set({
+        extracted: merged,
+        extractedAt: new Date(),
+        extractorVersion: 'manual-entry',
+        status: 'extracted',
+      })
+      .where(and(eq(documents.orgId, tx.ctx.orgId), eq(documents.id, documentId)))
+      .returning();
+    if (!row) throw new Error('manual field update returned nothing');
+
+    await recordEvent(tx, 'document.extracted', {
+      subjectId: row.id,
+      payload: {
+        kind: row.kind,
+        fieldCount: Object.keys(input.fields).length,
+        extractorVersion: 'manual-entry',
       },
     });
 
