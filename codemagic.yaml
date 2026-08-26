@@ -102,9 +102,20 @@ workflows:
         # contain the .xcodeproj. Everything else in this file references
         # the project by path ($XCODE_WORKSPACE etc.) and can run from
         # apps/driver; this step is the one exception.
+        #
+        # get-latest-*app-store*-build-number reads the App Store release
+        # track, which is empty — this app has only ever gone to TestFlight,
+        # never been released. That call silently came back with nothing,
+        # so `agvtool` reset to 1 on every build and collided with the 1
+        # already sitting in TestFlight from the first successful upload —
+        # ENTITY_ERROR.ATTRIBUTE.INVALID.DUPLICATE on the second build.
+        # get-latest-*testflight*-build-number reads the track builds
+        # actually land on. Revisit if this app ever also ships an App
+        # Store release — at that point the real latest is whichever of
+        # the two tracks is higher, not just TestFlight's.
         working_directory: apps/driver/ios/App
         script: |
-          LATEST=$(app-store-connect get-latest-app-store-build-number "$APP_STORE_APP_ID")
+          LATEST=$(app-store-connect get-latest-testflight-build-number "$APP_STORE_APP_ID")
           agvtool new-version -all $(($LATEST + 1))
 
       - name: Build the .ipa
