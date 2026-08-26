@@ -10,7 +10,14 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
-import { request, type Truck } from '../lib/api.ts';
+import {
+  ApiRequestError,
+  request,
+  type MotiveMatchSuggestion,
+  type MotiveVehicle,
+  type MotiveVehiclesResponse,
+  type Truck,
+} from '../lib/api.ts';
 import { Card, Empty, ErrorNote, Field, Num, Pill } from '../components/ui.tsx';
 
 const CAPABILITIES = [
@@ -36,28 +43,34 @@ const EQUIPMENT = [
 const pretty = (equipment: string) =>
   equipment.toLowerCase().replace(/_/g, ' ');
 
-/**
- * The Motive vehicle id, editable inline. No dedicated integration-mapping
- * screen exists yet — this is where a carrier who has connected Motive
- * (`/integrations`) actually tells HaulQ which vehicle is which truck, or
- * `integrations/motive-sync.ts` has positions with nowhere to write them.
- */
-function MotiveVehicleCell({ truck }: { truck: Truck }) {
+function useSetMotiveVehicle(truckId: string) {
   const queryClient = useQueryClient();
-  const [editing, setEditing] = useState(false);
-  const [value, setValue] = useState(String(truck.motiveVehicleId ?? ''));
-
-  const save = useMutation({
+  return useMutation({
     mutationFn: (motiveVehicleId: number | null) =>
-      request(`/v1/trucks/${truck.id}/motive-vehicle`, {
+      request(`/v1/trucks/${truckId}/motive-vehicle`, {
         method: 'PATCH',
         body: { motiveVehicleId },
       }),
     onSuccess: async () => {
-      setEditing(false);
       await queryClient.invalidateQueries();
     },
   });
+}
+
+/**
+ * The Motive vehicle match, editable inline. With a fetched vehicle list
+ * this is a picker of real names — "12", "Unit 12" — never a raw id a
+ * carrier has to go find in Motive's own dashboard first. Falls back to
+ * the old numeric field only when Motive is not connected or the vehicle
+ * list could not be fetched, so nothing regresses for an org that has not
+ * connected yet.
+ */
+function MotiveVehicleCell({ truck, vehicles }: { truck: Truck; vehicles: MotiveVehicle[] | null }) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(String(truck.motiveVehicleId ?? ''));
+  const save = useSetMotiveVehicle(truck.id);
+
+  const current = vehicles?.find((v) => v.id === truck.motiveVehicleId);
 
   if (!editing) {
     return (
@@ -69,11 +82,41 @@ function MotiveVehicleCell({ truck }: { truck: Truck }) {
         }}
       >
         {truck.motiveVehicleId !== null ? (
-          <span className="num">{truck.motiveVehicleId}</span>
+          <span>{current ? current.number : truck.motiveVehicleId}</span>
         ) : (
           <span className="text-sm text-mute">Not matched</span>
         )}
       </button>
+    );
+  }
+
+  if (vehicles) {
+    return (
+      <div className="flex items-center gap-1.5">
+        <select
+          className="hq-input w-40 py-1 text-sm"
+          autoFocus
+          defaultValue={truck.motiveVehicleId !== null ? String(truck.motiveVehicleId) : ''}
+          onChange={(e) => {
+            save.mutate(e.target.value ? Number(e.target.value) : null, {
+              onSuccess: () => setEditing(false),
+            });
+          }}
+          disabled={save.isPending}
+        >
+          <option value="">Not matched</option>
+          {vehicles.map((v) => (
+            <option key={v.id} value={v.id}>
+              {v.number}
+              {v.vin ? ` · ${v.vin.slice(-6)}` : ''}
+            </option>
+          ))}
+        </select>
+        <button className="hq-btn hq-btn-ghost px-2 py-1 text-xs" onClick={() => setEditing(false)}>
+          Cancel
+        </button>
+        <ErrorNote error={save.error} />
+      </div>
     );
   }
 
@@ -91,7 +134,7 @@ function MotiveVehicleCell({ truck }: { truck: Truck }) {
       <button
         className="hq-btn hq-btn-ghost px-2 py-1 text-xs"
         disabled={save.isPending}
-        onClick={() => save.mutate(value.trim() ? Number(value) : null)}
+        onClick={() => save.mutate(value.trim() ? Number(value) : null, { onSuccess: () => setEditing(false) })}
       >
         Save
       </button>
@@ -100,6 +143,53 @@ function MotiveVehicleCell({ truck }: { truck: Truck }) {
       </button>
       <ErrorNote error={save.error} />
     </div>
+  );
+}
+
+/**
+ * Suggested matches waiting for a one-click confirm — the actual
+ * hands-off path for the common case where a fleet already calls a Motive
+ * vehicle the same thing HaulQ calls the truck. Never applied
+ * automatically; see `integrations/motive-match.ts` on the API side for why.
+ */
+function MotiveMatchSuggestions({ suggestions }: { suggestions: MotiveMatchSuggestion[] }) {
+  if (suggestions.length === 0) return null;
+
+  return (
+    <Card title="Motive matches to review">
+      <p className="mb-3 max-w-prose text-sm text-slate">
+        These trucks and Motive vehicles look like the same unit. Confirm the
+        ones that are right — nothing is matched until you do.
+      </p>
+      <ul className="space-y-2">
+        {suggestions.map((s) => (
+          <SuggestionRow key={s.truckId} suggestion={s} />
+        ))}
+      </ul>
+    </Card>
+  );
+}
+
+function SuggestionRow({ suggestion }: { suggestion: MotiveMatchSuggestion }) {
+  const save = useSetMotiveVehicle(suggestion.truckId);
+  return (
+    <li className="flex flex-wrap items-center justify-between gap-2 border border-line p-2.5">
+      <span>
+        <span className="font-medium">{suggestion.truckLabel}</span>
+        <span className="mx-2 text-mute">→</span>
+        <span>Motive {suggestion.motiveVehicleNumber}</span>
+      </span>
+      <div className="flex items-center gap-2">
+        <button
+          className="hq-btn hq-btn-brand px-3 py-1 text-xs"
+          disabled={save.isPending}
+          onClick={() => save.mutate(suggestion.motiveVehicleId)}
+        >
+          {save.isPending ? 'Matching…' : 'Confirm match'}
+        </button>
+        <ErrorNote error={save.error} />
+      </div>
+    </li>
   );
 }
 
@@ -234,6 +324,18 @@ export function TrucksScreen() {
     queryFn: () => request<{ items: Truck[] }>('/v1/trucks'),
   });
 
+  // 409 (`not_connected`) is the expected answer for an org that has not
+  // connected Motive yet, not a failure worth retrying or showing an error
+  // for — the picker just falls back to the manual field below.
+  const motive = useQuery({
+    queryKey: ['motive-vehicles'],
+    queryFn: () => request<MotiveVehiclesResponse>('/v1/integrations/motive/vehicles'),
+    retry: false,
+  });
+  const motiveNotConnected =
+    motive.isError && motive.error instanceof ApiRequestError && motive.error.code === 'not_connected';
+  const vehicles = motive.data?.vehicles ?? null;
+
   return (
     <div className="space-y-6">
       <div className="flex items-end justify-between gap-4">
@@ -246,6 +348,9 @@ export function TrucksScreen() {
       </div>
 
       {adding && <AddTruck onDone={() => setAdding(false)} />}
+
+      {motive.data && <MotiveMatchSuggestions suggestions={motive.data.suggestions} />}
+      {motive.isError && !motiveNotConnected && <ErrorNote error={motive.error} />}
 
       <Card>
         {trucks.isError && <ErrorNote error={trucks.error} />}
@@ -264,7 +369,14 @@ export function TrucksScreen() {
                   <th className="field-label">Equipment</th>
                   <th className="field-label">Max weight</th>
                   <th className="field-label">Can do</th>
-                  <th className="field-label">Motive vehicle</th>
+                  <th className="field-label">
+                    Motive vehicle
+                    {motiveNotConnected && (
+                      <span className="ml-1 font-normal normal-case text-mute">
+                        (<a href="/integrations" className="underline">connect Motive</a> to pick from a list)
+                      </span>
+                    )}
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -298,7 +410,7 @@ export function TrucksScreen() {
                         )}
                       </td>
                       <td>
-                        <MotiveVehicleCell truck={truck} />
+                        <MotiveVehicleCell truck={truck} vehicles={vehicles} />
                       </td>
                     </tr>
                   );

@@ -196,6 +196,25 @@ export interface Truck {
   motiveVehicleId: number | null;
 }
 
+export interface MotiveVehicle {
+  id: number;
+  /** The fleet's own identifier — "12", "Unit 12" — not Motive's internal id. */
+  number: string;
+  vin: string | null;
+}
+
+export interface MotiveMatchSuggestion {
+  truckId: string;
+  truckLabel: string;
+  motiveVehicleId: number;
+  motiveVehicleNumber: string;
+}
+
+export interface MotiveVehiclesResponse {
+  vehicles: MotiveVehicle[];
+  suggestions: MotiveMatchSuggestion[];
+}
+
 export interface CarrierProfile {
   legalName: string;
   dbaName: string | null;

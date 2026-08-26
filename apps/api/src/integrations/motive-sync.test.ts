@@ -10,7 +10,7 @@
 
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { parseMotiveLocationsPage } from './motive-sync.ts';
+import { parseMotiveLocationsPage, parseMotiveVehiclesPage } from './motive-sync.ts';
 
 function page(overrides: { vehicles?: unknown[]; pagination?: object } = {}) {
   return {
@@ -83,5 +83,40 @@ describe('parseMotiveLocationsPage', () => {
   it('handles the whole fleet fitting on one page', () => {
     const result = parseMotiveLocationsPage(page({ pagination: { per_page: 100, page_no: 1, total: 5 } }));
     assert.equal(result.hasNextPage, false);
+  });
+});
+
+describe('parseMotiveVehiclesPage', () => {
+  it('reads id, number and vin for matching — not location', () => {
+    const result = parseMotiveVehiclesPage(
+      page({
+        vehicles: [
+          {
+            vehicle: {
+              id: 998707,
+              number: '12',
+              vin: '3FA6P0H97ER281302',
+              current_location: null,
+            },
+          },
+        ],
+      }),
+    );
+    assert.deepEqual(result.vehicles, [{ id: 998707, number: '12', vin: '3FA6P0H97ER281302' }]);
+  });
+
+  it('keeps a vehicle with no current_location — matching does not need a position', () => {
+    const result = parseMotiveVehiclesPage(page({ vehicles: [{ vehicle: { id: 1, number: '9' } }] }));
+    assert.equal(result.vehicles.length, 1);
+  });
+
+  it('defaults a missing vin to null rather than undefined', () => {
+    const result = parseMotiveVehiclesPage(page({ vehicles: [{ vehicle: { id: 1, number: '9' } }] }));
+    assert.equal(result.vehicles[0]!.vin, null);
+  });
+
+  it('paginates the same way parseMotiveLocationsPage does', () => {
+    const result = parseMotiveVehiclesPage(page({ pagination: { per_page: 25, page_no: 1, total: 60 } }));
+    assert.equal(result.hasNextPage, true);
   });
 });

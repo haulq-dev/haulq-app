@@ -135,6 +135,34 @@ export async function updateOAuthTokens(
     .where(and(eq(boardCredentials.id, id), eq(boardCredentials.orgId, s.ctx.orgId)));
 }
 
+/**
+ * A carrier deliberately disconnecting a board — the "delete" button on
+ * Integrations, not a sync failure. Hard-deleted rather than revoked-in-place:
+ * `board_credentials_exactly_one_secret_shape` (`sql/post/0500_constraints.sql`)
+ * requires every row to hold a real secret of one shape or the other — "having
+ * neither means 'connected' while holding nothing to connect with," in that
+ * migration's own words — so there is no valid row to leave behind once the
+ * secret is gone. Same reasoning `removeMember` already applies to
+ * `org_memberships`: this table is the access model, not a record of what was
+ * ever connected — the event log is that, and it keeps the disconnect with
+ * its actor and timestamp.
+ */
+export async function disconnectBoardCredential(s: Scope, board: string): Promise<void> {
+  await withTransaction(s, async (tx) => {
+    const [row] = await tx.db
+      .delete(boardCredentials)
+      .where(and(eq(boardCredentials.orgId, tx.ctx.orgId), eq(boardCredentials.board, board)))
+      .returning();
+
+    if (!row) return;
+
+    await recordEvent(tx, 'board_credential.disconnected', {
+      subjectId: row.id,
+      payload: { board },
+    });
+  });
+}
+
 export async function markCredentialFailed(s: Scope, id: string, error: string): Promise<void> {
   await withTransaction(s, async (tx) => {
     const [row] = await tx.db

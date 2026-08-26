@@ -58,6 +58,10 @@ const RESULT_MESSAGE: Record<string, { text: string; tone: 'ok' | 'warn' }> = {
   connected: { text: 'Motive is connected.', tone: 'ok' },
   denied: { text: 'The Motive connection was cancelled.', tone: 'warn' },
   error: { text: 'Something went wrong connecting Motive. Try again, or check the server log.', tone: 'warn' },
+  not_configured: {
+    text: 'Motive approved the connection, but this deployment is missing required setup and could not finish it. This needs an operator to fix, not a retry.',
+    tone: 'warn',
+  },
 };
 
 export function IntegrationsScreen() {
@@ -78,6 +82,11 @@ export function IntegrationsScreen() {
     onSuccess: (data) => {
       window.location.href = data.url;
     },
+  });
+
+  const disconnect = useMutation({
+    mutationFn: () => request('/v1/integrations/motive', { method: 'DELETE' }),
+    onSuccess: () => items.refetch(),
   });
 
   const motive = items.data?.items.find((i) => i.board === 'motive');
@@ -126,13 +135,32 @@ export function IntegrationsScreen() {
               )}
             </div>
             {canConnect && (
-              <button
-                className="hq-btn hq-btn-ghost"
-                disabled={connect.isPending}
-                onClick={() => connect.mutate()}
-              >
-                Reconnect
-              </button>
+              <div className="flex gap-2">
+                <button
+                  className="hq-btn hq-btn-ghost"
+                  disabled={connect.isPending}
+                  onClick={() => connect.mutate()}
+                >
+                  Reconnect
+                </button>
+                {motive.status === 'active' && (
+                  <button
+                    className="hq-btn hq-btn-ghost text-bad"
+                    disabled={disconnect.isPending}
+                    onClick={() => {
+                      if (
+                        window.confirm(
+                          'Disconnect Motive? Position reports from Motive-equipped trucks will stop until this is reconnected.',
+                        )
+                      ) {
+                        disconnect.mutate();
+                      }
+                    }}
+                  >
+                    {disconnect.isPending ? 'Disconnecting…' : 'Disconnect'}
+                  </button>
+                )}
+              </div>
             )}
           </div>
         ) : (
@@ -152,6 +180,7 @@ export function IntegrationsScreen() {
           </div>
         )}
         <ErrorNote error={connect.error} />
+        <ErrorNote error={disconnect.error} />
       </Card>
 
       {items.data && items.data.items.filter((i) => i.board !== 'motive').length > 0 && (

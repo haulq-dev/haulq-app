@@ -569,6 +569,11 @@ export const eventCatalog = {
     topic: 'board_credential.failed',
   }),
 
+  'board_credential.disconnected': define<{ board: string }>({
+    subjectType: 'board_credential',
+    describe: (p) => `Disconnected your ${p.board} account.`,
+  }),
+
   // --- track — Phase 2a --------------------------------------------------
   //
   // PHASE_2_PLAN.md section 4's exit gate, restated: a driver can report

@@ -46,6 +46,12 @@ interface MotiveLocationsResponse {
   vehicles: Array<{
     vehicle: {
       id: number;
+      // A fleet's own identifier for the truck — "12", "Unit 12", whatever
+      // is painted on the door. This is the field worth matching a HaulQ
+      // truck label against; Motive's numeric `id` means nothing to a
+      // carrier who has never opened the Motive dashboard.
+      number: string;
+      vin?: string | null;
       current_location?: { lat: number; lon: number; located_at: string } | null;
     };
   }>;
@@ -110,6 +116,58 @@ export async function fetchMotiveVehicleLocations(accessToken: string): Promise<
   return results;
 }
 
+/** Identity only — no position. Kept separate from `MotiveVehicleLocation`
+ *  because listing vehicles to match against is a different question from
+ *  syncing where they are, and a vehicle with no `current_location` yet
+ *  still needs to be matchable. */
+export interface MotiveVehicleSummary {
+  id: number;
+  number: string;
+  vin: string | null;
+}
+
+export interface ParsedMotiveVehiclesPage {
+  vehicles: MotiveVehicleSummary[];
+  hasNextPage: boolean;
+}
+
+/** Pure, mirroring `parseMotiveLocationsPage` — same endpoint, same page shape, different fields kept. */
+export function parseMotiveVehiclesPage(body: MotiveLocationsResponse): ParsedMotiveVehiclesPage {
+  const vehicles = body.vehicles.map((entry) => ({
+    id: entry.vehicle.id,
+    number: entry.vehicle.number,
+    vin: entry.vehicle.vin ?? null,
+  }));
+
+  const { per_page, page_no, total } = body.pagination;
+  return { vehicles, hasNextPage: page_no * per_page < total };
+}
+
+/** Every vehicle on the account, regardless of whether it has reported a position — for matching, not tracking. */
+export async function fetchMotiveVehicles(accessToken: string): Promise<MotiveVehicleSummary[]> {
+  const results: MotiveVehicleSummary[] = [];
+  let pageNo = 1;
+
+  for (;;) {
+    const url = new URL(VEHICLE_LOCATIONS_URL);
+    url.searchParams.set('per_page', '100');
+    url.searchParams.set('page_no', String(pageNo));
+
+    const response = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      throw new MotiveApiError(response.status, `motive vehicle_locations ${response.status}: ${text.slice(0, 500)}`);
+    }
+
+    const page = parseMotiveVehiclesPage((await response.json()) as MotiveLocationsResponse);
+    results.push(...page.vehicles);
+    if (!page.hasNextPage) break;
+    pageNo += 1;
+  }
+
+  return results;
+}
+
 export interface SyncDeps {
   db: Database;
   config: MotiveOAuthConfig;
@@ -121,7 +179,10 @@ export interface SyncDeps {
 /** Refresh window — same margin a browser's own token-refresh logic would use, so a slow poll never races an about-to-expire token. */
 const REFRESH_MARGIN_MS = 5 * 60_000;
 
-async function accessTokenFor(deps: SyncDeps, credential: BoardCredential): Promise<string> {
+/** Exported for `routes/integrations.ts`'s vehicle-listing route — the same
+ *  refresh-if-needed logic a scheduled sync pass uses applies just as well
+ *  to an on-demand call a carrier is waiting on. */
+export async function accessTokenFor(deps: SyncDeps, credential: BoardCredential): Promise<string> {
   // Null only if this row is somehow secretRef-shaped rather than OAuth —
   // `board_credentials_oauth_has_expiry` should make that impossible for a
   // row this function is ever called with. Treated as "refresh now" rather
