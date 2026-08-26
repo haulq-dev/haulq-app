@@ -128,7 +128,23 @@ export async function request<T>(
   const parsed = text ? (JSON.parse(text) as unknown) : undefined;
 
   if (!response.ok) {
-    throw new ApiRequestError(response.status, (parsed ?? {}) as Partial<ApiError>);
+    const errorBody = (parsed ?? {}) as Partial<ApiError>;
+
+    // The API answers "no active membership in this org" the same way it
+    // answers "your token is bad" — both are `code: 'unauthenticated'`, see
+    // `request-context.ts`. Either way, the org this session was pointed at
+    // no longer resolves for whoever is signed in: a Clerk account got
+    // deleted and recreated with a new id, an owner reassigned, whatever the
+    // cause. Left alone, every screen keeps sending the same stale org id
+    // and showing the same refusal forever, with no way out short of
+    // clearing localStorage by hand. Dropping just the org (never the whole
+    // session — dev mode's `userId` still has to survive this) sends the
+    // next render back to the account picker instead.
+    if (errorBody.code === 'unauthenticated' && session?.orgId) {
+      writeSession({ userId: session.userId });
+    }
+
+    throw new ApiRequestError(response.status, errorBody);
   }
 
   return parsed as T;
