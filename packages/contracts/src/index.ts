@@ -477,6 +477,39 @@ export const AssignLoadSchema = z.object({
   driverId: z.string().uuid().nullable().optional(),
 });
 
+/**
+ * A stop's coordinates and appointment window, the two fields Routes' 3a
+ * feasibility check depends on and nothing in `CreateLoadSchema` lets a
+ * caller revise after the load exists — `PHASE_3A_ROUTES_WALKTHROUGH.md` §1
+ * named the gap. Every field independently optional: this is a partial
+ * update, not a replace, so correcting a window does not require re-sending
+ * coordinates nobody meant to touch. `null` clears a window the same way
+ * `AssignLoadSchema.driverId` clears an assignment; coordinates accept the
+ * same treatment for a corrected geocode being un-set rather than only ever
+ * overwritten.
+ */
+export const UpdateLoadStopSchema = z
+  .object({
+    lat: z.number().min(-90).max(90).nullable().optional(),
+    lng: z.number().min(-180).max(180).nullable().optional(),
+    windowStart: z.string().datetime().nullable().optional(),
+    windowEnd: z.string().datetime().nullable().optional(),
+  })
+  .superRefine((input, ctx) => {
+    if (
+      input.lat === undefined &&
+      input.lng === undefined &&
+      input.windowStart === undefined &&
+      input.windowEnd === undefined
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Set a coordinate or a window — an empty update does nothing.',
+      });
+    }
+  });
+export type UpdateLoadStop = z.infer<typeof UpdateLoadStopSchema>;
+
 // ---------------------------------------------------------------------------
 // Pay
 // ---------------------------------------------------------------------------

@@ -26,6 +26,7 @@ import {
   AssignLoadSchema,
   CreateLoadSchema,
   UpdateLoadStatusSchema,
+  UpdateLoadStopSchema,
 } from '@haulq/contracts';
 import {
   assignLoad,
@@ -36,6 +37,7 @@ import {
   LoadError,
   loadMargin,
   updateLoadStatus,
+  updateLoadStop,
   type LoadStatus,
 } from '@haulq/db';
 import type { FastifyInstance } from 'fastify';
@@ -198,6 +200,27 @@ export async function loadRoutes(app: FastifyInstance) {
 
     try {
       return await assignLoad(s, id, parsed.data);
+    } catch (err) {
+      rethrow(err);
+    }
+  });
+
+  /**
+   * Correct a stop's coordinates or appointment window after the load
+   * already exists. `PHASE_3A_ROUTES_WALKTHROUGH.md` §1 named the gap this
+   * closes — Routes' feasibility check depends on both and `CreateLoadSchema`
+   * only ever sets them once, at creation.
+   */
+  app.patch('/v1/loads/:id/stops/:stopId', async (request) => {
+    const s = await requireScope(request);
+    requireRole(request, 'owner', 'dispatcher');
+    const { id, stopId } = request.params as { id: string; stopId: string };
+
+    const parsed = UpdateLoadStopSchema.safeParse(request.body);
+    if (!parsed.success) badRequest(parsed.error.issues);
+
+    try {
+      return await updateLoadStop(s, id, stopId, parsed.data);
     } catch (err) {
       rethrow(err);
     }

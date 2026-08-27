@@ -315,6 +315,27 @@ export const eventCatalog = {
     describe: (p) => `Cancelled ${formatLoad(p.reference)}: ${p.reason}`,
   }),
 
+  /**
+   * A stop's coordinates or appointment window, corrected after the load
+   * already existed — `updateLoadStop` in `repositories/loads.ts`. `fields`
+   * names what changed rather than the raw values: a lat/lng pair or an ISO
+   * timestamp is not a sentence anyone reads, and "coordinates" is the fact
+   * a carrier scanning the timeline actually wants — that this stop's
+   * location was corrected, not what the correction was.
+   */
+  'load_stop.updated': define<{
+    reference: number;
+    stopSeq: number;
+    city: string;
+    state: string;
+    fields: string[];
+  }>({
+    subjectType: 'load',
+    describe: (p) =>
+      `Updated stop ${p.stopSeq} (${formatPlace(p.city, p.state)}) on ` +
+      `${formatLoad(p.reference)}: ${p.fields.join(', ')}.`,
+  }),
+
   'load.reconciled': define<{
     reference: number;
     expectedMarginAmount: number;

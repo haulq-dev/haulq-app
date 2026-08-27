@@ -36,6 +36,7 @@ import {
   loadCounts,
   LoadError,
   updateLoadStatus,
+  updateLoadStop,
 } from './loads.ts';
 import { createTruck } from './trucks.ts';
 
@@ -388,6 +389,88 @@ suite('loads repository', () => {
         (err: unknown) => {
           assert.ok(err instanceof LoadError);
           assert.equal(err.code, 'driver_not_found');
+          return true;
+        },
+      );
+    });
+  });
+
+  // --- updateLoadStop ------------------------------------------------------
+
+  describe('updateLoadStop', () => {
+    it('sets coordinates and records the event', async () => {
+      const load = await createLoad(s, { brokerName: 'Stop Co', stops: wichitaToDenver });
+      const pickup = load.stops.find((st) => st.type === 'pickup')!;
+
+      const updated = await updateLoadStop(s, load.id, pickup.id, { lat: 37.6872, lng: -97.3301 });
+      const stop = updated.stops.find((st) => st.id === pickup.id)!;
+      assert.equal(stop.lat, 37.6872);
+      assert.equal(stop.lng, -97.3301);
+
+      const events = await readEvents(s, load.id);
+      const event = events.find((e) => e.verb === 'load_stop.updated');
+      assert.match(event!.explanation, /coordinates/);
+    });
+
+    it('sets a window without touching coordinates set earlier', async () => {
+      const load = await createLoad(s, { brokerName: 'Stop Co', stops: wichitaToDenver });
+      const delivery = load.stops.find((st) => st.type === 'delivery')!;
+      await updateLoadStop(s, load.id, delivery.id, { lat: 39.7392, lng: -104.9903 });
+
+      const updated = await updateLoadStop(s, load.id, delivery.id, {
+        windowEnd: '2026-09-01T18:00:00Z',
+      });
+      const stop = updated.stops.find((st) => st.id === delivery.id)!;
+      assert.equal(stop.lat, 39.7392);
+      assert.equal(stop.windowEnd?.toISOString(), '2026-09-01T18:00:00.000Z');
+    });
+
+    it('clears a window with null', async () => {
+      const load = await createLoad(s, { brokerName: 'Stop Co', stops: wichitaToDenver });
+      const delivery = load.stops.find((st) => st.type === 'delivery')!;
+      await updateLoadStop(s, load.id, delivery.id, { windowEnd: '2026-09-01T18:00:00Z' });
+
+      const cleared = await updateLoadStop(s, load.id, delivery.id, { windowEnd: null });
+      const stop = cleared.stops.find((st) => st.id === delivery.id)!;
+      assert.equal(stop.windowEnd, null);
+    });
+
+    it('refuses a window that ends before it starts — the database\'s own constraint', async () => {
+      const load = await createLoad(s, { brokerName: 'Stop Co', stops: wichitaToDenver });
+      const delivery = load.stops.find((st) => st.type === 'delivery')!;
+
+      await assert.rejects(() =>
+        updateLoadStop(s, load.id, delivery.id, {
+          windowStart: '2026-09-01T18:00:00Z',
+          windowEnd: '2026-09-01T12:00:00Z',
+        }),
+      );
+    });
+
+    it('refuses a stop that is not on the given load', async () => {
+      const load = await createLoad(s, { brokerName: 'Stop Co', stops: wichitaToDenver });
+      const otherLoad = await createLoad(s, { brokerName: 'Stop Co', stops: wichitaToDenver });
+      const otherStop = otherLoad.stops[0]!;
+
+      await assert.rejects(
+        () => updateLoadStop(s, load.id, otherStop.id, { lat: 1, lng: 1 }),
+        (err: unknown) => {
+          assert.ok(err instanceof LoadError);
+          assert.equal(err.code, 'not_found');
+          return true;
+        },
+      );
+    });
+
+    it('never reaches another tenant\'s load', async () => {
+      const theirs = await createLoad(other, { brokerName: 'Not Yours', stops: wichitaToDenver });
+      const theirStop = theirs.stops[0]!;
+
+      await assert.rejects(
+        () => updateLoadStop(s, theirs.id, theirStop.id, { lat: 1, lng: 1 }),
+        (err: unknown) => {
+          assert.ok(err instanceof LoadError);
+          assert.equal(err.code, 'not_found');
           return true;
         },
       );

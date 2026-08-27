@@ -573,6 +573,76 @@ export async function assignLoad(
   });
 }
 
+export interface UpdateLoadStopInput {
+  lat?: number | null | undefined;
+  lng?: number | null | undefined;
+  windowStart?: string | null | undefined;
+  windowEnd?: string | null | undefined;
+}
+
+/**
+ * Correct a stop's coordinates or appointment window after the load already
+ * exists — `CreateLoadSchema` only ever sets these at creation, and Routes'
+ * 3a feasibility check (`apps/api/src/routes/feasibility.ts`) depends on
+ * both, so a load created without them, or with a wrong one, had no way
+ * back in until this. `load_stops_window_ordered` (`sql/post/0500_
+ * constraints.sql`) still does the actual ordering enforcement, the same
+ * way it already does for `createLoad` — this function does not duplicate
+ * that check, it just gives Postgres a row to apply it to.
+ */
+export async function updateLoadStop(
+  s: Scope,
+  loadId: string,
+  stopId: string,
+  input: UpdateLoadStopInput,
+): Promise<LoadWithStops> {
+  return withTransaction(s, async (tx) => {
+    const [load] = await tx.db
+      .select({ reference: loads.reference })
+      .from(loads)
+      .where(and(eq(loads.id, loadId), eq(loads.orgId, tx.ctx.orgId)));
+    if (!load) {
+      throw new LoadError('not_found', `load ${loadId} not found`, 'That load no longer exists.');
+    }
+
+    const [stop] = await tx.db
+      .select()
+      .from(loadStops)
+      .where(and(eq(loadStops.id, stopId), eq(loadStops.loadId, loadId)));
+    if (!stop) {
+      throw new LoadError('not_found', `stop ${stopId} not on load ${loadId}`, 'That stop is not on this load.');
+    }
+
+    // Names what changed for the event below, not the raw values — see the
+    // catalogue entry's own note on why.
+    const fields: string[] = [];
+    const patch: Partial<typeof loadStops.$inferInsert> = { updatedAt: new Date() };
+
+    if (input.lat !== undefined || input.lng !== undefined) {
+      if (input.lat !== undefined) patch.lat = input.lat;
+      if (input.lng !== undefined) patch.lng = input.lng;
+      fields.push('coordinates');
+    }
+    if (input.windowStart !== undefined) {
+      patch.windowStart = input.windowStart === null ? null : new Date(input.windowStart);
+      fields.push('window start');
+    }
+    if (input.windowEnd !== undefined) {
+      patch.windowEnd = input.windowEnd === null ? null : new Date(input.windowEnd);
+      fields.push('window end');
+    }
+
+    await tx.db.update(loadStops).set(patch).where(eq(loadStops.id, stopId));
+
+    await recordEvent(tx, 'load_stop.updated', {
+      subjectId: loadId,
+      payload: { reference: load.reference, stopSeq: stop.seq, city: stop.city, state: stop.state, fields },
+    });
+
+    return (await getLoad(tx, loadId))!;
+  });
+}
+
 /**
  * What the list screen shows above the table.
  *
