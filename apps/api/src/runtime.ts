@@ -28,6 +28,8 @@ import { AnthropicModelReader, type ModelDocumentReader } from './documents/mode
 import { LocalDocumentReader, type DocumentReader } from './documents/reader.ts';
 import { LogMailer, PostmarkMailer, type Mailer } from './email/postmark.ts';
 import type { Env } from './env.ts';
+import { HereRoutingProvider } from './integrations/here.ts';
+import type { RoutingProvider } from './integrations/routing-provider.ts';
 
 /**
  * The logging surface these builders need.
@@ -146,4 +148,27 @@ export function buildMailer(env: Env, log: RuntimeLog): Mailer {
   log[level]({ mailer: 'log' }, message);
 
   return new LogMailer((o, msg) => log.info(o, msg));
+}
+
+/**
+ * HERE when a key is configured, undefined otherwise — same shape as
+ * `buildModelReader` above. `POST /v1/loads/:id/feasibility` treats an unset
+ * provider exactly as `routes/integrations.ts` treats an unset Motive
+ * config: a 503, not a crash and not a guess. See `env.ts`'s note on
+ * `HERE_API_KEY` for why this is a platform-level credential rather than a
+ * per-org one.
+ */
+export function buildRoutingProvider(env: Env, log: RuntimeLog): RoutingProvider | undefined {
+  if (!env.HERE_API_KEY) {
+    log.info(
+      { routingProvider: false },
+      'HERE is not configured — feasibility checks are unavailable. Set HERE_API_KEY to enable them.',
+    );
+    return undefined;
+  }
+
+  log.info({ routingProvider: 'here' }, 'routing provider ready');
+  return env.HERE_BASE_URL
+    ? new HereRoutingProvider({ apiKey: env.HERE_API_KEY }, env.HERE_BASE_URL)
+    : new HereRoutingProvider({ apiKey: env.HERE_API_KEY });
 }

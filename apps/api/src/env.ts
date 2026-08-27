@@ -162,6 +162,21 @@ const EnvSchema = z.object({
   FMCSA_WEBKEY: z.string().optional(),
   /** Override for tests only — production never sets this. */
   FMCSA_BASE_URL: z.string().url().optional(),
+
+  /**
+   * HERE Routing API, Phase 3a's routing provider — `PHASE_3_PLAN.md` section
+   * 7a. A single platform-level developer credential, same shape as
+   * `FMCSA_WEBKEY` above rather than a per-org `board_credentials` row: one
+   * HaulQ-owned HERE account serves every tenant's feasibility checks, the
+   * same way one FMCSA webkey serves every broker lookup. Optional, same
+   * degrade-rather-than-fail pattern as every other external service here —
+   * without it, `POST /v1/loads/:id/feasibility` 503s. `HAULQ_BUILD_PLAN.md`
+   * section 11 notes HERE needs a card on file for the 30k/month free tier;
+   * that signup has not happened as of this writing.
+   */
+  HERE_API_KEY: z.string().optional(),
+  /** Override for tests only — production never sets this. */
+  HERE_BASE_URL: z.string().url().optional(),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

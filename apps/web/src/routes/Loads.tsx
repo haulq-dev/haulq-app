@@ -23,9 +23,10 @@ import {
   canTransition,
   LOAD_STATUSES,
   nextStatuses,
+  type LoadFeasibilityResponse,
   type LoadStatus,
 } from '@haulq/contracts';
-import { request, type Truck } from '../lib/api.ts';
+import { ApiRequestError, request, type Truck } from '../lib/api.ts';
 import { useOrgs, useSession } from '../components/AuthGate.tsx';
 import { Card, Empty, ErrorNote, Field, Label, Money, Num, Pill } from '../components/ui.tsx';
 
@@ -557,6 +558,90 @@ function CheckinLink({ loadId, reference }: { loadId: string; reference: number 
 }
 
 /**
+ * HaulQ Routes, 3a — PHASE_3_PLAN.md section 4's single-load exit gate: given
+ * one truck and one load, feasible or infeasible, with the deciding
+ * constraint named when it is not. `hoursChecked` is always false on the
+ * response — section 7 has not decided whether Phase 3 pulls HOS data yet —
+ * so that caveat is shown every time, not just when something else went
+ * wrong, the same "say what you don't know" discipline `VerifyBroker` above
+ * already applies to an unchecked broker.
+ *
+ * `not_configured` is not an edge case here the way it is for Motive or
+ * Azure — it is this deployment's actual current state, HERE not being
+ * signed up for yet (`PHASE_3_PLAN.md` section 7a's own note) — so it gets a
+ * plain, expected-looking message rather than `ErrorNote`'s alert styling.
+ */
+function CheckFeasibility({ load, trucks }: { load: Load; trucks: Truck[] }) {
+  const [truckId, setTruckId] = useState(load.truckId ?? '');
+
+  const check = useMutation({
+    mutationFn: () =>
+      request<LoadFeasibilityResponse>(`/v1/loads/${load.id}/feasibility`, {
+        method: 'POST',
+        body: truckId ? { truckId } : {},
+      }),
+  });
+
+  const notConfigured =
+    check.error instanceof ApiRequestError && check.error.code === 'not_configured';
+
+  return (
+    <Card title={`Load ${load.reference} — feasibility`}>
+      <p className="mb-3 text-sm text-slate">
+        Checks the route against the truck's dimensions and this load's
+        appointment windows. Hours of service are not checked yet.
+      </p>
+
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <select
+          className="hq-input w-auto py-1 text-sm"
+          value={truckId}
+          onChange={(e) => setTruckId(e.target.value)}
+        >
+          <option value="">Use the load's assigned truck</option>
+          {trucks.map((t) => (
+            <option key={t.id} value={t.id}>
+              {t.label}
+            </option>
+          ))}
+        </select>
+        <button
+          className="hq-btn hq-btn-brand"
+          disabled={check.isPending}
+          onClick={() => check.mutate()}
+        >
+          {check.isPending ? 'Checking…' : 'Check feasibility'}
+        </button>
+      </div>
+
+      {notConfigured ? (
+        <p className="border-l-2 border-line bg-wash px-3 py-2 text-sm text-mute">
+          Routing is not connected on this deployment yet.
+        </p>
+      ) : (
+        <ErrorNote error={check.error} />
+      )}
+
+      {check.data && (
+        <div className="space-y-2">
+          <Pill tone={check.data.feasible ? 'ok' : 'warn'}>
+            {check.data.feasible ? 'Feasible' : 'Infeasible'}
+          </Pill>
+          {check.data.decidingConstraint && (
+            <p className="text-sm text-warn">{check.data.decidingConstraint.message}</p>
+          )}
+          <p className="text-sm text-slate">
+            <Num value={Math.round(check.data.routeMiles)} /> mi · arrives{' '}
+            {new Date(check.data.estimatedArrivalAt).toLocaleString()}
+          </p>
+          <p className="text-xs text-mute">Hours of service not checked yet.</p>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+/**
  * The per-broker detention free time — PHASE_2_PLAN.md section 7's
  * threshold question, landed on per-broker rather than a carrier-wide
  * default. Edited here, on the load a carrier is already looking at,
@@ -894,6 +979,13 @@ export function LoadsScreen() {
           reference={items.find((l) => l.id === selectedId)?.reference ?? 0}
         />
       )}
+      {selectedId &&
+        canWrite &&
+        (() => {
+          const selected = items.find((l) => l.id === selectedId);
+          if (!selected) return null;
+          return <CheckFeasibility load={selected} trucks={trucks.data?.items ?? []} />;
+        })()}
       {selectedId &&
         canWrite &&
         (() => {

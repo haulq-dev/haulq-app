@@ -16,7 +16,8 @@
     "lint": "turbo run lint",
     "db:generate": "pnpm --filter @haulq/db generate",
     "db:migrate": "pnpm --filter @haulq/db migrate",
-    "db:keypair": "pnpm --filter @haulq/db keypair"
+    "db:keypair": "pnpm --filter @haulq/db keypair",
+    "routes:validate-etas": "pnpm --filter @haulq/api validate-here-etas"
   },
   "devDependencies": {
     "turbo": "^2.3.0",

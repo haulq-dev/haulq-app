@@ -30,12 +30,14 @@ import { startExceptionScanRunner } from './exceptions/runner.ts';
 import { startMotiveSyncRunner } from './integrations/motive-sync-runner.ts';
 import { buildOutboxGroups } from './outbox/handlers.ts';
 import { startOutboxRunner } from './outbox/runner.ts';
-import { buildDocumentReader, buildMailer, buildModelReader, buildStorage } from './runtime.ts';
+import { buildDocumentReader, buildMailer, buildModelReader, buildRoutingProvider, buildStorage } from './runtime.ts';
 import type { ModelDocumentReader } from './documents/model-reader.ts';
 import type { DocumentReader } from './documents/reader.ts';
+import type { RoutingProvider } from './integrations/routing-provider.ts';
 import { requestContextPlugin } from './plugins/request-context.ts';
 import { brokerRoutes } from './routes/brokers.ts';
 import { documentRoutes } from './routes/documents.ts';
+import { feasibilityRoutes } from './routes/feasibility.ts';
 import { integrationRoutes } from './routes/integrations.ts';
 import { driverRoutes } from './routes/drivers.ts';
 import { importRoutes } from './routes/imports.ts';
@@ -55,6 +57,8 @@ declare module 'fastify' {
     db: Database;
     env: Env;
     storage: ObjectStore;
+    /** Undefined until `HERE_API_KEY` is set — see `runtime.ts`'s `buildRoutingProvider`. */
+    routingProvider: RoutingProvider | undefined;
   }
 }
 
@@ -94,6 +98,14 @@ export interface BuildOptions {
    * `documents/model-reader.ts`.
    */
   modelReader?: ModelDocumentReader | undefined;
+
+  /**
+   * Override the routing provider. Tests inject a fake so 3a's feasibility
+   * route can be exercised end to end with no HERE account — see the note at
+   * the top of `here.ts`. Left unset, the server picks HERE when
+   * `HERE_API_KEY` is configured, and no provider at all when it is not.
+   */
+  routingProvider?: RoutingProvider | undefined;
 }
 
 /**
@@ -156,6 +168,7 @@ export async function buildServer(
   const mailer = options.mailer ?? buildMailer(env, app.log);
   const reader = options.reader ?? buildDocumentReader(env, app.log);
   const modelReader = options.modelReader ?? buildModelReader(env, app.log);
+  app.decorate('routingProvider', options.routingProvider ?? buildRoutingProvider(env, app.log));
 
   startOutboxRunner(app, {
     groups: buildOutboxGroups({
@@ -245,6 +258,7 @@ export async function buildServer(
   await app.register(loadRoutes);
   await app.register(brokerRoutes);
   await app.register(trackRoutes);
+  await app.register(feasibilityRoutes);
   await app.register(integrationRoutes);
   await app.register(payRoutes);
   await app.register(insightsRoutes);

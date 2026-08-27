@@ -8,7 +8,8 @@
     "dev": "node --env-file-if-exists=../../.env --watch --experimental-strip-types src/index.ts",
     "start": "node --experimental-strip-types src/index.ts",
     "typecheck": "tsc --noEmit",
-    "test": "node --env-file-if-exists=../../.env --test --test-concurrency=1 --experimental-strip-types \"src/**/*.test.ts\""
+    "test": "node --env-file-if-exists=../../.env --test --test-concurrency=1 --experimental-strip-types \"src/**/*.test.ts\"",
+    "validate-here-etas": "node --env-file-if-exists=../../.env --experimental-strip-types src/scripts/validate-here-etas.ts"
   },
   "dependencies": {
     "@haulq/contracts": "workspace:*",

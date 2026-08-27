@@ -682,3 +682,39 @@ export const UpdateBrokerDocketSchema = z.object({
   usdotNumber: DocketNumber.nullable().optional(),
 });
 export type UpdateBrokerDocket = z.infer<typeof UpdateBrokerDocketSchema>;
+
+// ---------------------------------------------------------------------------
+// Routes — Phase 3a
+// ---------------------------------------------------------------------------
+//
+// PHASE_3_PLAN.md section 4's 3a exit gate: "given one truck and one load,
+// HaulQ returns feasible or infeasible, and if infeasible, names the one
+// constraint that decided it." `decidingConstraint` below is that sentence,
+// structured. `hoursChecked` is always `false` for now — section 7 leaves the
+// HOS question open, and this schema says so explicitly rather than letting a
+// caller assume an unanswered question was answered. Flip it only once an HOS
+// engine actually runs here, not before.
+
+/** Optional — defaults to the load's own assigned truck. */
+export const CheckLoadFeasibilitySchema = z.object({
+  truckId: z.string().uuid().optional(),
+});
+export type CheckLoadFeasibility = z.infer<typeof CheckLoadFeasibilitySchema>;
+
+export const FeasibilityConstraintSchema = z.object({
+  /** e.g. 'stop_window_overrun', 'height_restriction', 'weight_restriction'. */
+  code: z.string(),
+  /** The sentence a dispatcher reads. Section 1: "a carrier told 'no' with no reason will not trust the 'no'." */
+  message: z.string(),
+});
+export type FeasibilityConstraint = z.infer<typeof FeasibilityConstraintSchema>;
+
+export const LoadFeasibilityResponseSchema = z.object({
+  feasible: z.boolean(),
+  hoursChecked: z.literal(false),
+  /** Null when feasible — there is nothing to name. */
+  decidingConstraint: FeasibilityConstraintSchema.nullable(),
+  routeMiles: z.number(),
+  estimatedArrivalAt: z.string().datetime(),
+});
+export type LoadFeasibilityResponse = z.infer<typeof LoadFeasibilityResponseSchema>;
