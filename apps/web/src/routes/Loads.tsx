@@ -228,8 +228,8 @@ function AddLoad({ trucks, onDone }: { trucks: Truck[]; onDone: () => void }) {
   const [weightLbs, setWeight] = useState('');
   const [status, setStatus] = useState<LoadStatus>('prospect');
   const [truckId, setTruckId] = useState('');
-  const [pickup, setPickup] = useState({ city: '', state: '' });
-  const [delivery, setDelivery] = useState({ city: '', state: '' });
+  const [pickup, setPickup] = useState({ city: '', state: '', lat: '', lng: '' });
+  const [delivery, setDelivery] = useState({ city: '', state: '', lat: '', lng: '', windowEnd: '' });
 
   const queryClient = useQueryClient();
   const create = useMutation({
@@ -248,8 +248,25 @@ function AddLoad({ trucks, onDone }: { trucks: Truck[]; onDone: () => void }) {
           ...(deadheadMiles ? { expectedDeadheadMiles: Number(deadheadMiles) } : {}),
           ...(truckId ? { truckId } : {}),
           stops: [
-            { type: 'pickup', city: pickup.city, state: pickup.state },
-            { type: 'delivery', city: delivery.city, state: delivery.state },
+            {
+              type: 'pickup',
+              city: pickup.city,
+              state: pickup.state,
+              ...(pickup.lat && pickup.lng ? { lat: Number(pickup.lat), lng: Number(pickup.lng) } : {}),
+            },
+            {
+              type: 'delivery',
+              city: delivery.city,
+              state: delivery.state,
+              ...(delivery.lat && delivery.lng
+                ? { lat: Number(delivery.lat), lng: Number(delivery.lng) }
+                : {}),
+              // `datetime-local` has no timezone of its own — the browser gives a
+              // bare "2026-09-01T18:00" in the viewer's local time, and `Date`
+              // parses that as local time too, so this is correct without a
+              // manual offset.
+              ...(delivery.windowEnd ? { windowEnd: new Date(delivery.windowEnd).toISOString() } : {}),
+            },
           ],
         },
       }),
@@ -276,6 +293,29 @@ function AddLoad({ trucks, onDone }: { trucks: Truck[]; onDone: () => void }) {
         </Field>
         <Field label="State">
           <input className="hq-input" maxLength={2} value={delivery.state} onChange={(e) => setDelivery({ ...delivery, state: e.target.value.toUpperCase() })} />
+        </Field>
+      </div>
+
+      <div className="mt-5 grid gap-5 sm:grid-cols-4">
+        <Field label="Pickup coordinates" hint="Optional — lets HaulQ Routes check feasibility on this load.">
+          <div className="flex gap-2">
+            <input className="hq-input" data-numeric="true" inputMode="decimal" placeholder="lat" value={pickup.lat} onChange={(e) => setPickup({ ...pickup, lat: e.target.value })} />
+            <input className="hq-input" data-numeric="true" inputMode="decimal" placeholder="lng" value={pickup.lng} onChange={(e) => setPickup({ ...pickup, lng: e.target.value })} />
+          </div>
+        </Field>
+        <Field label="Delivery coordinates" hint="Both stops need one for a feasibility check to run at all.">
+          <div className="flex gap-2">
+            <input className="hq-input" data-numeric="true" inputMode="decimal" placeholder="lat" value={delivery.lat} onChange={(e) => setDelivery({ ...delivery, lat: e.target.value })} />
+            <input className="hq-input" data-numeric="true" inputMode="decimal" placeholder="lng" value={delivery.lng} onChange={(e) => setDelivery({ ...delivery, lng: e.target.value })} />
+          </div>
+        </Field>
+        <Field label="Delivery appointment ends" hint="A route arriving after this is infeasible, named as such.">
+          <input
+            className="hq-input"
+            type="datetime-local"
+            value={delivery.windowEnd}
+            onChange={(e) => setDelivery({ ...delivery, windowEnd: e.target.value })}
+          />
         </Field>
       </div>
 
