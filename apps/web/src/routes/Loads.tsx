@@ -18,7 +18,7 @@
  */
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   canTransition,
   LOAD_STATUSES,
@@ -997,6 +997,16 @@ export function LoadsScreen() {
   const session = useSession();
   const orgs = useOrgs();
 
+  // The detail panels render below the whole load table, which for any real
+  // number of loads sits well past the fold — clicking a load's reference
+  // number changed real state but looked like nothing happened at all,
+  // since nothing carried the page there. `behavior: 'smooth'` rather than
+  // an instant jump, so the click reads as cause and effect.
+  const detailRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (selectedId) detailRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [selectedId]);
+
   const loads = useQuery({
     queryKey: ['loads', filter],
     queryFn: () =>
@@ -1149,61 +1159,63 @@ export function LoadsScreen() {
         )}
       </Card>
 
-      {selectedId && <LoadMarginDetail loadId={selectedId} />}
-      {selectedId && canWrite && (
-        <TrackingLink
-          loadId={selectedId}
-          reference={items.find((l) => l.id === selectedId)?.reference ?? 0}
-        />
-      )}
-      {selectedId && canWrite && (
-        <CheckinLink
-          loadId={selectedId}
-          reference={items.find((l) => l.id === selectedId)?.reference ?? 0}
-        />
-      )}
-      {selectedId &&
-        canWrite &&
-        (() => {
-          const selected = items.find((l) => l.id === selectedId);
-          if (!selected) return null;
-          // Keyed on the load: this component's edit state is seeded from
-          // props only once, on mount, same reasoning `VerifyBroker`'s own
-          // key comment gives — switching to a different load has to remount it.
-          return <EditLoadStops key={selected.id} load={selected} />;
-        })()}
-      {selectedId &&
-        canWrite &&
-        (() => {
-          const selected = items.find((l) => l.id === selectedId);
-          if (!selected) return null;
-          return <CheckFeasibility load={selected} trucks={trucks.data?.items ?? []} />;
-        })()}
-      {selectedId &&
-        canWrite &&
-        (() => {
-          const selected = items.find((l) => l.id === selectedId);
-          if (!selected?.brokerId || !selected.brokerName) return null;
-          return (
-            // Keyed on the broker, not the load: switching to a different
-            // load for the same broker should not remount, but switching
-            // brokers must — the input's initial value only reads its prop
-            // once, on mount.
-            <>
-              <VerifyBroker
-                key={`verify-${selected.brokerId}`}
-                brokerId={selected.brokerId}
-                brokerName={selected.brokerName}
-              />
-              <DetentionThreshold
-                key={selected.brokerId}
-                brokerId={selected.brokerId}
-                brokerName={selected.brokerName}
-                freeMinutes={selected.brokerDetentionFreeMinutes}
-              />
-            </>
-          );
-        })()}
+      <div ref={detailRef} className="space-y-6">
+        {selectedId && <LoadMarginDetail loadId={selectedId} />}
+        {selectedId && canWrite && (
+          <TrackingLink
+            loadId={selectedId}
+            reference={items.find((l) => l.id === selectedId)?.reference ?? 0}
+          />
+        )}
+        {selectedId && canWrite && (
+          <CheckinLink
+            loadId={selectedId}
+            reference={items.find((l) => l.id === selectedId)?.reference ?? 0}
+          />
+        )}
+        {selectedId &&
+          canWrite &&
+          (() => {
+            const selected = items.find((l) => l.id === selectedId);
+            if (!selected) return null;
+            // Keyed on the load: this component's edit state is seeded from
+            // props only once, on mount, same reasoning `VerifyBroker`'s own
+            // key comment gives — switching to a different load has to remount it.
+            return <EditLoadStops key={selected.id} load={selected} />;
+          })()}
+        {selectedId &&
+          canWrite &&
+          (() => {
+            const selected = items.find((l) => l.id === selectedId);
+            if (!selected) return null;
+            return <CheckFeasibility load={selected} trucks={trucks.data?.items ?? []} />;
+          })()}
+        {selectedId &&
+          canWrite &&
+          (() => {
+            const selected = items.find((l) => l.id === selectedId);
+            if (!selected?.brokerId || !selected.brokerName) return null;
+            return (
+              // Keyed on the broker, not the load: switching to a different
+              // load for the same broker should not remount, but switching
+              // brokers must — the input's initial value only reads its prop
+              // once, on mount.
+              <>
+                <VerifyBroker
+                  key={`verify-${selected.brokerId}`}
+                  brokerId={selected.brokerId}
+                  brokerName={selected.brokerName}
+                />
+                <DetentionThreshold
+                  key={selected.brokerId}
+                  brokerId={selected.brokerId}
+                  brokerName={selected.brokerName}
+                  freeMinutes={selected.brokerDetentionFreeMinutes}
+                />
+              </>
+            );
+          })()}
+      </div>
     </div>
   );
 }
