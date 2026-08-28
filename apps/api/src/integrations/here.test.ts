@@ -40,9 +40,20 @@ describe('hereTruckParams', () => {
     assert.equal(params.has('truck[height]'), false);
   });
 
-  it('flags hazmat when the load carries it', () => {
+  it('sends every documented hazmat category when the load carries hazmat, since the real class is not recorded', () => {
     const params = hereTruckParams({ ...TRUCK, hazmat: true });
-    assert.ok(params.has('truck[shippedHazardousGoods]'));
+    const sent = params.get('truck[shippedHazardousGoods]')!.split(',');
+    // The conservative direction: exclude a road restricted for any class,
+    // not a guessed single one. See the constant's own comment in here.ts.
+    for (const category of ['explosive', 'radioactive', 'poisonousInhalation', 'other']) {
+      assert.ok(sent.includes(category), `expected ${category} in the sent category list`);
+    }
+    assert.equal(sent.length, 11);
+  });
+
+  it('sends nothing when the load carries no hazmat', () => {
+    const params = hereTruckParams({ ...TRUCK, hazmat: false });
+    assert.equal(params.has('truck[shippedHazardousGoods]'), false);
   });
 });
 

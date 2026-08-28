@@ -71,6 +71,35 @@ interface HereRoutesResponse {
 
 const METERS_PER_MILE = 1609.344;
 
+/**
+ * Every category HERE's `truck[shippedHazardousGoods]` documents — the
+ * `HazardousGoodsRestriction` enum in HERE's own v8 Routing API reference
+ * (docs.here.com/routing/reference/routing-api-v8-calculateroutes), not a
+ * guess. `loads.hazmat` is a bare boolean with no DOT class detail behind
+ * it — nothing upstream records which of these actually applies to a given
+ * shipment — so this sends the complete list rather than picking one.
+ * Sending every category tells HERE to exclude a road restricted for *any*
+ * of them, which is the conservative direction to be wrong in: a hazmat
+ * load routed around more restrictions than its real class needs is an
+ * inconvenience, and a hazmat load silently allowed on a road actually
+ * banned for its real, unrecorded class is a compliance failure
+ * `HAULQ_BUILD_PLAN.md` guardrail 2 exists to prevent. Narrow this the day
+ * `loads` records a real hazmat class, not before.
+ */
+const ALL_HAZMAT_CATEGORIES = [
+  'explosive',
+  'gas',
+  'flammable',
+  'combustible',
+  'organic',
+  'poison',
+  'radioactive',
+  'corrosive',
+  'poisonousInhalation',
+  'harmfulToWater',
+  'other',
+] as const;
+
 function truckParams(truck: TruckProfile): URLSearchParams {
   const params = new URLSearchParams();
   // HERE's truck namespace takes metric units (kg, cm) and this schema stores
@@ -89,11 +118,7 @@ function truckParams(truck: TruckProfile): URLSearchParams {
     params.set('truck[length]', String(Math.round(truck.maxLengthFt * 30.48)));
   }
   if (truck.hazmat) {
-    // TODO(HERE account): verify the hazmat class taxonomy HERE actually
-    // expects once real freight is run through this — 'explosive' is a
-    // placeholder for "some hazmat class is present," not a mapped code from
-    // `loads.hazmat`, which carries no class detail today.
-    params.set('truck[shippedHazardousGoods]', 'explosive');
+    params.set('truck[shippedHazardousGoods]', ALL_HAZMAT_CATEGORIES.join(','));
   }
   return params;
 }
