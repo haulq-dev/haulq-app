@@ -39,6 +39,8 @@ export interface CreateTruckInput {
   equipment?: Truck['equipment'] | undefined;
   maxWeightLbs?: number | undefined;
   maxLengthFt?: number | undefined;
+  boxHeightIn?: number | undefined;
+  boxWidthIn?: number | undefined;
   /**
    * `{ liftgate: true, dockHigh: false, ... }`. Matched against load requirements.
    *
@@ -148,6 +150,8 @@ export interface UpdateTruckInput {
   equipment?: Truck['equipment'] | undefined;
   maxWeightLbs?: number | null | undefined;
   maxLengthFt?: number | null | undefined;
+  boxHeightIn?: number | null | undefined;
+  boxWidthIn?: number | null | undefined;
   capabilities?: Record<string, boolean | undefined> | undefined;
   shortHaulExempt?: boolean | undefined;
 }
@@ -184,6 +188,14 @@ export async function updateTruck(s: Scope, id: string, input: UpdateTruckInput)
     if (input.maxLengthFt !== undefined && input.maxLengthFt !== current.maxLengthFt) {
       patch.maxLengthFt = input.maxLengthFt;
       fields.push('max length');
+    }
+    if (input.boxHeightIn !== undefined && input.boxHeightIn !== current.boxHeightIn) {
+      patch.boxHeightIn = input.boxHeightIn;
+      fields.push('box height');
+    }
+    if (input.boxWidthIn !== undefined && input.boxWidthIn !== current.boxWidthIn) {
+      patch.boxWidthIn = input.boxWidthIn;
+      fields.push('box width');
     }
     if (input.shortHaulExempt !== undefined && input.shortHaulExempt !== current.shortHaulExempt) {
       patch.shortHaulExempt = input.shortHaulExempt;
@@ -280,6 +292,8 @@ export async function createTruck(
         equipment: input.equipment ?? 'STRAIGHT_BOX',
         maxWeightLbs: input.maxWeightLbs ?? null,
         maxLengthFt: input.maxLengthFt ?? null,
+        boxHeightIn: input.boxHeightIn ?? null,
+        boxWidthIn: input.boxWidthIn ?? null,
         capabilities: input.capabilities ?? {},
         shortHaulExempt: input.shortHaulExempt ?? false,
       })

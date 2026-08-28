@@ -109,6 +109,16 @@ export const CreateTruckSchema = z.object({
   equipment: EquipmentTypeSchema.default('STRAIGHT_BOX'),
   maxWeightLbs: z.number().int().positive().max(80_000).optional(),
   maxLengthFt: z.number().int().positive().max(100).optional(),
+  /**
+   * Overall vehicle height and width — clearance dimensions, not interior
+   * cargo space. `apps/api/src/integrations/here.ts`'s `hereTruckParams`
+   * reads both directly off the truck row for every feasibility check;
+   * until a caller sets them here, HERE's routing call runs with no height
+   * or width constraint at all, silently, which is a truck-legal miss
+   * `PHASE_3_PLAN.md`'s exit gate exists to catch, not a rounding error.
+   */
+  boxHeightIn: z.number().int().positive().max(168).optional(),
+  boxWidthIn: z.number().int().positive().max(120).optional(),
   capabilities: TruckCapabilitiesSchema.default({}),
   /**
    * Straight trucks frequently run under the 150 air-mile short-haul exemption,
@@ -149,6 +159,8 @@ export const UpdateTruckSchema = z
     equipment: EquipmentTypeSchema.optional(),
     maxWeightLbs: z.number().int().positive().max(80_000).nullable().optional(),
     maxLengthFt: z.number().int().positive().max(100).nullable().optional(),
+    boxHeightIn: z.number().int().positive().max(168).nullable().optional(),
+    boxWidthIn: z.number().int().positive().max(120).nullable().optional(),
     capabilities: TruckCapabilitiesSchema.optional(),
     shortHaulExempt: z.boolean().optional(),
   })

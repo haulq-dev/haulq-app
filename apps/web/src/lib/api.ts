@@ -207,6 +207,8 @@ export interface Truck {
   equipment: string;
   maxWeightLbs: number | null;
   maxLengthFt: number | null;
+  boxHeightIn: number | null;
+  boxWidthIn: number | null;
   capabilities: Record<string, boolean>;
   shortHaulExempt: boolean;
   /** Set once a carrier matches this truck to a vehicle in Motive. Null until then. */

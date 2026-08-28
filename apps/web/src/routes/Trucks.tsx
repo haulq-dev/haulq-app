@@ -198,6 +198,8 @@ interface TruckFormValues {
   equipment: string;
   maxWeightLbs: string;
   maxLengthFt: string;
+  boxHeightIn: string;
+  boxWidthIn: string;
   shortHaulExempt: boolean;
   capabilities: Record<string, boolean>;
 }
@@ -207,6 +209,8 @@ const EMPTY_TRUCK_FORM: TruckFormValues = {
   equipment: 'STRAIGHT_BOX',
   maxWeightLbs: '',
   maxLengthFt: '',
+  boxHeightIn: '',
+  boxWidthIn: '',
   shortHaulExempt: false,
   capabilities: {},
 };
@@ -258,6 +262,27 @@ function TruckFields({
             inputMode="numeric"
             value={values.maxLengthFt}
             onChange={(e) => onChange({ ...values, maxLengthFt: e.target.value })}
+          />
+        </Field>
+      </div>
+
+      <div className="mt-5 grid gap-5 sm:grid-cols-4">
+        <Field label="Box height (in)" hint="Overall vehicle height — bridge clearance, not cargo space.">
+          <input
+            className="hq-input"
+            data-numeric="true"
+            inputMode="numeric"
+            value={values.boxHeightIn}
+            onChange={(e) => onChange({ ...values, boxHeightIn: e.target.value })}
+          />
+        </Field>
+        <Field label="Box width (in)" hint="Overall vehicle width.">
+          <input
+            className="hq-input"
+            data-numeric="true"
+            inputMode="numeric"
+            value={values.boxWidthIn}
+            onChange={(e) => onChange({ ...values, boxWidthIn: e.target.value })}
           />
         </Field>
       </div>
@@ -324,6 +349,8 @@ function AddTruck({ onDone }: { onDone: () => void }) {
           equipment: values.equipment,
           ...(values.maxWeightLbs ? { maxWeightLbs: Number(values.maxWeightLbs) } : {}),
           ...(values.maxLengthFt ? { maxLengthFt: Number(values.maxLengthFt) } : {}),
+          ...(values.boxHeightIn ? { boxHeightIn: Number(values.boxHeightIn) } : {}),
+          ...(values.boxWidthIn ? { boxWidthIn: Number(values.boxWidthIn) } : {}),
           shortHaulExempt: values.shortHaulExempt,
           capabilities: values.capabilities,
         },
@@ -362,6 +389,8 @@ function EditTruck({ truck, onDone }: { truck: Truck; onDone: () => void }) {
     equipment: truck.equipment,
     maxWeightLbs: truck.maxWeightLbs !== null ? String(truck.maxWeightLbs) : '',
     maxLengthFt: truck.maxLengthFt !== null ? String(truck.maxLengthFt) : '',
+    boxHeightIn: truck.boxHeightIn !== null ? String(truck.boxHeightIn) : '',
+    boxWidthIn: truck.boxWidthIn !== null ? String(truck.boxWidthIn) : '',
     shortHaulExempt: truck.shortHaulExempt,
     capabilities: truck.capabilities ?? {},
   });
@@ -376,6 +405,8 @@ function EditTruck({ truck, onDone }: { truck: Truck; onDone: () => void }) {
           equipment: values.equipment,
           maxWeightLbs: values.maxWeightLbs ? Number(values.maxWeightLbs) : null,
           maxLengthFt: values.maxLengthFt ? Number(values.maxLengthFt) : null,
+          boxHeightIn: values.boxHeightIn ? Number(values.boxHeightIn) : null,
+          boxWidthIn: values.boxWidthIn ? Number(values.boxWidthIn) : null,
           shortHaulExempt: values.shortHaulExempt,
           capabilities: values.capabilities,
         },
