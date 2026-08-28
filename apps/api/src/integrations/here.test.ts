@@ -68,7 +68,7 @@ const ROUTE_WITH_NOTICE = {
       sections: [
         {
           summary: { length: 160_934, duration: 7_200 }, // 100 mi, 2h
-          notices: [{ code: 'violatedVehicleRestriction', title: 'Route uses a road restricted for this vehicle', severity: 'critical' }],
+          notices: [{ code: 'violatedBlockedRoad', title: 'Route uses a road restricted for this vehicle', severity: 'critical' }],
         },
       ],
     },
@@ -174,7 +174,7 @@ describe('HereRoutingProvider.feasibility', () => {
 
     const restrictions = await provider.feasibility(route, TRUCK);
     assert.equal(restrictions.length, 1);
-    assert.equal(restrictions[0]!.code, 'violatedVehicleRestriction');
+    assert.equal(restrictions[0]!.code, 'violatedBlockedRoad');
     assert.match(restrictions[0]!.description, /restricted for this vehicle/);
   });
 

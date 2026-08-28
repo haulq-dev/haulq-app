@@ -32,12 +32,12 @@ describe('evaluateLoadFeasibility', () => {
   it('is infeasible on a HERE restriction, named, before the window is even checked', () => {
     const verdict = evaluateLoadFeasibility(
       aRoute(),
-      [{ code: 'violatedVehicleRestriction', description: 'Route uses a road restricted for this vehicle' }],
+      [{ code: 'violatedBlockedRoad', description: 'Route uses a road restricted for this vehicle' }],
       [{ seq: 2, windowEnd: new Date('2026-09-01T10:00:00Z') }], // window already blown too — restriction still wins
     );
 
     assert.equal(verdict.feasible, false);
-    assert.equal(verdict.decidingConstraint?.code, 'violatedVehicleRestriction');
+    assert.equal(verdict.decidingConstraint?.code, 'violatedBlockedRoad');
   });
 
   it('is infeasible when the estimated arrival is after the delivery window closes', () => {

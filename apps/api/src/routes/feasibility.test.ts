@@ -63,7 +63,17 @@ function aFeasibleRoute(arrivalAt: Date): Route {
 }
 
 async function newApp(routingProvider: RoutingProvider | undefined): Promise<FastifyInstance> {
-  return buildServer(loadEnv({ ...process.env, NODE_ENV: 'test', DATABASE_URL: url! }), { routingProvider });
+  // Every test in this file controls the routing provider explicitly — a
+  // `FakeRoutingProvider`, or `undefined` for the not-configured case — so
+  // none of them should depend on whether a real HERE_API_KEY happens to
+  // sit in the developer's own .env. Stripped here rather than trusted to
+  // be absent, the same reasoning `fmcsa.test.ts`'s `_drop` destructure
+  // uses to keep a fixture from carrying a field a test does not want.
+  const { HERE_API_KEY: _hereApiKey, ...envWithoutHereKey } = process.env;
+  return buildServer(
+    loadEnv({ ...envWithoutHereKey, NODE_ENV: 'test', DATABASE_URL: url! }),
+    { routingProvider },
+  );
 }
 
 async function newOrg(app: FastifyInstance, userId: string, name: string): Promise<string> {
@@ -170,7 +180,7 @@ suite('feasibility route', () => {
 
   it('is infeasible and names a HERE restriction before checking the window', async () => {
     const provider = new FakeRoutingProvider(aFeasibleRoute(new Date('2026-09-01T15:00:00Z')), [
-      { code: 'violatedVehicleRestriction', description: 'Route uses a road restricted for this vehicle' },
+      { code: 'violatedBlockedRoad', description: 'Route uses a road restricted for this vehicle' },
     ]);
     const app = await newApp(provider);
     try {
@@ -188,7 +198,7 @@ suite('feasibility route', () => {
       assert.equal(res.statusCode, 200);
       const body = res.json();
       assert.equal(body.feasible, false);
-      assert.equal(body.decidingConstraint.code, 'violatedVehicleRestriction');
+      assert.equal(body.decidingConstraint.code, 'violatedBlockedRoad');
     } finally {
       await app.close();
     }
