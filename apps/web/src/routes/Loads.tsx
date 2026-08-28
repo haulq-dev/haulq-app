@@ -37,7 +37,10 @@ interface Stop {
   city: string;
   state: string;
   facilityName: string | null;
+  lat: number | null;
+  lng: number | null;
   windowStart: string | null;
+  windowEnd: string | null;
 }
 
 interface Load {
@@ -597,6 +600,146 @@ function CheckinLink({ loadId, reference }: { loadId: string; reference: number 
   );
 }
 
+/** `<input type="datetime-local">` wants local time with no timezone marker, same conversion `AddLoad`'s delivery window already does. */
+function toDatetimeLocal(iso: string | null): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+interface StopEditValues {
+  lat: string;
+  lng: string;
+  windowStart: string;
+  windowEnd: string;
+}
+
+/**
+ * `PATCH /v1/loads/:id/stops/:stopId` — `PHASE_3A_ROUTES_WALKTHROUGH.md`'s
+ * own "not covered" list named this gap: the endpoint existed with no
+ * screen calling it, so fixing a typo'd coordinate or a wrong appointment
+ * time on a load that already exists meant a raw API call. One row per
+ * stop rather than one form for the whole load, since `updateLoadStop`
+ * itself is per-stop and a load's stops rarely need editing together.
+ *
+ * Coordinates are kept as a pair on save — both filled or both cleared —
+ * because a lat with no lng (or the reverse) is not a location, it is half
+ * of one, and `routes/feasibility.ts`'s `missing_coordinates` check would
+ * treat it as absent anyway.
+ */
+function EditLoadStops({ load }: { load: Load }) {
+  const queryClient = useQueryClient();
+  const [values, setValues] = useState<Record<string, StopEditValues>>(() =>
+    Object.fromEntries(
+      load.stops.map((s) => [
+        s.id,
+        {
+          lat: s.lat !== null ? String(s.lat) : '',
+          lng: s.lng !== null ? String(s.lng) : '',
+          windowStart: toDatetimeLocal(s.windowStart),
+          windowEnd: toDatetimeLocal(s.windowEnd),
+        },
+      ]),
+    ),
+  );
+
+  const save = useMutation({
+    mutationFn: (stopId: string) => {
+      const v = values[stopId]!;
+      return request(`/v1/loads/${load.id}/stops/${stopId}`, {
+        method: 'PATCH',
+        body: {
+          lat: v.lat && v.lng ? Number(v.lat) : null,
+          lng: v.lat && v.lng ? Number(v.lng) : null,
+          windowStart: v.windowStart ? new Date(v.windowStart).toISOString() : null,
+          windowEnd: v.windowEnd ? new Date(v.windowEnd).toISOString() : null,
+        },
+      });
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries();
+    },
+  });
+
+  const setField = (stopId: string, field: keyof StopEditValues, value: string) =>
+    setValues((prev) => ({ ...prev, [stopId]: { ...prev[stopId]!, [field]: value } }));
+
+  const sorted = [...load.stops].sort((a, b) => a.seq - b.seq);
+
+  return (
+    <Card title={`Load ${load.reference} — stops`}>
+      <p className="mb-3 text-sm text-slate">
+        Coordinates and the appointment window are what a feasibility check
+        reads. Both coordinate fields are needed together, or leave both
+        blank.
+      </p>
+      <div className="space-y-4">
+        {sorted.map((stop) => {
+          const v = values[stop.id]!;
+          const mismatched = Boolean(v.lat) !== Boolean(v.lng);
+          return (
+            <div key={stop.id} className="border border-line p-3">
+              <div className="mb-2 text-sm font-medium">
+                Stop {stop.seq} — {stop.type} — {stop.city}, {stop.state}
+              </div>
+              <div className="grid gap-3 sm:grid-cols-4">
+                <Field label="Lat">
+                  <input
+                    className="hq-input py-1 text-sm"
+                    data-numeric="true"
+                    inputMode="decimal"
+                    value={v.lat}
+                    onChange={(e) => setField(stop.id, 'lat', e.target.value)}
+                  />
+                </Field>
+                <Field label="Lng">
+                  <input
+                    className="hq-input py-1 text-sm"
+                    data-numeric="true"
+                    inputMode="decimal"
+                    value={v.lng}
+                    onChange={(e) => setField(stop.id, 'lng', e.target.value)}
+                  />
+                </Field>
+                <Field label="Window opens">
+                  <input
+                    className="hq-input py-1 text-sm"
+                    type="datetime-local"
+                    value={v.windowStart}
+                    onChange={(e) => setField(stop.id, 'windowStart', e.target.value)}
+                  />
+                </Field>
+                <Field label="Window closes">
+                  <input
+                    className="hq-input py-1 text-sm"
+                    type="datetime-local"
+                    value={v.windowEnd}
+                    onChange={(e) => setField(stop.id, 'windowEnd', e.target.value)}
+                  />
+                </Field>
+              </div>
+              <div className="mt-2 flex items-center gap-2">
+                <button
+                  className="hq-btn hq-btn-ghost px-3 py-1 text-xs"
+                  disabled={mismatched || save.isPending}
+                  onClick={() => save.mutate(stop.id)}
+                >
+                  {save.isPending ? 'Saving…' : 'Save this stop'}
+                </button>
+                {mismatched && (
+                  <span className="text-xs text-warn">Fill both lat and lng, or clear both.</span>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <ErrorNote error={save.error} />
+    </Card>
+  );
+}
+
 /**
  * HaulQ Routes, 3a — PHASE_3_PLAN.md section 4's single-load exit gate: given
  * one truck and one load, feasible or infeasible, with the deciding
@@ -1019,6 +1162,16 @@ export function LoadsScreen() {
           reference={items.find((l) => l.id === selectedId)?.reference ?? 0}
         />
       )}
+      {selectedId &&
+        canWrite &&
+        (() => {
+          const selected = items.find((l) => l.id === selectedId);
+          if (!selected) return null;
+          // Keyed on the load: this component's edit state is seeded from
+          // props only once, on mount, same reasoning `VerifyBroker`'s own
+          // key comment gives — switching to a different load has to remount it.
+          return <EditLoadStops key={selected.id} load={selected} />;
+        })()}
       {selectedId &&
         canWrite &&
         (() => {
