@@ -62,9 +62,24 @@ body {
   background: var(--color-wash);
   -webkit-font-smoothing: antialiased;
   -webkit-tap-highlight-color: transparent;
-  /* The shell has no browser chrome to absorb the notch/home-indicator. */
-  padding-top: env(safe-area-inset-top);
+  /* Bottom only. The notch/status-bar inset is the header's to own, not the
+     page's — see .hq-header-safe below for why. */
   padding-bottom: env(safe-area-inset-bottom);
+}
+
+/**
+ * The one header this single-screen app has. Its white extends *into* the
+ * safe area rather than padding-top living on `body` — the previous version
+ * put the inset padding on `body`, whose own background is the gray wash,
+ * so the strip behind the status bar showed wash-gray sitting above a white
+ * header instead of one continuous white bar the way a native nav bar reads.
+ * It also double-counted height: `body`'s padding plus `min-h-screen` on
+ * the screen wrapper could add up to more than one real viewport, which is
+ * what made an otherwise-short screen scrollable with nothing in the extra
+ * space.
+ */
+.hq-header-safe {
+  padding-top: calc(env(safe-area-inset-top) + 0.75rem);
 }
 
 h1,

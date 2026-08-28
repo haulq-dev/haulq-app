@@ -44,6 +44,18 @@ workflows:
         XCODE_WORKSPACE: "ios/App/App.xcworkspace"
         XCODE_SCHEME: "App"
         APP_STORE_APP_ID: 6804486951
+        # apps/driver/src/lib/api.ts falls back to the *relative* path '/api'
+        # when this is unset. That works for apps/web, which is served from
+        # an origin something can rewrite /api/* against — it does nothing
+        # for a Capacitor build, which has no origin at all
+        # (capacitor://localhost, with nothing behind it to proxy to). Every
+        # build before this one shipped with that fallback baked into the
+        # bundle, meaning every API call in the real installed app failed
+        # outright — a network error, not a clean HTTP response, which is
+        # why it surfaced as "that link could not be checked" rather than a
+        # real explanation. Vite inlines this at build time, so it has to be
+        # set here, not just in production's own environment.
+        VITE_API_URL: "https://api.haulq.ai"
       node: 22.18.0
       xcode: latest
       cocoapods: default

@@ -231,7 +231,7 @@ function PositionControl({ token }: { token: string }) {
   );
 }
 
-function CheckinView({ token }: { token: string }) {
+function CheckinView({ token, onBack }: { token: string; onBack: () => void }) {
   const preview = useQuery({
     queryKey: ['checkin', token],
     queryFn: () => request<CheckinPreview>(`/checkin/${token}`),
@@ -248,11 +248,14 @@ function CheckinView({ token }: { token: string }) {
     const explanation =
       preview.error instanceof ApiRequestError
         ? preview.error.explanation
-        : 'That link could not be checked.';
+        : 'That link could not be checked. Make sure you have a connection and try again.';
     return (
       <div className="mx-auto max-w-md px-6 py-16">
         <h1 className="mb-2 text-2xl">This link isn't working</h1>
         <p className="text-slate">{explanation}</p>
+        <button className="hq-btn hq-btn-ghost mt-6" onClick={onBack}>
+          Try a different link or code
+        </button>
       </div>
     );
   }
@@ -297,12 +300,21 @@ export function CheckinScreen() {
     setToken(t);
   };
 
+  const clearToken = () => {
+    window.history.pushState(null, '', '/');
+    setToken(null);
+  };
+
   return (
     <div className="min-h-screen bg-wash">
-      <header className="bg-card px-4 py-3">
+      <header className="hq-header-safe bg-card px-4 pb-3">
         <Logo />
       </header>
-      {token ? <CheckinView token={token} /> : <TokenEntry onSubmit={chooseToken} />}
+      {token ? (
+        <CheckinView token={token} onBack={clearToken} />
+      ) : (
+        <TokenEntry onSubmit={chooseToken} />
+      )}
     </div>
   );
 }
