@@ -25,6 +25,7 @@ import { randomUUID } from 'node:crypto';
 import {
   attachToLoad,
   createDocument,
+  CursorError,
   documentCounts,
   DocumentError,
   findDocumentBySha,
@@ -193,17 +194,23 @@ export async function documentRoutes(app: FastifyInstance) {
       status?: string;
       kind?: string;
       limit?: string;
+      cursor?: string;
     };
 
-    const items = await listDocuments(s, {
-      ...(q.loadId ? { loadId: q.loadId } : {}),
-      ...(q.unattached === 'true' ? { unattached: true } : {}),
-      ...(q.status ? { status: q.status as never } : {}),
-      ...(q.kind ? { kind: q.kind } : {}),
-      ...(q.limit ? { limit: Number(q.limit) } : {}),
-    });
-
-    return { items: items.map(present) };
+    try {
+      const { items, nextCursor } = await listDocuments(s, {
+        ...(q.loadId ? { loadId: q.loadId } : {}),
+        ...(q.unattached === 'true' ? { unattached: true } : {}),
+        ...(q.status ? { status: q.status as never } : {}),
+        ...(q.kind ? { kind: q.kind } : {}),
+        ...(q.limit ? { limit: Number(q.limit) } : {}),
+        ...(q.cursor ? { cursor: q.cursor } : {}),
+      });
+      return { items: items.map(present), nextCursor };
+    } catch (err) {
+      if (err instanceof CursorError) throw new HttpError(400, err.code, err.explanation);
+      throw err;
+    }
   });
 
   /** Registered before `/:id` so the router does not read "counts" as an id. */

@@ -98,7 +98,18 @@ async function main() {
         correlationId: randomUUID(),
       });
 
-      const delivered = await listLoads(s, { status: ['delivered', 'invoiced', 'paid'] });
+      // Walk every page — this is a sweep over the whole org's history, not
+      // a screen with a "load more" button, and silently checking only the
+      // first 50 delivered loads would make the validation's own coverage
+      // claim ("N loads checked") a lie.
+      const delivered: Awaited<ReturnType<typeof listLoads>>['items'] = [];
+      let cursor: string | undefined;
+      for (;;) {
+        const page = await listLoads(s, { status: ['delivered', 'invoiced', 'paid'], ...(cursor ? { cursor } : {}) });
+        delivered.push(...page.items);
+        if (!page.nextCursor) break;
+        cursor = page.nextCursor;
+      }
       const qualifying = delivered.filter(isQualifying);
       candidateCount += delivered.length;
 

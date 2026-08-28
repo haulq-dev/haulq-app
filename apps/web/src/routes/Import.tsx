@@ -12,7 +12,7 @@
  * and is wrong by the fuel surcharge on every load.
  */
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import {
   request,
@@ -22,7 +22,7 @@ import {
   type OperatingFactsResponse,
   type UploadResponse,
 } from '../lib/api.ts';
-import { Card, Empty, ErrorNote, Money, Num, Pill } from '../components/ui.tsx';
+import { Card, Empty, ErrorNote, LoadMore, Money, Num, Pill } from '../components/ui.tsx';
 
 const FIELDS = [
   ['', 'Ignore this column'],
@@ -416,10 +416,16 @@ function Reconcile() {
 export function ImportScreen() {
   const [stage, setStage] = useState<Stage>({ name: 'upload' });
 
-  const batches = useQuery({
+  const batches = useInfiniteQuery({
     queryKey: ['imports'],
-    queryFn: () => request<{ items: ImportBatch[] }>('/v1/imports'),
+    queryFn: ({ pageParam }: { pageParam: string | undefined }) =>
+      request<{ items: ImportBatch[]; nextCursor: string | null }>(
+        `/v1/imports${pageParam ? `?cursor=${encodeURIComponent(pageParam)}` : ''}`,
+      ),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
   });
+  const batchItems = batches.data?.pages.flatMap((p) => p.items) ?? [];
 
   return (
     <div className="space-y-6">
@@ -489,8 +495,8 @@ export function ImportScreen() {
       <Reconcile />
 
       <Card title="Previous imports">
-        {batches.data?.items.length === 0 && <Empty>Nothing imported yet.</Empty>}
-        {batches.data && batches.data.items.length > 0 && (
+        {batches.data && batchItems.length === 0 && <Empty>Nothing imported yet.</Empty>}
+        {batchItems.length > 0 && (
           <div className="overflow-x-auto">
             {/* A load grid has more columns than a phone has width. Scroll it
                 inside its own box rather than letting it widen the page. */}
@@ -504,7 +510,7 @@ export function ImportScreen() {
                 </tr>
               </thead>
               <tbody>
-                {batches.data.items.map((b) => (
+                {batchItems.map((b) => (
                   <tr key={b.id}>
                     <td className="font-medium">{b.filename}</td>
                     <td>
@@ -520,6 +526,12 @@ export function ImportScreen() {
             </table>
           </div>
         )}
+
+        <LoadMore
+          onClick={() => batches.fetchNextPage()}
+          loading={batches.isFetchingNextPage}
+          hasMore={batches.hasNextPage}
+        />
       </Card>
     </div>
   );

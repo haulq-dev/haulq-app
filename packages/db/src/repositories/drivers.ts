@@ -6,9 +6,10 @@
  * the ones who do.
  */
 
-import { and, asc, eq, isNull } from 'drizzle-orm';
+import { and, asc, eq, gt, isNull, or } from 'drizzle-orm';
 import type { Scope } from '../context.ts';
 import { recordEvent } from '../events/record.ts';
+import { decodeCursor, toCursorPage, type CursorPage } from '../pagination.ts';
 import { drivers } from '../schema/fleet.ts';
 import { withTransaction } from '../transaction.ts';
 
@@ -27,12 +28,43 @@ export interface CreateDriverInput {
   defaultTruckId?: string | undefined;
 }
 
-export async function listDrivers(s: Scope): Promise<Driver[]> {
-  return s.db
+export interface ListDriversQuery {
+  cursor?: string | undefined;
+  limit?: number | undefined;
+}
+
+/** Alphabetical, cursor-paginated on `(fullName, id)` — see `pagination.ts`. */
+export async function listDrivers(s: Scope, q: ListDriversQuery = {}): Promise<CursorPage<Driver>> {
+  const conditions = [eq(drivers.orgId, s.ctx.orgId), isNull(drivers.deletedAt)];
+  if (q.cursor) {
+    const cursor = decodeCursor(q.cursor);
+    const cursorName = String(cursor.v);
+    conditions.push(
+      or(gt(drivers.fullName, cursorName), and(eq(drivers.fullName, cursorName), gt(drivers.id, cursor.id)))!,
+    );
+  }
+
+  const limit = Math.min(q.limit ?? 50, 200);
+  const rows = await s.db
     .select()
     .from(drivers)
-    .where(and(eq(drivers.orgId, s.ctx.orgId), isNull(drivers.deletedAt)))
-    .orderBy(asc(drivers.fullName));
+    .where(and(...conditions))
+    .orderBy(asc(drivers.fullName), asc(drivers.id))
+    .limit(limit);
+
+  return toCursorPage(rows, limit, (row) => ({ v: row.fullName, id: row.id }));
+}
+
+/** Every driver, not one page — for internal sweeps like `expiringCredentials` below. */
+async function listAllDrivers(s: Scope): Promise<Driver[]> {
+  const all: Driver[] = [];
+  let cursor: string | undefined;
+  for (;;) {
+    const page = await listDrivers(s, cursor ? { cursor } : {});
+    all.push(...page.items);
+    if (!page.nextCursor) return all;
+    cursor = page.nextCursor;
+  }
 }
 
 export async function createDriver(
@@ -83,7 +115,7 @@ export async function expiringCredentials(
   days = 30,
 ): Promise<Array<{ driver: Driver; what: 'cdl' | 'medical_card'; expiresAt: Date }>> {
   const cutoff = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
-  const rows = await listDrivers(s);
+  const rows = await listAllDrivers(s);
   const out: Array<{ driver: Driver; what: 'cdl' | 'medical_card'; expiresAt: Date }> = [];
 
   for (const driver of rows) {

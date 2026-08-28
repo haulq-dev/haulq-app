@@ -15,11 +15,12 @@
  */
 
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
-import { and, asc, count, eq, isNull, sql } from 'drizzle-orm';
+import { and, asc, count, eq, gt, isNull, or, sql } from 'drizzle-orm';
 import type { Database } from '../client.ts';
 import type { Scope } from '../context.ts';
 import { eventOutbox } from '../schema/events.ts';
 import { recordEvent } from '../events/record.ts';
+import { decodeCursor, toCursorPage, type CursorPage } from '../pagination.ts';
 import { orgInvitations, orgMemberships, orgs, users } from '../schema/tenancy.ts';
 import { withTransaction } from '../transaction.ts';
 
@@ -58,7 +59,23 @@ export interface MemberRow {
   acceptedAt: Date | null;
 }
 
-export async function listMembers(s: Scope): Promise<MemberRow[]> {
+export interface ListPageQuery {
+  cursor?: string | undefined;
+  limit?: number | undefined;
+}
+
+/** Alphabetical by email, cursor-paginated on `(email, userId)` — see `pagination.ts`. */
+export async function listMembers(s: Scope, q: ListPageQuery = {}): Promise<CursorPage<MemberRow>> {
+  const conditions = [eq(orgMemberships.orgId, s.ctx.orgId), eq(orgMemberships.status, 'active')];
+  if (q.cursor) {
+    const cursor = decodeCursor(q.cursor);
+    const cursorEmail = String(cursor.v);
+    conditions.push(
+      or(gt(users.email, cursorEmail), and(eq(users.email, cursorEmail), gt(users.id, cursor.id)))!,
+    );
+  }
+
+  const limit = Math.min(q.limit ?? 50, 200);
   const rows = await s.db
     .select({
       userId: users.id,
@@ -69,34 +86,56 @@ export async function listMembers(s: Scope): Promise<MemberRow[]> {
     })
     .from(orgMemberships)
     .innerJoin(users, eq(users.id, orgMemberships.userId))
-    .where(
-      and(
-        eq(orgMemberships.orgId, s.ctx.orgId),
-        eq(orgMemberships.status, 'active'),
-      ),
-    )
-    .orderBy(asc(users.email));
+    .where(and(...conditions))
+    .orderBy(asc(users.email), asc(users.id))
+    .limit(limit);
 
-  return rows;
+  return toCursorPage(rows, limit, (row) => ({ v: row.email, id: row.userId }));
+}
+
+/** Every active member, not one page — for internal sweeps like the exception-alert outbox handler. */
+export async function listAllMembers(s: Scope): Promise<MemberRow[]> {
+  const all: MemberRow[] = [];
+  let cursor: string | undefined;
+  for (;;) {
+    const page = await listMembers(s, cursor ? { cursor } : {});
+    all.push(...page.items);
+    if (!page.nextCursor) return all;
+    cursor = page.nextCursor;
+  }
 }
 
 /** Pending invitations. Never returns the token — only its existence. */
-export async function listInvitations(s: Scope): Promise<
-  Array<Omit<Invitation, 'tokenHash'>>
-> {
+export async function listInvitations(
+  s: Scope,
+  q: ListPageQuery = {},
+): Promise<CursorPage<Omit<Invitation, 'tokenHash'>>> {
+  const conditions = [
+    eq(orgInvitations.orgId, s.ctx.orgId),
+    isNull(orgInvitations.acceptedAt),
+    isNull(orgInvitations.revokedAt),
+  ];
+  if (q.cursor) {
+    const cursor = decodeCursor(q.cursor);
+    const cursorDate = new Date(cursor.v);
+    conditions.push(
+      or(
+        gt(orgInvitations.createdAt, cursorDate),
+        and(eq(orgInvitations.createdAt, cursorDate), gt(orgInvitations.id, cursor.id)),
+      )!,
+    );
+  }
+
+  const limit = Math.min(q.limit ?? 50, 200);
   const rows = await s.db
     .select()
     .from(orgInvitations)
-    .where(
-      and(
-        eq(orgInvitations.orgId, s.ctx.orgId),
-        isNull(orgInvitations.acceptedAt),
-        isNull(orgInvitations.revokedAt),
-      ),
-    )
-    .orderBy(asc(orgInvitations.createdAt));
+    .where(and(...conditions))
+    .orderBy(asc(orgInvitations.createdAt), asc(orgInvitations.id))
+    .limit(limit);
 
-  return rows.map(({ tokenHash: _hash, ...rest }) => rest);
+  const items = rows.map(({ tokenHash: _hash, ...rest }) => rest);
+  return toCursorPage(items, limit, (row) => ({ v: row.createdAt.toISOString(), id: row.id }));
 }
 
 async function ownerCount(s: Scope): Promise<number> {

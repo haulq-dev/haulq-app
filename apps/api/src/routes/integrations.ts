@@ -28,6 +28,8 @@ import {
   listTrucks,
   scope,
   storeOAuthCredential,
+  type Scope,
+  type Truck,
 } from '@haulq/db';
 import type { FastifyInstance } from 'fastify';
 import { exchangeMotiveCode, motiveAuthorizeUrl } from '../integrations/motive.ts';
@@ -35,6 +37,23 @@ import { suggestMotiveMatches } from '../integrations/motive-match.ts';
 import { accessTokenFor, fetchMotiveVehicles } from '../integrations/motive-sync.ts';
 import { signOAuthState, verifyOAuthState } from '../integrations/state.ts';
 import { HttpError, requireRole, requireScope } from '../plugins/request-context.ts';
+
+/**
+ * The whole fleet, not one page — Motive matching has to check every truck
+ * against every Motive vehicle, and `listTrucks` is cursor-paginated now
+ * (see `packages/db/src/pagination.ts`). A fleet large enough to span
+ * multiple pages is exactly the case this walk exists for.
+ */
+async function listAllTrucks(s: Scope): Promise<Truck[]> {
+  const all: Truck[] = [];
+  let cursor: string | undefined;
+  for (;;) {
+    const page = await listTrucks(s, cursor ? { cursor } : {});
+    all.push(...page.items);
+    if (!page.nextCursor) return all;
+    cursor = page.nextCursor;
+  }
+}
 
 function requireMotiveConfig(app: FastifyInstance) {
   const { MOTIVE_CLIENT_ID, MOTIVE_CLIENT_SECRET, MOTIVE_REDIRECT_URI } = app.env;
@@ -111,7 +130,7 @@ export async function integrationRoutes(app: FastifyInstance) {
         { db: app.db, config, publicKey, privateKey, log: app.log },
         credential,
       ),
-      listTrucks(s),
+      listAllTrucks(s),
     ]);
 
     const vehicles = await fetchMotiveVehicles(accessToken);

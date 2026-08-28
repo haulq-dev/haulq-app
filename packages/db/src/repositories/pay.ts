@@ -43,9 +43,10 @@
  * that state machine living here.
  */
 
-import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, inArray, lt, or, sql } from 'drizzle-orm';
 import type { Scope } from '../context.ts';
 import { recordEvent } from '../events/record.ts';
+import { decodeCursor, toCursorPage, type CursorPage } from '../pagination.ts';
 import { brokers } from '../schema/brokers.ts';
 import { loads } from '../schema/loads.ts';
 import {
@@ -363,12 +364,37 @@ export async function createFactoringCompany(
   });
 }
 
-export async function listFactoringCompanies(s: Scope): Promise<FactoringCompany[]> {
-  return s.db
+export interface ListFactoringCompaniesQuery {
+  cursor?: string | undefined;
+  limit?: number | undefined;
+}
+
+/** Alphabetical, cursor-paginated on `(name, id)` — see `pagination.ts`. */
+export async function listFactoringCompanies(
+  s: Scope,
+  q: ListFactoringCompaniesQuery = {},
+): Promise<CursorPage<FactoringCompany>> {
+  const conditions = [eq(factoringCompanies.orgId, s.ctx.orgId), eq(factoringCompanies.active, true)];
+  if (q.cursor) {
+    const cursor = decodeCursor(q.cursor);
+    const cursorName = String(cursor.v);
+    conditions.push(
+      or(
+        gt(factoringCompanies.name, cursorName),
+        and(eq(factoringCompanies.name, cursorName), gt(factoringCompanies.id, cursor.id)),
+      )!,
+    );
+  }
+
+  const limit = Math.min(q.limit ?? 50, 200);
+  const rows = await s.db
     .select()
     .from(factoringCompanies)
-    .where(and(eq(factoringCompanies.orgId, s.ctx.orgId), eq(factoringCompanies.active, true)))
-    .orderBy(asc(factoringCompanies.name));
+    .where(and(...conditions))
+    .orderBy(asc(factoringCompanies.name), asc(factoringCompanies.id))
+    .limit(limit);
+
+  return toCursorPage(rows, limit, (row) => ({ v: row.name, id: row.id }));
 }
 
 /** An invoice's reference and its factor's name, for a packet's sentences. */
@@ -755,22 +781,37 @@ export interface ListInvoicesQuery {
   status?: InvoiceStatus[] | undefined;
   loadId?: string | undefined;
   limit?: number | undefined;
+  cursor?: string | undefined;
 }
 
+/** Newest first, cursor-paginated on `(createdAt, id)` both descending — see `pagination.ts`. */
 export async function listInvoices(
   s: Scope,
   q: ListInvoicesQuery = {},
-): Promise<Invoice[]> {
+): Promise<CursorPage<Invoice>> {
   const filters = [eq(invoices.orgId, s.ctx.orgId)];
   if (q.status?.length) filters.push(inArray(invoices.status, q.status));
   if (q.loadId) filters.push(eq(invoices.loadId, q.loadId));
+  if (q.cursor) {
+    const cursor = decodeCursor(q.cursor);
+    const cursorDate = new Date(cursor.v);
+    filters.push(
+      or(
+        lt(invoices.createdAt, cursorDate),
+        and(eq(invoices.createdAt, cursorDate), lt(invoices.id, cursor.id)),
+      )!,
+    );
+  }
 
-  return s.db
+  const limit = Math.min(q.limit ?? 50, 200);
+  const rows = await s.db
     .select()
     .from(invoices)
     .where(and(...filters))
-    .orderBy(desc(invoices.createdAt))
-    .limit(Math.min(q.limit ?? 50, 200));
+    .orderBy(desc(invoices.createdAt), desc(invoices.id))
+    .limit(limit);
+
+  return toCursorPage(rows, limit, (row) => ({ v: row.createdAt.toISOString(), id: row.id }));
 }
 
 export async function invoiceCounts(s: Scope): Promise<Record<string, number>> {
@@ -854,19 +895,39 @@ export async function getFactoringPacket(
   return row;
 }
 
+/** Newest first, cursor-paginated on `(createdAt, id)` both descending — see `pagination.ts`. */
 export async function listFactoringPackets(
   s: Scope,
-  q: { invoiceId?: string | undefined; status?: FactoringPacketStatus[] | undefined } = {},
-): Promise<FactoringPacket[]> {
+  q: {
+    invoiceId?: string | undefined;
+    status?: FactoringPacketStatus[] | undefined;
+    cursor?: string | undefined;
+    limit?: number | undefined;
+  } = {},
+): Promise<CursorPage<FactoringPacket>> {
   const filters = [eq(factoringPackets.orgId, s.ctx.orgId)];
   if (q.invoiceId) filters.push(eq(factoringPackets.invoiceId, q.invoiceId));
   if (q.status?.length) filters.push(inArray(factoringPackets.status, q.status));
+  if (q.cursor) {
+    const cursor = decodeCursor(q.cursor);
+    const cursorDate = new Date(cursor.v);
+    filters.push(
+      or(
+        lt(factoringPackets.createdAt, cursorDate),
+        and(eq(factoringPackets.createdAt, cursorDate), lt(factoringPackets.id, cursor.id)),
+      )!,
+    );
+  }
 
-  return s.db
+  const limit = Math.min(q.limit ?? 50, 200);
+  const rows = await s.db
     .select()
     .from(factoringPackets)
     .where(and(...filters))
-    .orderBy(desc(factoringPackets.createdAt));
+    .orderBy(desc(factoringPackets.createdAt), desc(factoringPackets.id))
+    .limit(limit);
+
+  return toCursorPage(rows, limit, (row) => ({ v: row.createdAt.toISOString(), id: row.id }));
 }
 
 export async function listPayments(s: Scope, invoiceId: string): Promise<Payment[]> {

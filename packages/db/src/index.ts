@@ -8,6 +8,7 @@ export * from './types.ts';
 export * from './events/catalog.ts';
 export * from './events/outbox.ts';
 export * from './events/record.ts';
+export * from './pagination.ts';
 export * from './storage.ts';
 export * from './storage-r2.ts';
 export * from './repositories/board-credentials.ts';

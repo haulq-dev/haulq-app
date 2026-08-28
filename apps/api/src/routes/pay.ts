@@ -20,6 +20,7 @@ import {
 import {
   assembleFactoringPacket,
   createFactoringCompany,
+  CursorError,
   generateInvoice,
   getFactoringPacket,
   getInvoice,
@@ -87,6 +88,10 @@ function rethrow(err: unknown): never {
     throw new HttpError(status, err.code, err.explanation);
   }
 
+  if (err instanceof CursorError) {
+    throw new HttpError(400, err.code, err.explanation);
+  }
+
   const pg = err as PgError;
 
   if (pg.code === RESTRICT_VIOLATION) {
@@ -126,19 +131,24 @@ export async function payRoutes(app: FastifyInstance) {
 
   app.get('/v1/invoices', async (request) => {
     const s = await requireScope(request);
-    const q = request.query as { status?: string; loadId?: string; limit?: string };
+    const q = request.query as { status?: string; loadId?: string; limit?: string; cursor?: string };
 
     const status = q.status
       ? (q.status.split(',').map((x) => x.trim()).filter(Boolean) as InvoiceStatus[])
       : undefined;
 
-    const items = await listInvoices(s, {
-      ...(status?.length ? { status } : {}),
-      ...(q.loadId ? { loadId: q.loadId } : {}),
-      ...(q.limit ? { limit: Number(q.limit) } : {}),
-    });
+    try {
+      const { items, nextCursor } = await listInvoices(s, {
+        ...(status?.length ? { status } : {}),
+        ...(q.loadId ? { loadId: q.loadId } : {}),
+        ...(q.limit ? { limit: Number(q.limit) } : {}),
+        ...(q.cursor ? { cursor: q.cursor } : {}),
+      });
 
-    return { items, counts: await invoiceCounts(s) };
+      return { items, nextCursor, counts: await invoiceCounts(s) };
+    } catch (err) {
+      rethrow(err);
+    }
   });
 
   /** Registered before `/:id` so the router does not read "receivables-aging" as an id. */
@@ -233,7 +243,15 @@ export async function payRoutes(app: FastifyInstance) {
 
   app.get('/v1/factoring-companies', async (request) => {
     const s = await requireScope(request);
-    return { items: await listFactoringCompanies(s) };
+    const q = request.query as { cursor?: string; limit?: string };
+    try {
+      return await listFactoringCompanies(s, {
+        ...(q.cursor ? { cursor: q.cursor } : {}),
+        ...(q.limit ? { limit: Number(q.limit) } : {}),
+      });
+    } catch (err) {
+      rethrow(err);
+    }
   });
 
   app.post('/v1/factoring-companies', async (request, reply) => {
@@ -254,18 +272,22 @@ export async function payRoutes(app: FastifyInstance) {
 
   app.get('/v1/factoring-packets', async (request) => {
     const s = await requireScope(request);
-    const q = request.query as { invoiceId?: string; status?: string };
+    const q = request.query as { invoiceId?: string; status?: string; cursor?: string; limit?: string };
 
     const status = q.status
       ? (q.status.split(',').map((x) => x.trim()).filter(Boolean) as FactoringPacketStatus[])
       : undefined;
 
-    return {
-      items: await listFactoringPackets(s, {
+    try {
+      return await listFactoringPackets(s, {
         ...(q.invoiceId ? { invoiceId: q.invoiceId } : {}),
         ...(status?.length ? { status } : {}),
-      }),
-    };
+        ...(q.cursor ? { cursor: q.cursor } : {}),
+        ...(q.limit ? { limit: Number(q.limit) } : {}),
+      });
+    } catch (err) {
+      rethrow(err);
+    }
   });
 
   app.get('/v1/factoring-packets/:id', async (request) => {

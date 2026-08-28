@@ -10,6 +10,7 @@ import { z } from 'zod';
 import {
   acceptInvitation,
   changeRole,
+  CursorError,
   inviteMember,
   listInvitations,
   listMembers,
@@ -48,18 +49,45 @@ function rethrow(err: unknown): never {
   if (err instanceof MemberError) {
     throw new HttpError(STATUS[err.code] ?? 400, err.code, err.explanation);
   }
+  if (err instanceof CursorError) {
+    throw new HttpError(400, err.code, err.explanation);
+  }
   throw err;
 }
 
 export async function memberRoutes(app: FastifyInstance) {
   // --- inside a tenant -----------------------------------------------------
 
+  /**
+   * Two independently-paginated lists on one screen, so each gets its own
+   * cursor param rather than sharing one — `membersCursor` and
+   * `invitationsCursor` page separately, the way `Members.tsx` actually
+   * scrolls them (two sections, two "Load more" buttons).
+   */
   app.get('/v1/members', async (request) => {
     const s = await requireScope(request);
-    return {
-      members: await listMembers(s),
-      invitations: await listInvitations(s),
+    const q = request.query as {
+      membersCursor?: string;
+      membersLimit?: string;
+      invitationsCursor?: string;
+      invitationsLimit?: string;
     };
+
+    try {
+      const [members, invitations] = await Promise.all([
+        listMembers(s, {
+          ...(q.membersCursor ? { cursor: q.membersCursor } : {}),
+          ...(q.membersLimit ? { limit: Number(q.membersLimit) } : {}),
+        }),
+        listInvitations(s, {
+          ...(q.invitationsCursor ? { cursor: q.invitationsCursor } : {}),
+          ...(q.invitationsLimit ? { limit: Number(q.invitationsLimit) } : {}),
+        }),
+      ]);
+      return { members, invitations };
+    } catch (err) {
+      rethrow(err);
+    }
   });
 
   app.post('/v1/members/invites', async (request, reply) => {

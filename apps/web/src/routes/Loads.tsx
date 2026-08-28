@@ -17,7 +17,7 @@
  * nobody trusts.
  */
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import {
   canTransition,
@@ -28,7 +28,7 @@ import {
 } from '@haulq/contracts';
 import { ApiRequestError, request, type Truck } from '../lib/api.ts';
 import { useOrgs, useSession } from '../components/AuthGate.tsx';
-import { Card, Empty, ErrorNote, Field, Label, Money, Num, Pill } from '../components/ui.tsx';
+import { Card, Empty, ErrorNote, Field, Label, LoadMore, Money, Num, Pill } from '../components/ui.tsx';
 
 interface Stop {
   id: string;
@@ -71,6 +71,7 @@ interface Load {
 interface LoadsResponse {
   items: Load[];
   counts: Record<string, number>;
+  nextCursor: string | null;
 }
 
 const STATUS_TONE: Record<string, 'ok' | 'warn' | 'neutral'> = {
@@ -1007,10 +1008,17 @@ export function LoadsScreen() {
     if (selectedId) detailRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }, [selectedId]);
 
-  const loads = useQuery({
+  const loads = useInfiniteQuery({
     queryKey: ['loads', filter],
-    queryFn: () =>
-      request<LoadsResponse>(`/v1/loads${filter ? `?status=${filter}` : ''}`),
+    queryFn: ({ pageParam }: { pageParam: string | undefined }) =>
+      request<LoadsResponse>(
+        `/v1/loads?${new URLSearchParams({
+          ...(filter ? { status: filter } : {}),
+          ...(pageParam ? { cursor: pageParam } : {}),
+        })}`,
+      ),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
   });
 
   const trucks = useQuery({
@@ -1021,8 +1029,10 @@ export function LoadsScreen() {
   const myRole = orgs.data?.items.find((o) => o.id === session?.orgId)?.role;
   const canWrite = myRole === 'owner' || myRole === 'dispatcher';
 
-  const items = loads.data?.items ?? [];
-  const counts = loads.data?.counts ?? {};
+  const items = loads.data?.pages.flatMap((p) => p.items) ?? [];
+  // Every page carries the same org-wide counts — only the first page's is
+  // needed, not a merge across pages.
+  const counts = loads.data?.pages[0]?.counts ?? {};
 
   return (
     <div className="space-y-6">
@@ -1157,6 +1167,12 @@ export function LoadsScreen() {
             </table>
           </div>
         )}
+
+        <LoadMore
+          onClick={() => loads.fetchNextPage()}
+          loading={loads.isFetchingNextPage}
+          hasMore={loads.hasNextPage}
+        />
       </Card>
 
       <div ref={detailRef} className="space-y-6">

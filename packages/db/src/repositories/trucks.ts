@@ -18,10 +18,11 @@
  * function exists, using it is not optional.
  */
 
-import { and, asc, eq, isNotNull, isNull } from 'drizzle-orm';
+import { and, asc, eq, gt, isNotNull, isNull, or } from 'drizzle-orm';
 import type { Database } from '../client.ts';
 import type { Scope } from '../context.ts';
 import { recordEvent } from '../events/record.ts';
+import { decodeCursor, toCursorPage, type CursorPage } from '../pagination.ts';
 import { trucks } from '../schema/fleet.ts';
 import { withTransaction } from '../transaction.ts';
 
@@ -52,12 +53,35 @@ export interface CreateTruckInput {
   shortHaulExempt?: boolean | undefined;
 }
 
-export async function listTrucks(s: Scope): Promise<Truck[]> {
-  return s.db
+export interface ListTrucksQuery {
+  cursor?: string | undefined;
+  limit?: number | undefined;
+}
+
+/**
+ * Alphabetical, cursor-paginated on `(label, id)` ascending — `id` only
+ * breaks ties between two trucks sharing a label, which the schema allows.
+ * See `pagination.ts` for the shared cursor shape.
+ */
+export async function listTrucks(s: Scope, q: ListTrucksQuery = {}): Promise<CursorPage<Truck>> {
+  const conditions = [eq(trucks.orgId, s.ctx.orgId), isNull(trucks.deletedAt)];
+  if (q.cursor) {
+    const cursor = decodeCursor(q.cursor);
+    const cursorLabel = String(cursor.v);
+    conditions.push(
+      or(gt(trucks.label, cursorLabel), and(eq(trucks.label, cursorLabel), gt(trucks.id, cursor.id)))!,
+    );
+  }
+
+  const limit = Math.min(q.limit ?? 50, 200);
+  const rows = await s.db
     .select()
     .from(trucks)
-    .where(and(eq(trucks.orgId, s.ctx.orgId), isNull(trucks.deletedAt)))
-    .orderBy(asc(trucks.label));
+    .where(and(...conditions))
+    .orderBy(asc(trucks.label), asc(trucks.id))
+    .limit(limit);
+
+  return toCursorPage(rows, limit, (row) => ({ v: row.label, id: row.id }));
 }
 
 export async function getTruck(s: Scope, id: string): Promise<Truck | undefined> {

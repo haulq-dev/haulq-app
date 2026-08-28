@@ -139,10 +139,10 @@ suite('members', () => {
       });
       const body = res.json();
 
-      assert.equal(body.members.length, 1, 'the founder');
-      assert.equal(body.members[0].role, 'owner');
-      assert.equal(body.invitations.length, 1);
-      assert.equal(body.invitations[0].email, 'pending@example.com');
+      assert.equal(body.members.items.length, 1, 'the founder');
+      assert.equal(body.members.items[0].role, 'owner');
+      assert.equal(body.invitations.items.length, 1);
+      assert.equal(body.invitations.items[0].email, 'pending@example.com');
     });
 
     it('never returns the token hash', async () => {
@@ -403,9 +403,9 @@ suite('members', () => {
         url: '/v1/members',
         headers: as(orgId),
       });
-      const emails = (members.json().members as Array<{ userId: string }>).map(
-        (m) => m.userId,
-      );
+      const emails = (
+        members.json().members.items as Array<{ userId: string }>
+      ).map((m) => m.userId);
       assert.ok(!emails.includes(member.id));
     });
 
@@ -528,7 +528,9 @@ suite('members', () => {
       url: '/v1/members',
       headers: as(b),
     });
-    const emails = (res.json().invitations as Array<{ email: string }>).map((i) => i.email);
+    const emails = (
+      res.json().invitations.items as Array<{ email: string }>
+    ).map((i) => i.email);
     assert.ok(!emails.includes('only-in-a@example.com'));
   });
 

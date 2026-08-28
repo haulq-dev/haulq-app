@@ -12,7 +12,7 @@
  * currently finds out from a wall calendar or from the roadside.
  */
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import {
   ENDORSEMENTS,
@@ -23,7 +23,7 @@ import {
   type Truck,
 } from '../lib/api.ts';
 import { useOrgs, useSession } from '../components/AuthGate.tsx';
-import { Card, Empty, ErrorNote, Field, Pill } from '../components/ui.tsx';
+import { Card, Empty, ErrorNote, Field, LoadMore, Pill } from '../components/ui.tsx';
 
 const ENDORSEMENT_LABEL: Record<Endorsement, string> = {
   hazmat: 'Hazmat',
@@ -303,9 +303,14 @@ export function DriversScreen() {
   const session = useSession();
   const orgs = useOrgs();
 
-  const drivers = useQuery({
+  const drivers = useInfiniteQuery({
     queryKey: ['drivers'],
-    queryFn: () => request<{ items: Driver[] }>('/v1/drivers'),
+    queryFn: ({ pageParam }: { pageParam: string | undefined }) =>
+      request<{ items: Driver[]; nextCursor: string | null }>(
+        `/v1/drivers${pageParam ? `?cursor=${encodeURIComponent(pageParam)}` : ''}`,
+      ),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
   });
 
   // Needed for the "usual truck" select, and cheap — the same query the Trucks
@@ -321,7 +326,7 @@ export function DriversScreen() {
   const truckLabel = (id: string | null) =>
     trucks.data?.items.find((t) => t.id === id)?.label;
 
-  const list = drivers.data?.items ?? [];
+  const list = drivers.data?.pages.flatMap((p) => p.items) ?? [];
 
   return (
     <div className="space-y-6">
@@ -422,6 +427,12 @@ export function DriversScreen() {
             </table>
           </div>
         )}
+
+        <LoadMore
+          onClick={() => drivers.fetchNextPage()}
+          loading={drivers.isFetchingNextPage}
+          hasMore={drivers.hasNextPage}
+        />
       </Card>
     </div>
   );

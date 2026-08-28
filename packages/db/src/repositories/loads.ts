@@ -21,10 +21,11 @@
  * constraint fires and the carrier reads a constraint name.
  */
 
-import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNull, lt, or, sql } from 'drizzle-orm';
 import { brokerMatchKey } from '@haulq/contracts';
 import type { Scope } from '../context.ts';
 import { recordEvent } from '../events/record.ts';
+import { decodeCursor, toCursorPage, type CursorPage } from '../pagination.ts';
 import { brokers } from '../schema/brokers.ts';
 import { drivers, trucks } from '../schema/fleet.ts';
 import { loads, loadStops } from '../schema/loads.ts';
@@ -306,6 +307,8 @@ export interface ListLoadsQuery {
   status?: LoadStatus[] | undefined;
   truckId?: string | undefined;
   limit?: number | undefined;
+  /** Opaque, from a previous call's `nextCursor`. Omit for the first page. */
+  cursor?: string | undefined;
 }
 
 /**
@@ -314,12 +317,29 @@ export interface ListLoadsQuery {
  * Joined rather than fetched per row: a list of forty loads that looks up its
  * broker, truck and driver separately is a hundred and twenty extra queries,
  * and the screen is the one a dispatcher leaves open all day.
+ *
+ * Cursor-paginated on `(createdAt, id)` both descending — `id` is not a
+ * meaningful order by itself, only a stable tiebreaker so two loads created
+ * in the same millisecond do not get skipped or duplicated across pages.
+ * See `pagination.ts` for why only the cursor's encode/decode is shared and
+ * this `WHERE`/`orderBy` stays hand-written.
  */
-export async function listLoads(s: Scope, q: ListLoadsQuery = {}): Promise<LoadWithStops[]> {
+export async function listLoads(s: Scope, q: ListLoadsQuery = {}): Promise<CursorPage<LoadWithStops>> {
   const conditions = [eq(loads.orgId, s.ctx.orgId), isNull(loads.deletedAt)];
   if (q.status?.length) conditions.push(inArray(loads.status, q.status));
   if (q.truckId) conditions.push(eq(loads.truckId, q.truckId));
+  if (q.cursor) {
+    const cursor = decodeCursor(q.cursor);
+    const cursorDate = new Date(cursor.v);
+    conditions.push(
+      or(
+        lt(loads.createdAt, cursorDate),
+        and(eq(loads.createdAt, cursorDate), lt(loads.id, cursor.id)),
+      )!,
+    );
+  }
 
+  const limit = Math.min(q.limit ?? 50, 200);
   const rows = await s.db
     .select({
       load: loads,
@@ -333,10 +353,10 @@ export async function listLoads(s: Scope, q: ListLoadsQuery = {}): Promise<LoadW
     .leftJoin(trucks, eq(trucks.id, loads.truckId))
     .leftJoin(drivers, eq(drivers.id, loads.driverId))
     .where(and(...conditions))
-    .orderBy(desc(loads.createdAt))
-    .limit(Math.min(q.limit ?? 50, 200));
+    .orderBy(desc(loads.createdAt), desc(loads.id))
+    .limit(limit);
 
-  if (rows.length === 0) return [];
+  if (rows.length === 0) return { items: [], nextCursor: null };
 
   const stops = await s.db
     .select()
@@ -356,7 +376,7 @@ export async function listLoads(s: Scope, q: ListLoadsQuery = {}): Promise<LoadW
     byLoad.set(stop.loadId, list);
   }
 
-  return rows.map((r) => ({
+  const items = rows.map((r) => ({
     ...r.load,
     stops: byLoad.get(r.load.id) ?? [],
     brokerName: r.brokerName,
@@ -364,6 +384,8 @@ export async function listLoads(s: Scope, q: ListLoadsQuery = {}): Promise<LoadW
     truckLabel: r.truckLabel,
     driverName: r.driverName,
   }));
+
+  return toCursorPage(items, limit, (item) => ({ v: item.createdAt.toISOString(), id: item.id }));
 }
 
 export async function getLoad(s: Scope, id: string): Promise<LoadWithStops | undefined> {

@@ -23,7 +23,7 @@
  * only one implementation of the rule.
  */
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import {
   documentKindLabel,
@@ -35,7 +35,7 @@ import {
 } from '@haulq/contracts';
 import { request, requestBlob, type CarrierProfile } from '../lib/api.ts';
 import { useSession } from '../components/AuthGate.tsx';
-import { Card, Empty, ErrorNote, Field, Pill } from '../components/ui.tsx';
+import { Card, Empty, ErrorNote, Field, LoadMore, Pill } from '../components/ui.tsx';
 
 interface DocumentRow {
   id: string;
@@ -89,6 +89,10 @@ const when = (iso: string) =>
     hour: 'numeric',
     minute: '2-digit',
   });
+
+/** `brokerLoadNumber` → `broker load number`. A validation finding's field name, read as a sentence. */
+const humanizeField = (field: string) =>
+  field.replace(/([a-z0-9])([A-Z])/g, '$1 $2').toLowerCase();
 
 function loadLabel(load: LoadOption): string {
   const pickup = load.stops.find((s) => s.type === 'pickup');
@@ -384,7 +388,7 @@ function AttachControl({ document }: { document: DocumentRow }) {
     <span className="flex flex-wrap items-center gap-2">
       <select
         aria-label={document.loadId ? 'Re-attach to a different load' : 'Attach to load'}
-        className="border border-line bg-white px-2 py-1 text-sm"
+        className="min-w-0 max-w-full flex-1 border border-line bg-white px-2 py-1 text-sm sm:flex-none sm:max-w-xs"
         value={choice}
         onChange={(e) => setChoice(e.target.value)}
       >
@@ -397,7 +401,7 @@ function AttachControl({ document }: { document: DocumentRow }) {
       </select>
       <button
         type="button"
-        className="border border-line px-3 py-1 text-sm disabled:opacity-40"
+        className="shrink-0 border border-line px-3 py-1 text-sm disabled:opacity-40"
         disabled={!choice || choice === document.loadId || attach.isPending}
         onClick={() => attach.mutate(choice)}
       >
@@ -499,37 +503,50 @@ function Disagreements({ document }: { document: DocumentRow }) {
         )}
       </p>
 
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="border-b border-line text-left">
-            <th className="field-label py-2 text-mute">Field</th>
-            <th className="field-label py-2 text-mute">Document says</th>
-            <th className="field-label py-2 text-mute">Load says</th>
-          </tr>
-        </thead>
-        <tbody>
-          {document.validation.map((f) => (
-            <tr key={f.field} className="border-b border-line last:border-0">
-              <td className="py-2">
-                {f.field}
-                {!f.agrees && (
-                  <span className="ml-2">
-                    <Pill tone={f.severity === 'error' ? 'warn' : 'neutral'}>
-                      {f.severity}
-                    </Pill>
-                  </span>
-                )}
-              </td>
-              {/* Colour is never the only signal — the severity pill above
-                  carries the same information as a word. */}
-              <td className={`num py-2 ${f.agrees ? '' : 'text-bad'}`}>
+      {/*
+       * A real `<table>` below `sm:`, where a "Load says" column has room to be
+       * more than a few pixels wide, cramps three columns of freight-length
+       * values into whatever a phone screen has left after the field name. This
+       * keeps the same three columns of data but drops the grid to one column
+       * on narrow screens, with the mobile-only labels below standing in for
+       * the header row that `sm:hidden` removes along with them.
+       */}
+      <div className="hidden border-b border-line pb-2 sm:grid sm:grid-cols-3 sm:gap-4">
+        <span className="field-label text-mute">Field</span>
+        <span className="field-label text-mute">Document says</span>
+        <span className="field-label text-mute">Load says</span>
+      </div>
+      <div className="divide-y divide-line">
+        {document.validation.map((f) => (
+          <div
+            key={f.field}
+            className="grid gap-1 py-2 sm:grid-cols-3 sm:items-center sm:gap-4"
+          >
+            <div>
+              {humanizeField(f.field)}
+              {!f.agrees && (
+                <span className="ml-2">
+                  <Pill tone={f.severity === 'error' ? 'warn' : 'neutral'}>
+                    {f.severity}
+                  </Pill>
+                </span>
+              )}
+            </div>
+            {/* Colour is never the only signal — the severity pill above
+                carries the same information as a word. */}
+            <div className="flex items-baseline justify-between sm:block">
+              <span className="text-xs text-mute sm:hidden">Document says</span>
+              <span className={`num ${f.agrees ? '' : 'text-bad'}`}>
                 {f.documentValue ?? '—'}
-              </td>
-              <td className="num py-2">{f.loadValue ?? '—'}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+              </span>
+            </div>
+            <div className="flex items-baseline justify-between sm:block">
+              <span className="text-xs text-mute sm:hidden">Load says</span>
+              <span className="num">{f.loadValue ?? '—'}</span>
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -653,7 +670,7 @@ function Detail({ document }: { document: DocumentRow }) {
         <div>
           <h3 className="field-label mb-2 text-mute">The document</h3>
           <Preview document={document} />
-          <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-slate">
+          <dl className="mt-3 grid grid-cols-1 gap-x-4 gap-y-1 text-xs text-slate sm:grid-cols-2">
             <dt className="text-mute">Received</dt>
             <dd>{when(document.receivedAt)}</dd>
             <dt className="text-mute">Source</dt>
@@ -692,12 +709,17 @@ export function DocumentsScreen() {
   const [view, setView] = useState<'inbox' | 'all'>('inbox');
   const [open, setOpen] = useState<string | null>(null);
 
-  const query = useQuery({
+  const query = useInfiniteQuery({
     queryKey: ['documents', view],
-    queryFn: () =>
-      request<{ items: DocumentRow[] }>(
-        view === 'inbox' ? '/v1/documents?unattached=true' : '/v1/documents',
+    queryFn: ({ pageParam }: { pageParam: string | undefined }) =>
+      request<{ items: DocumentRow[]; nextCursor: string | null }>(
+        `/v1/documents?${new URLSearchParams({
+          ...(view === 'inbox' ? { unattached: 'true' } : {}),
+          ...(pageParam ? { cursor: pageParam } : {}),
+        })}`,
       ),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
     enabled: Boolean(session?.orgId),
   });
 
@@ -715,7 +737,7 @@ export function DocumentsScreen() {
     enabled: Boolean(session?.orgId),
   });
 
-  const items = query.data?.items ?? [];
+  const items = query.data?.pages.flatMap((p) => p.items) ?? [];
   const rejected = counts.data?.counts['rejected'] ?? 0;
 
   return (
@@ -770,25 +792,34 @@ export function DocumentsScreen() {
           <ul className="divide-y divide-line">
             {items.map((doc) => (
               <li key={doc.id}>
-                <div className="flex flex-wrap items-center gap-x-4 gap-y-2 py-3">
-                  <button
-                    type="button"
-                    className="min-w-0 flex-1 text-left"
-                    onClick={() => setOpen(open === doc.id ? null : doc.id)}
-                    aria-expanded={open === doc.id}
-                  >
-                    <span className="block truncate">
-                      {doc.filename ?? 'Untitled'}
-                    </span>
-                    <span className="block text-xs text-mute">
-                      {documentKindLabel(doc.kind)} · {when(doc.receivedAt)}
-                      {doc.byteSize ? ` · ${fileSize(doc.byteSize)}` : ''}
-                    </span>
-                  </button>
+                <div className="py-3 sm:flex sm:items-center sm:gap-4">
+                  <div className="flex items-center gap-3 sm:min-w-0 sm:flex-1">
+                    <button
+                      type="button"
+                      className="min-w-0 flex-1 text-left"
+                      onClick={() => setOpen(open === doc.id ? null : doc.id)}
+                      aria-expanded={open === doc.id}
+                    >
+                      <span className="block truncate">
+                        {doc.filename ?? 'Untitled'}
+                      </span>
+                      <span className="block text-xs text-mute">
+                        {documentKindLabel(doc.kind)} · {when(doc.receivedAt)}
+                        {doc.byteSize ? ` · ${fileSize(doc.byteSize)}` : ''}
+                      </span>
+                    </button>
 
-                  <Pill tone={STATUS_TONE[doc.status] ?? 'neutral'}>{doc.status}</Pill>
+                    <Pill tone={STATUS_TONE[doc.status] ?? 'neutral'}>{doc.status}</Pill>
+                  </div>
 
-                  <AttachControl document={doc} />
+                  {/* Its own row below `sm:` rather than sharing one with the
+                      filename — a select plus a button next to a truncating
+                      title is what squeezed everything on a phone-width
+                      screen. From `sm:` up there's room for both on one line,
+                      same as before. */}
+                  <div className="mt-2 sm:mt-0 sm:shrink-0">
+                    <AttachControl document={doc} />
+                  </div>
                 </div>
 
                 {open === doc.id && <Detail document={doc} />}
@@ -796,6 +827,12 @@ export function DocumentsScreen() {
             ))}
           </ul>
         )}
+
+        <LoadMore
+          onClick={() => query.fetchNextPage()}
+          loading={query.isFetchingNextPage}
+          hasMore={query.hasNextPage}
+        />
       </Card>
     </div>
   );

@@ -18,6 +18,7 @@ import {
 } from '@haulq/contracts';
 import {
   createTruck,
+  CursorError,
   listTrucks,
   setTruckActive,
   setTruckMotiveVehicleId,
@@ -30,6 +31,9 @@ import { HttpError, requireRole, requireScope } from '../plugins/request-context
 function rethrow(err: unknown): never {
   if (err instanceof TruckError) {
     throw new HttpError(err.code === 'not_found' ? 404 : 409, err.code, err.explanation);
+  }
+  if (err instanceof CursorError) {
+    throw new HttpError(400, err.code, err.explanation);
   }
   throw err;
 }
@@ -45,8 +49,15 @@ function badRequest(issues: { path: (string | number)[]; message: string }[]): n
 export async function truckRoutes(app: FastifyInstance) {
   app.get('/v1/trucks', async (request) => {
     const s = await requireScope(request);
-    const items = await listTrucks(s);
-    return { items, nextCursor: null };
+    const q = request.query as { cursor?: string; limit?: string };
+    try {
+      return await listTrucks(s, {
+        ...(q.cursor ? { cursor: q.cursor } : {}),
+        ...(q.limit ? { limit: Number(q.limit) } : {}),
+      });
+    } catch (err) {
+      rethrow(err);
+    }
   });
 
   app.post('/v1/trucks', async (request, reply) => {

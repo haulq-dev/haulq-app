@@ -19,7 +19,7 @@
  * below the table, keeps the table scannable and the detail readable.
  */
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import {
   canTransitionInvoice,
@@ -29,7 +29,7 @@ import {
 } from '@haulq/contracts';
 import { request } from '../lib/api.ts';
 import { useOrgs, useSession } from '../components/AuthGate.tsx';
-import { Card, Empty, ErrorNote, Field, Money, Num, Pill } from '../components/ui.tsx';
+import { Card, Empty, ErrorNote, Field, LoadMore, Money, Num, Pill } from '../components/ui.tsx';
 
 // ---------------------------------------------------------------------------
 // Shapes the API returns
@@ -61,6 +61,12 @@ interface Invoice {
 interface InvoicesResponse {
   items: Invoice[];
   counts: Record<string, number>;
+  nextCursor: string | null;
+}
+
+interface FactoringCompaniesResponse {
+  items: FactoringCompany[];
+  nextCursor: string | null;
 }
 
 interface Payment {
@@ -678,9 +684,15 @@ function GenerateInvoice({ loads, onDone }: { loads: LoadOption[]; onDone: () =>
 function FactoringCompanies({
   companies,
   canManageMoney,
+  onLoadMore,
+  loadingMore,
+  hasMore,
 }: {
   companies: FactoringCompany[];
   canManageMoney: boolean;
+  onLoadMore: () => void;
+  loadingMore: boolean;
+  hasMore: boolean;
 }) {
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState('');
@@ -750,6 +762,8 @@ function FactoringCompanies({
           </div>
         </div>
       )}
+
+      <LoadMore onClick={onLoadMore} loading={loadingMore} hasMore={hasMore} />
     </Card>
   );
 }
@@ -765,17 +779,30 @@ export function PayScreen() {
   const session = useSession();
   const orgs = useOrgs();
 
-  const invoices = useQuery({
+  const invoices = useInfiniteQuery({
     queryKey: ['invoices', filter],
-    queryFn: () => request<InvoicesResponse>(`/v1/invoices${filter ? `?status=${filter}` : ''}`),
+    queryFn: ({ pageParam }: { pageParam: string | undefined }) =>
+      request<InvoicesResponse>(
+        `/v1/invoices?${new URLSearchParams({
+          ...(filter ? { status: filter } : {}),
+          ...(pageParam ? { cursor: pageParam } : {}),
+        })}`,
+      ),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
   });
   const aging = useQuery({
     queryKey: ['receivables-aging'],
     queryFn: () => request<{ buckets: AgingBucket[] }>('/v1/invoices/receivables-aging'),
   });
-  const companies = useQuery({
+  const companies = useInfiniteQuery({
     queryKey: ['factoring-companies'],
-    queryFn: () => request<{ items: FactoringCompany[] }>('/v1/factoring-companies'),
+    queryFn: ({ pageParam }: { pageParam: string | undefined }) =>
+      request<FactoringCompaniesResponse>(
+        `/v1/factoring-companies${pageParam ? `?cursor=${encodeURIComponent(pageParam)}` : ''}`,
+      ),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
   });
   // Delivered and invoiced loads: the load has to have gotten far enough to
   // bill, and a load already at `invoiced` may have had its first invoice
@@ -789,13 +816,14 @@ export function PayScreen() {
   const canWrite = myRole === 'owner' || myRole === 'dispatcher' || myRole === 'accountant';
   const canManageMoney = myRole === 'owner' || myRole === 'accountant';
 
-  const items = invoices.data?.items ?? [];
-  const counts = invoices.data?.counts ?? {};
+  const items = invoices.data?.pages.flatMap((p) => p.items) ?? [];
+  const counts = invoices.data?.pages[0]?.counts ?? {};
+  const companiesList = companies.data?.pages.flatMap((p) => p.items) ?? [];
 
   // Loads that already carry an open (non-void) invoice do not belong in the
   // picker — generating a second would only bounce off `already_invoiced`.
   const openInvoiceLoadIds = new Set(
-    (invoices.data?.items ?? []).filter((i) => i.status !== 'void').map((i) => i.loadId),
+    items.filter((i) => i.status !== 'void').map((i) => i.loadId),
   );
   const invoiceableLoads = (loads.data?.items ?? []).filter((l) => !openInvoiceLoadIds.has(l.id));
 
@@ -901,17 +929,29 @@ export function PayScreen() {
             </table>
           </div>
         )}
+
+        <LoadMore
+          onClick={() => invoices.fetchNextPage()}
+          loading={invoices.isFetchingNextPage}
+          hasMore={invoices.hasNextPage}
+        />
       </Card>
 
       {selected && (
         <InvoiceDetail
           invoice={selected}
-          companies={companies.data?.items ?? []}
+          companies={companiesList}
           canManageMoney={canManageMoney}
         />
       )}
 
-      <FactoringCompanies companies={companies.data?.items ?? []} canManageMoney={canManageMoney} />
+      <FactoringCompanies
+        companies={companiesList}
+        canManageMoney={canManageMoney}
+        onLoadMore={() => companies.fetchNextPage()}
+        loadingMore={companies.isFetchingNextPage}
+        hasMore={companies.hasNextPage}
+      />
     </div>
   );
 }

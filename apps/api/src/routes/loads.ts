@@ -31,6 +31,7 @@ import {
 import {
   assignLoad,
   createLoad,
+  CursorError,
   getLoad,
   listLoads,
   loadCounts,
@@ -80,6 +81,10 @@ function rethrow(err: unknown): never {
     throw new HttpError(status, err.code, err.explanation);
   }
 
+  if (err instanceof CursorError) {
+    throw new HttpError(400, err.code, err.explanation);
+  }
+
   const pg = err as PgError;
 
   if (pg.code === RESTRICT_VIOLATION) {
@@ -124,7 +129,7 @@ function badRequest(issues: { path: (string | number)[]; message: string }[]): n
 export async function loadRoutes(app: FastifyInstance) {
   app.get('/v1/loads', async (request) => {
     const s = await requireScope(request);
-    const q = request.query as { status?: string; truckId?: string; limit?: string };
+    const q = request.query as { status?: string; truckId?: string; limit?: string; cursor?: string };
 
     // Repeatable as `?status=booked&status=dispatched` or comma-separated —
     // both are what a hand-written link tends to contain.
@@ -132,13 +137,18 @@ export async function loadRoutes(app: FastifyInstance) {
       ? (q.status.split(',').map((x) => x.trim()).filter(Boolean) as LoadStatus[])
       : undefined;
 
-    const items = await listLoads(s, {
-      ...(status?.length ? { status } : {}),
-      ...(q.truckId ? { truckId: q.truckId } : {}),
-      ...(q.limit ? { limit: Number(q.limit) } : {}),
-    });
+    try {
+      const { items, nextCursor } = await listLoads(s, {
+        ...(status?.length ? { status } : {}),
+        ...(q.truckId ? { truckId: q.truckId } : {}),
+        ...(q.limit ? { limit: Number(q.limit) } : {}),
+        ...(q.cursor ? { cursor: q.cursor } : {}),
+      });
 
-    return { items, counts: await loadCounts(s), nextCursor: null };
+      return { items, counts: await loadCounts(s), nextCursor };
+    } catch (err) {
+      rethrow(err);
+    }
   });
 
   app.get('/v1/loads/:id', async (request) => {

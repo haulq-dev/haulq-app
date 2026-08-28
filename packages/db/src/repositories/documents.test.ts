@@ -234,7 +234,7 @@ suite('documents repository', () => {
       await attachToLoad(s, attached.document.id, load.id);
       const loose = await upload();
 
-      const unattached = await listDocuments(s, { unattached: true, limit: 200 });
+      const { items: unattached } = await listDocuments(s, { unattached: true, limit: 200 });
       const ids = unattached.map((d) => d.id);
       assert.ok(ids.includes(loose.document.id));
       assert.ok(!ids.includes(attached.document.id));
@@ -246,7 +246,7 @@ suite('documents repository', () => {
       await attachToLoad(s, mine.document.id, load.id);
       await upload();
 
-      const rows = await listDocuments(s, { loadId: load.id });
+      const { items: rows } = await listDocuments(s, { loadId: load.id });
       assert.deepEqual(rows.map((d) => d.id), [mine.document.id]);
     });
 

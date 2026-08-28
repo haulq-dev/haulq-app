@@ -117,7 +117,7 @@ suite('loads repository', () => {
       assert.equal(a.brokerName, b.brokerName);
       // Same underlying broker row — two loads for the same broker must both
       // resolve to it, or profitability-by-broker in Insights double counts.
-      const listed = await listLoads(s);
+      const { items: listed } = await listLoads(s);
       const brokerNames = new Set(
         listed.filter((l) => [a.id, b.id].includes(l.id)).map((l) => l.brokerName),
       );
@@ -190,7 +190,7 @@ suite('loads repository', () => {
       await createLoad(s, { brokerName: 'List Test Broker', stops: wichitaToDenver });
       const second = await createLoad(s, { brokerName: 'List Test Broker', stops: wichitaToDenver });
 
-      const listed = await listLoads(s, { limit: 1 });
+      const { items: listed } = await listLoads(s, { limit: 1 });
       assert.equal(listed[0]!.id, second.id);
       assert.equal(listed[0]!.brokerName, 'List Test Broker');
     });
@@ -202,8 +202,8 @@ suite('loads repository', () => {
         stops: wichitaToDenver,
       });
 
-      const quoted = await listLoads(s, { status: ['quoted'] });
-      const delivered = await listLoads(s, { status: ['delivered'] });
+      const { items: quoted } = await listLoads(s, { status: ['quoted'] });
+      const { items: delivered } = await listLoads(s, { status: ['delivered'] });
 
       assert.ok(quoted.some((l) => l.id === load.id));
       assert.ok(!delivered.some((l) => l.id === load.id));
@@ -219,7 +219,7 @@ suite('loads repository', () => {
       });
       const offTruck = await createLoad(s, { brokerName: 'Truck Filter Co', stops: wichitaToDenver });
 
-      const filtered = await listLoads(s, { truckId: truck.id });
+      const { items: filtered } = await listLoads(s, { truckId: truck.id });
       const ids = filtered.map((l) => l.id);
       assert.ok(ids.includes(onTruck.id));
       assert.ok(!ids.includes(offTruck.id));
@@ -229,13 +229,47 @@ suite('loads repository', () => {
       const mine = await createLoad(s, { brokerName: 'Isolation Co', stops: wichitaToDenver });
       await createLoad(other, { brokerName: 'Other Tenant Co', stops: wichitaToDenver });
 
-      const listed = await listLoads(s);
+      const { items: listed } = await listLoads(s);
       assert.ok(listed.every((l) => l.orgId === orgId));
       assert.ok(listed.some((l) => l.id === mine.id));
 
       assert.equal(await getLoad(s, mine.id).then((l) => l?.id), mine.id);
       const crossTenant = await createLoad(other, { brokerName: 'X', stops: wichitaToDenver });
       assert.equal(await getLoad(s, crossTenant.id), undefined);
+    });
+
+    it('walks every load exactly once across pages, in the same order as one unpaginated call', async () => {
+      const org = await freshOrg('Cursor Walk Co');
+      const created: string[] = [];
+      for (let i = 0; i < 5; i++) {
+        const load = await createLoad(org, { brokerName: 'Cursor Walk Co', stops: wichitaToDenver });
+        created.push(load.id);
+      }
+
+      const { items: everything } = await listLoads(org);
+      assert.equal(everything.length, 5);
+
+      const walked: string[] = [];
+      let cursor: string | undefined;
+      let pages = 0;
+      for (;;) {
+        const page = await listLoads(org, { limit: 2, ...(cursor ? { cursor } : {}) });
+        pages++;
+        walked.push(...page.items.map((l) => l.id));
+        if (!page.nextCursor) break;
+        cursor = page.nextCursor;
+        assert.ok(pages < 10, 'pagination did not terminate');
+      }
+
+      assert.equal(pages, 3); // 2 + 2 + 1
+      assert.deepEqual(walked, everything.map((l) => l.id));
+    });
+
+    it('refuses a malformed cursor rather than guessing', async () => {
+      await assert.rejects(() => listLoads(s, { cursor: 'not-a-real-cursor' }), (err: unknown) => {
+        assert.equal((err as { code?: string }).code, 'invalid_cursor');
+        return true;
+      });
     });
   });
 

@@ -330,11 +330,6 @@ export interface Invitation {
   invitedByUserId: string | null;
 }
 
-export interface MembersResponse {
-  members: Member[];
-  invitations: Invitation[];
-}
-
 /**
  * True for an address the API minted rather than received.
  *

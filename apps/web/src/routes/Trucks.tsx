@@ -8,7 +8,7 @@
  * that mentions one, and nothing tells the carrier that is happening.
  */
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import {
   ApiRequestError,
@@ -18,7 +18,7 @@ import {
   type MotiveVehiclesResponse,
   type Truck,
 } from '../lib/api.ts';
-import { Card, Empty, ErrorNote, Field, Num, Pill } from '../components/ui.tsx';
+import { Card, Empty, ErrorNote, Field, LoadMore, Num, Pill } from '../components/ui.tsx';
 
 const CAPABILITIES = [
   { key: 'liftgate', label: 'Liftgate', hint: 'Loads requiring one are hidden without this' },
@@ -510,10 +510,16 @@ function TruckActiveControl({ truck }: { truck: Truck }) {
 export function TrucksScreen() {
   const [adding, setAdding] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const trucks = useQuery({
+  const trucks = useInfiniteQuery({
     queryKey: ['trucks'],
-    queryFn: () => request<{ items: Truck[] }>('/v1/trucks'),
+    queryFn: ({ pageParam }: { pageParam: string | undefined }) =>
+      request<{ items: Truck[]; nextCursor: string | null }>(
+        `/v1/trucks${pageParam ? `?cursor=${encodeURIComponent(pageParam)}` : ''}`,
+      ),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
   });
+  const truckItems = trucks.data?.pages.flatMap((p) => p.items) ?? [];
 
   // 409 (`not_connected`) is the expected answer for an org that has not
   // connected Motive yet, not a failure worth retrying or showing an error
@@ -542,7 +548,7 @@ export function TrucksScreen() {
 
       {editingId &&
         (() => {
-          const editing = trucks.data?.items.find((t) => t.id === editingId);
+          const editing = truckItems.find((t) => t.id === editingId);
           if (!editing) return null;
           return <EditTruck truck={editing} onDone={() => setEditingId(null)} />;
         })()}
@@ -552,11 +558,11 @@ export function TrucksScreen() {
 
       <Card>
         {trucks.isError && <ErrorNote error={trucks.error} />}
-        {trucks.data?.items.length === 0 && (
+        {trucks.data && truckItems.length === 0 && (
           <Empty>No trucks yet. Nothing can be matched or assigned until one exists.</Empty>
         )}
 
-        {trucks.data && trucks.data.items.length > 0 && (
+        {truckItems.length > 0 && (
           <div className="overflow-x-auto">
             {/* A load grid has more columns than a phone has width. Scroll it
                 inside its own box rather than letting it widen the page. */}
@@ -579,7 +585,7 @@ export function TrucksScreen() {
                 </tr>
               </thead>
               <tbody>
-                {trucks.data.items.map((truck) => {
+                {truckItems.map((truck) => {
                   const enabled = Object.entries(truck.capabilities ?? {})
                     .filter(([, on]) => on)
                     .map(([k]) => CAPABILITIES.find((c) => c.key === k)?.label ?? k);
@@ -636,6 +642,12 @@ export function TrucksScreen() {
             </table>
           </div>
         )}
+
+        <LoadMore
+          onClick={() => trucks.fetchNextPage()}
+          loading={trucks.isFetchingNextPage}
+          hasMore={trucks.hasNextPage}
+        />
       </Card>
     </div>
   );

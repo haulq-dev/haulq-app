@@ -14,7 +14,7 @@ import { randomUUID } from 'node:crypto';
 import {
   eventSubject,
   getOrg,
-  listMembers,
+  listAllMembers,
   scope,
   type Database,
   type ObjectStore,
@@ -242,7 +242,7 @@ function exceptionAlertHandler(deps: HandlerDeps): OutboxHandler {
       correlationId: randomUUID(),
     });
 
-    const [org, members] = await Promise.all([getOrg(s), listMembers(s)]);
+    const [org, members] = await Promise.all([getOrg(s), listAllMembers(s)]);
     const recipients = members.filter((m) => m.role === 'owner' || m.role === 'dispatcher');
 
     if (recipients.length === 0) {

@@ -39,9 +39,10 @@ import {
   type CoercedRow,
   type ParsedLoadRow,
 } from '@haulq/contracts';
-import { and, asc, eq, sql } from 'drizzle-orm';
+import { and, asc, eq, gt, or, sql } from 'drizzle-orm';
 import type { Scope } from '../context.ts';
 import { recordEvent } from '../events/record.ts';
+import { decodeCursor, toCursorPage, type CursorPage } from '../pagination.ts';
 import { brokers } from '../schema/brokers.ts';
 import { importBatches, importRows } from '../schema/imports.ts';
 import { loads, loadStops } from '../schema/loads.ts';
@@ -236,12 +237,34 @@ export async function getBatch(s: Scope, id: string): Promise<ImportBatch | unde
   return row;
 }
 
-export async function listBatches(s: Scope): Promise<ImportBatch[]> {
-  return s.db
+export interface ListBatchesQuery {
+  cursor?: string | undefined;
+  limit?: number | undefined;
+}
+
+/** Oldest first — a carrier's own import history reads chronologically. Cursor-paginated on `(createdAt, id)`. */
+export async function listBatches(s: Scope, q: ListBatchesQuery = {}): Promise<CursorPage<ImportBatch>> {
+  const conditions = [eq(importBatches.orgId, s.ctx.orgId)];
+  if (q.cursor) {
+    const cursor = decodeCursor(q.cursor);
+    const cursorDate = new Date(cursor.v);
+    conditions.push(
+      or(
+        gt(importBatches.createdAt, cursorDate),
+        and(eq(importBatches.createdAt, cursorDate), gt(importBatches.id, cursor.id)),
+      )!,
+    );
+  }
+
+  const limit = Math.min(q.limit ?? 50, 200);
+  const rows = await s.db
     .select()
     .from(importBatches)
-    .where(eq(importBatches.orgId, s.ctx.orgId))
-    .orderBy(asc(importBatches.createdAt));
+    .where(and(...conditions))
+    .orderBy(asc(importBatches.createdAt), asc(importBatches.id))
+    .limit(limit);
+
+  return toCursorPage(rows, limit, (row) => ({ v: row.createdAt.toISOString(), id: row.id }));
 }
 
 export async function listRows(

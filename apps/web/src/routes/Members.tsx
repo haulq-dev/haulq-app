@@ -12,7 +12,7 @@
  * forgets.
  */
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import {
   isPlaceholderEmail,
@@ -20,11 +20,20 @@ import {
   ROLES,
   type Invitation,
   type Member,
-  type MembersResponse,
   type Role,
 } from '../lib/api.ts';
 import { useOrgs, useSession } from '../components/AuthGate.tsx';
-import { Card, Empty, ErrorNote, Field, Pill } from '../components/ui.tsx';
+import { Card, Empty, ErrorNote, Field, LoadMore, Pill } from '../components/ui.tsx';
+
+interface CursorPage<T> {
+  items: T[];
+  nextCursor: string | null;
+}
+
+interface MembersPageResponse {
+  members: CursorPage<Member>;
+  invitations: CursorPage<Invitation>;
+}
 
 const ROLE_HINT: Record<Role, string> = {
   owner: 'Everything, including billing, members and the carrier authority.',
@@ -301,9 +310,24 @@ export function MembersScreen() {
   const session = useSession();
   const orgs = useOrgs();
 
-  const members = useQuery({
-    queryKey: ['members'],
-    queryFn: () => request<MembersResponse>('/v1/members'),
+  const members = useInfiniteQuery({
+    queryKey: ['members', 'list'],
+    queryFn: ({ pageParam }: { pageParam: string | undefined }) =>
+      request<MembersPageResponse>(
+        `/v1/members${pageParam ? `?membersCursor=${encodeURIComponent(pageParam)}` : ''}`,
+      ),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (lastPage) => lastPage.members.nextCursor ?? undefined,
+  });
+
+  const invitationsQuery = useInfiniteQuery({
+    queryKey: ['members', 'invitations'],
+    queryFn: ({ pageParam }: { pageParam: string | undefined }) =>
+      request<MembersPageResponse>(
+        `/v1/members${pageParam ? `?invitationsCursor=${encodeURIComponent(pageParam)}` : ''}`,
+      ),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (lastPage) => lastPage.invitations.nextCursor ?? undefined,
   });
 
   /**
@@ -320,8 +344,8 @@ export function MembersScreen() {
   const canInvite = myRole === 'owner' || myRole === 'dispatcher';
   const canManage = myRole === 'owner';
 
-  const list = members.data?.members ?? [];
-  const invitations = members.data?.invitations ?? [];
+  const list = members.data?.pages.flatMap((p) => p.members.items) ?? [];
+  const invitations = invitationsQuery.data?.pages.flatMap((p) => p.invitations.items) ?? [];
   const ownerCount = list.filter((m) => m.role === 'owner').length;
 
   return (
@@ -375,10 +399,17 @@ export function MembersScreen() {
             </table>
           </div>
         )}
+
+        <LoadMore
+          onClick={() => members.fetchNextPage()}
+          loading={members.isFetchingNextPage}
+          hasMore={members.hasNextPage}
+        />
       </Card>
 
       <Card title="Invited, not yet joined">
-        {members.data && invitations.length === 0 && (
+        {invitationsQuery.isError && <ErrorNote error={invitationsQuery.error} />}
+        {invitationsQuery.data && invitations.length === 0 && (
           <Empty>No invitations outstanding.</Empty>
         )}
 
@@ -405,6 +436,12 @@ export function MembersScreen() {
             </table>
           </div>
         )}
+
+        <LoadMore
+          onClick={() => invitationsQuery.fetchNextPage()}
+          loading={invitationsQuery.isFetchingNextPage}
+          hasMore={invitationsQuery.hasNextPage}
+        />
       </Card>
     </div>
   );

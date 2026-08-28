@@ -11,6 +11,7 @@ import { ColumnMappingSchema, guessMapping } from '@haulq/contracts';
 import {
   applyMapping,
   commitImport,
+  CursorError,
   getBatch,
   ImportError,
   importedHistorySummary,
@@ -133,7 +134,16 @@ export async function importRoutes(app: FastifyInstance) {
 
   app.get('/v1/imports', async (request) => {
     const s = await requireScope(request);
-    return { items: await listBatches(s) };
+    const q = request.query as { cursor?: string; limit?: string };
+    try {
+      return await listBatches(s, {
+        ...(q.cursor ? { cursor: q.cursor } : {}),
+        ...(q.limit ? { limit: Number(q.limit) } : {}),
+      });
+    } catch (err) {
+      if (err instanceof CursorError) throw new HttpError(400, err.code, err.explanation);
+      throw err;
+    }
   });
 
   app.get('/v1/imports/:id', async (request) => {

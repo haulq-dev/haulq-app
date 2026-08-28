@@ -118,6 +118,32 @@ export function Empty({ children }: { children: ReactNode }) {
   return <p className="py-6 text-sm text-mute">{children}</p>;
 }
 
+/**
+ * The one control every cursor-paginated list in this app shares. Appends
+ * the next page rather than replacing the current one or jumping to a page
+ * number — the API's own pagination is keyset/cursor-based (see
+ * `packages/db/src/pagination.ts`), which has no notion of "page 4" to jump
+ * to, only "the rows after the last one I have."
+ */
+export function LoadMore({
+  onClick,
+  loading,
+  hasMore,
+}: {
+  onClick: () => void;
+  loading: boolean;
+  hasMore: boolean;
+}) {
+  if (!hasMore) return null;
+  return (
+    <div className="mt-4 flex justify-center">
+      <button className="hq-btn hq-btn-ghost" disabled={loading} onClick={onClick}>
+        {loading ? 'Loading…' : 'Load more'}
+      </button>
+    </div>
+  );
+}
+
 export function Field({
   label,
   hint,

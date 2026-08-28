@@ -145,6 +145,7 @@ describe('catalogue integrity', () => {
         board: 'DAT',
         error: 'e',
         changed: ['name'],
+        fields: ['name'],
         added: [],
         removed: [],
         loadCount: 1,

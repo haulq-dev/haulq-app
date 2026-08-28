@@ -34,7 +34,7 @@
  * just wrote.
  */
 
-import { and, desc, eq, isNull, sql } from 'drizzle-orm';
+import { and, desc, eq, isNull, lt, or, sql } from 'drizzle-orm';
 import {
   summarizeValidation,
   type DocumentKind,
@@ -42,6 +42,7 @@ import {
   type ValidationFinding,
   type ValidationVerdict,
 } from '@haulq/contracts';
+import { decodeCursor, toCursorPage, type CursorPage } from '../pagination.ts';
 import type { Scope } from '../context.ts';
 import { recordEvent } from '../events/record.ts';
 import { documents } from '../schema/documents.ts';
@@ -210,28 +211,43 @@ export interface ListDocumentsQuery {
   status?: DocumentStatus | undefined;
   kind?: string | undefined;
   limit?: number | undefined;
+  cursor?: string | undefined;
 }
 
 /**
  * Newest first, because the inbox is read from the top and the thing a
- * dispatcher wants is almost always what just arrived.
+ * dispatcher wants is almost always what just arrived. Cursor-paginated on
+ * `(receivedAt, id)` both descending — see `pagination.ts`.
  */
 export async function listDocuments(
   s: Scope,
   q: ListDocumentsQuery = {},
-): Promise<Document[]> {
+): Promise<CursorPage<Document>> {
   const filters = [inOrg(s)];
   if (q.loadId) filters.push(eq(documents.loadId, q.loadId));
   if (q.unattached) filters.push(isNull(documents.loadId));
   if (q.status) filters.push(eq(documents.status, q.status));
   if (q.kind) filters.push(eq(documents.kind, q.kind));
+  if (q.cursor) {
+    const cursor = decodeCursor(q.cursor);
+    const cursorDate = new Date(cursor.v);
+    filters.push(
+      or(
+        lt(documents.receivedAt, cursorDate),
+        and(eq(documents.receivedAt, cursorDate), lt(documents.id, cursor.id)),
+      )!,
+    );
+  }
 
-  return s.db
+  const limit = Math.min(Math.max(q.limit ?? 50, 1), 200);
+  const rows = await s.db
     .select()
     .from(documents)
     .where(and(...filters))
-    .orderBy(desc(documents.receivedAt))
-    .limit(Math.min(Math.max(q.limit ?? 50, 1), 200));
+    .orderBy(desc(documents.receivedAt), desc(documents.id))
+    .limit(limit);
+
+  return toCursorPage(rows, limit, (row) => ({ v: row.receivedAt.toISOString(), id: row.id }));
 }
 
 /** Counts by status, for the inbox header. Missing statuses read as zero. */

@@ -10,9 +10,9 @@
  * took should be visibly different from one a person took.
  */
 
-import { useQuery } from '@tanstack/react-query';
+import { useInfiniteQuery } from '@tanstack/react-query';
 import { request, type TimelineEntry } from '../lib/api.ts';
-import { Card, Empty, ErrorNote, Pill } from '../components/ui.tsx';
+import { Card, Empty, ErrorNote, LoadMore, Pill } from '../components/ui.tsx';
 
 const ACTOR_LABEL: Record<string, string> = {
   user: 'you',
@@ -31,10 +31,17 @@ function when(iso: string): string {
 }
 
 export function TimelineScreen() {
-  const timeline = useQuery({
+  const timeline = useInfiniteQuery({
     queryKey: ['timeline'],
-    queryFn: () => request<{ items: TimelineEntry[] }>('/v1/timeline?limit=100'),
+    queryFn: ({ pageParam }: { pageParam: string | undefined }) =>
+      request<{ items: TimelineEntry[]; nextCursor: string | null }>(
+        `/v1/timeline?${new URLSearchParams({ limit: '100', ...(pageParam ? { before: pageParam } : {}) })}`,
+      ),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
   });
+
+  const items = timeline.data?.pages.flatMap((p) => p.items) ?? [];
 
   return (
     <div className="space-y-6">
@@ -48,10 +55,10 @@ export function TimelineScreen() {
 
       <Card>
         {timeline.isError && <ErrorNote error={timeline.error} />}
-        {timeline.data?.items.length === 0 && <Empty>Nothing has happened yet.</Empty>}
+        {timeline.data && items.length === 0 && <Empty>Nothing has happened yet.</Empty>}
 
         <ol className="divide-y divide-line">
-          {timeline.data?.items.map((entry) => (
+          {items.map((entry) => (
             <li
               key={entry.seq}
               className="flex flex-wrap items-baseline gap-x-4 gap-y-1 py-3 first:pt-0"
@@ -87,6 +94,12 @@ export function TimelineScreen() {
             </li>
           ))}
         </ol>
+
+        <LoadMore
+          onClick={() => timeline.fetchNextPage()}
+          loading={timeline.isFetchingNextPage}
+          hasMore={timeline.hasNextPage}
+        />
       </Card>
     </div>
   );

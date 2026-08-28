@@ -8,15 +8,23 @@
  */
 
 import { CreateDriverSchema } from '@haulq/contracts';
-import { createDriver, expiringCredentials, listDrivers } from '@haulq/db';
+import { createDriver, CursorError, expiringCredentials, listDrivers } from '@haulq/db';
 import type { FastifyInstance } from 'fastify';
 import { HttpError, requireRole, requireScope } from '../plugins/request-context.ts';
 
 export async function driverRoutes(app: FastifyInstance) {
   app.get('/v1/drivers', async (request) => {
     const s = await requireScope(request);
-    const items = await listDrivers(s);
-    return { items, nextCursor: null };
+    const q = request.query as { cursor?: string; limit?: string };
+    try {
+      return await listDrivers(s, {
+        ...(q.cursor ? { cursor: q.cursor } : {}),
+        ...(q.limit ? { limit: Number(q.limit) } : {}),
+      });
+    } catch (err) {
+      if (err instanceof CursorError) throw new HttpError(400, err.code, err.explanation);
+      throw err;
+    }
   });
 
   app.post('/v1/drivers', async (request, reply) => {
