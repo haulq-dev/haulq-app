@@ -206,10 +206,13 @@ export interface Truck {
   label: string;
   equipment: string;
   maxWeightLbs: number | null;
+  maxLengthFt: number | null;
   capabilities: Record<string, boolean>;
   shortHaulExempt: boolean;
   /** Set once a carrier matches this truck to a vehicle in Motive. Null until then. */
   motiveVehicleId: number | null;
+  /** False once taken out of service — see `setTruckActive`. Still referenced by its history. */
+  active: boolean;
 }
 
 export interface MotiveVehicle {

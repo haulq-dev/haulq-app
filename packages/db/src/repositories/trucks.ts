@@ -143,6 +143,130 @@ export async function setTruckMotiveVehicleId(
   });
 }
 
+export interface UpdateTruckInput {
+  label?: string | undefined;
+  equipment?: Truck['equipment'] | undefined;
+  maxWeightLbs?: number | null | undefined;
+  maxLengthFt?: number | null | undefined;
+  capabilities?: Record<string, boolean | undefined> | undefined;
+  shortHaulExempt?: boolean | undefined;
+}
+
+/**
+ * A partial update. Up to two events, the same split `createTruck` already
+ * makes on the way in: the ordinary fields get `truck.updated`,
+ * capabilities get their own `truck.capabilities_updated` with a real
+ * added/removed diff against what was there before — `createTruck` only
+ * ever has an `added` list, since nothing existed yet to remove from.
+ */
+export async function updateTruck(s: Scope, id: string, input: UpdateTruckInput): Promise<Truck> {
+  return withTransaction(s, async (tx) => {
+    const current = await getTruck(tx, id);
+    if (!current) {
+      throw new TruckError('not_found', `truck ${id} not found`, 'That truck is not on this account.');
+    }
+
+    const fields: string[] = [];
+    const patch: Partial<typeof trucks.$inferInsert> = { updatedAt: new Date() };
+
+    if (input.label !== undefined && input.label !== current.label) {
+      patch.label = input.label;
+      fields.push('label');
+    }
+    if (input.equipment !== undefined && input.equipment !== current.equipment) {
+      patch.equipment = input.equipment;
+      fields.push('equipment');
+    }
+    if (input.maxWeightLbs !== undefined && input.maxWeightLbs !== current.maxWeightLbs) {
+      patch.maxWeightLbs = input.maxWeightLbs;
+      fields.push('max weight');
+    }
+    if (input.maxLengthFt !== undefined && input.maxLengthFt !== current.maxLengthFt) {
+      patch.maxLengthFt = input.maxLengthFt;
+      fields.push('max length');
+    }
+    if (input.shortHaulExempt !== undefined && input.shortHaulExempt !== current.shortHaulExempt) {
+      patch.shortHaulExempt = input.shortHaulExempt;
+      fields.push('short-haul exemption');
+    }
+
+    let added: string[] = [];
+    let removed: string[] = [];
+    if (input.capabilities !== undefined) {
+      const before = (current.capabilities as Record<string, boolean | undefined>) ?? {};
+      patch.capabilities = input.capabilities;
+      added = Object.keys(input.capabilities).filter((k) => input.capabilities![k] === true && before[k] !== true);
+      removed = Object.keys(before).filter((k) => before[k] === true && input.capabilities![k] !== true);
+    }
+
+    // Nothing actually changed — a re-submitted form with no edits. Not an
+    // error, just nothing to write or record.
+    if (fields.length === 0 && added.length === 0 && removed.length === 0) {
+      return current;
+    }
+
+    const [row] = await tx.db
+      .update(trucks)
+      .set(patch)
+      .where(and(eq(trucks.id, id), eq(trucks.orgId, tx.ctx.orgId)))
+      .returning();
+    if (!row) throw new Error('truck update returned nothing');
+
+    if (fields.length) {
+      await recordEvent(tx, 'truck.updated', { subjectId: id, payload: { label: row.label, fields } });
+    }
+    if (added.length || removed.length) {
+      await recordEvent(tx, 'truck.capabilities_updated', {
+        subjectId: id,
+        payload: { label: row.label, added, removed },
+      });
+    }
+
+    return row;
+  });
+}
+
+/**
+ * Take a truck out of service, or bring it back — never a real `DELETE`.
+ * `contracts`' `SetTruckActiveSchema` has the reasoning: a truck stays
+ * referenced by loads, drivers and telemetry for as long as it was ever
+ * run, so "removing" one from the fleet means flipping `active`, not
+ * erasing the row `_shared.ts`'s soft-delete rule exists for correcting
+ * mistakes, not retiring equipment.
+ */
+export async function setTruckActive(
+  s: Scope,
+  id: string,
+  active: boolean,
+  reason?: string,
+): Promise<Truck> {
+  return withTransaction(s, async (tx) => {
+    const current = await getTruck(tx, id);
+    if (!current) {
+      throw new TruckError('not_found', `truck ${id} not found`, 'That truck is not on this account.');
+    }
+    if (current.active === active) return current;
+
+    const [row] = await tx.db
+      .update(trucks)
+      .set({ active, updatedAt: new Date() })
+      .where(and(eq(trucks.id, id), eq(trucks.orgId, tx.ctx.orgId)))
+      .returning();
+    if (!row) throw new Error('truck active update returned nothing');
+
+    if (active) {
+      await recordEvent(tx, 'truck.reactivated', { subjectId: id, payload: { label: row.label } });
+    } else {
+      await recordEvent(tx, 'truck.deactivated', {
+        subjectId: id,
+        payload: { label: row.label, ...(reason ? { reason } : {}) },
+      });
+    }
+
+    return row;
+  });
+}
+
 export async function createTruck(
   s: Scope,
   input: CreateTruckInput,

@@ -10,10 +10,37 @@
  * file.
  */
 
-import { CreateTruckSchema, SetTruckMotiveVehicleSchema } from '@haulq/contracts';
-import { createTruck, listTrucks, setTruckMotiveVehicleId, TruckError } from '@haulq/db';
+import {
+  CreateTruckSchema,
+  SetTruckActiveSchema,
+  SetTruckMotiveVehicleSchema,
+  UpdateTruckSchema,
+} from '@haulq/contracts';
+import {
+  createTruck,
+  listTrucks,
+  setTruckActive,
+  setTruckMotiveVehicleId,
+  TruckError,
+  updateTruck,
+} from '@haulq/db';
 import type { FastifyInstance } from 'fastify';
 import { HttpError, requireRole, requireScope } from '../plugins/request-context.ts';
+
+function rethrow(err: unknown): never {
+  if (err instanceof TruckError) {
+    throw new HttpError(err.code === 'not_found' ? 404 : 409, err.code, err.explanation);
+  }
+  throw err;
+}
+
+function badRequest(issues: { path: (string | number)[]; message: string }[]): never {
+  throw new HttpError(
+    400,
+    'invalid_request',
+    issues.map((i) => `${i.path.join('.') || 'body'}: ${i.message}`).join('; '),
+  );
+}
 
 export async function truckRoutes(app: FastifyInstance) {
   app.get('/v1/trucks', async (request) => {
@@ -47,23 +74,48 @@ export async function truckRoutes(app: FastifyInstance) {
     const { id } = request.params as { id: string };
 
     const parsed = SetTruckMotiveVehicleSchema.safeParse(request.body);
-    if (!parsed.success) {
-      throw new HttpError(
-        400,
-        'invalid_request',
-        parsed.error.issues
-          .map((i) => `${i.path.join('.') || 'body'}: ${i.message}`)
-          .join('; '),
-      );
-    }
+    if (!parsed.success) badRequest(parsed.error.issues);
 
     try {
       return await setTruckMotiveVehicleId(s, id, parsed.data.motiveVehicleId);
     } catch (err) {
-      if (err instanceof TruckError) {
-        throw new HttpError(err.code === 'not_found' ? 404 : 409, err.code, err.explanation);
-      }
-      throw err;
+      rethrow(err);
+    }
+  });
+
+  app.patch('/v1/trucks/:id', async (request) => {
+    const s = await requireScope(request);
+    requireRole(request, 'owner', 'dispatcher');
+    const { id } = request.params as { id: string };
+
+    const parsed = UpdateTruckSchema.safeParse(request.body);
+    if (!parsed.success) badRequest(parsed.error.issues);
+
+    try {
+      return await updateTruck(s, id, parsed.data);
+    } catch (err) {
+      rethrow(err);
+    }
+  });
+
+  /**
+   * Take a truck out of service, or bring it back — not `DELETE`. See
+   * `contracts`' `SetTruckActiveSchema` and `repositories/trucks.ts`'s
+   * `setTruckActive` for why: a truck stays referenced by loads, drivers
+   * and telemetry for as long as it was ever run.
+   */
+  app.patch('/v1/trucks/:id/active', async (request) => {
+    const s = await requireScope(request);
+    requireRole(request, 'owner', 'dispatcher');
+    const { id } = request.params as { id: string };
+
+    const parsed = SetTruckActiveSchema.safeParse(request.body);
+    if (!parsed.success) badRequest(parsed.error.issues);
+
+    try {
+      return await setTruckActive(s, id, parsed.data.active, parsed.data.reason);
+    } catch (err) {
+      rethrow(err);
     }
   });
 }

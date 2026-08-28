@@ -133,6 +133,45 @@ export const SetTruckMotiveVehicleSchema = z.object({
 });
 export type SetTruckMotiveVehicle = z.infer<typeof SetTruckMotiveVehicleSchema>;
 
+/**
+ * A partial update — every field independently optional, same reasoning
+ * `UpdateLoadStopSchema` already gives. `maxWeightLbs`/`maxLengthFt` also
+ * accept `null` to clear a limit that turned out to be wrong; `label`,
+ * `equipment` and `shortHaulExempt` do not, since a truck always has one of
+ * each and "clearing" one is meaningless. `capabilities`, when present,
+ * replaces the stored object wholesale rather than merging — the edit
+ * screen always resubmits every checkbox's current state, the same
+ * whole-object shape `createTruck` already writes on the way in.
+ */
+export const UpdateTruckSchema = z
+  .object({
+    label: z.string().min(1).max(80).optional(),
+    equipment: EquipmentTypeSchema.optional(),
+    maxWeightLbs: z.number().int().positive().max(80_000).nullable().optional(),
+    maxLengthFt: z.number().int().positive().max(100).nullable().optional(),
+    capabilities: TruckCapabilitiesSchema.optional(),
+    shortHaulExempt: z.boolean().optional(),
+  })
+  .superRefine((input, ctx) => {
+    if (Object.values(input).every((v) => v === undefined)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Nothing to update.' });
+    }
+  });
+export type UpdateTruck = z.infer<typeof UpdateTruckSchema>;
+
+/**
+ * Take a truck out of service, or bring it back. Not a `DELETE` — a truck
+ * is referenced by loads, drivers and telemetry for as long as the carrier
+ * has run it, and `_shared.ts`'s soft-delete rule is for correcting a
+ * mistaken row, not for retiring equipment that is still part of the
+ * fleet's history. `reason` only means anything on the way out.
+ */
+export const SetTruckActiveSchema = z.object({
+  active: z.boolean(),
+  reason: z.string().max(500).optional(),
+});
+export type SetTruckActive = z.infer<typeof SetTruckActiveSchema>;
+
 // ---------------------------------------------------------------------------
 // Org and carrier profile
 // ---------------------------------------------------------------------------

@@ -208,6 +208,20 @@ export const eventCatalog = {
     describe: (p) => `Added ${p.label} (${p.equipment.toLowerCase().replace('_', ' ')}).`,
   }),
 
+  /**
+   * Everything about a truck except its capabilities and its in/out-of-service
+   * status — each of those already has its own verb below, for the same
+   * reason `truck.capabilities_updated`'s own comment gives: they quietly
+   * change which loads are visible or assignable, and deserve a sentence a
+   * carrier can find rather than being folded into a generic "updated".
+   * `fields` names what changed, same restraint `load_stop.updated` uses —
+   * a raw dimension is not a sentence anyone reads.
+   */
+  'truck.updated': define<{ label: string; fields: string[] }>({
+    subjectType: 'truck',
+    describe: (p) => `Updated ${p.label}: ${p.fields.join(', ')}.`,
+  }),
+
   'truck.capabilities_updated': define<{
     label: string;
     added: string[];
@@ -233,6 +247,11 @@ export const eventCatalog = {
     subjectType: 'truck',
     describe: (p) =>
       `Took ${p.label} out of service${p.reason ? `: ${p.reason}` : '.'}`,
+  }),
+
+  'truck.reactivated': define<{ label: string }>({
+    subjectType: 'truck',
+    describe: (p) => `Put ${p.label} back in service.`,
   }),
 
   'truck.motive_vehicle_matched': define<{ label: string; motiveVehicleId: number | null }>({

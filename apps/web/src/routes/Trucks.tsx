@@ -193,46 +193,47 @@ function SuggestionRow({ suggestion }: { suggestion: MotiveMatchSuggestion }) {
   );
 }
 
-function AddTruck({ onDone }: { onDone: () => void }) {
-  const [label, setLabel] = useState('');
-  const [equipment, setEquipment] = useState<string>('STRAIGHT_BOX');
-  const [maxWeightLbs, setMaxWeight] = useState('');
-  const [shortHaulExempt, setShortHaul] = useState(false);
-  const [capabilities, setCapabilities] = useState<Record<string, boolean>>({});
+interface TruckFormValues {
+  label: string;
+  equipment: string;
+  maxWeightLbs: string;
+  maxLengthFt: string;
+  shortHaulExempt: boolean;
+  capabilities: Record<string, boolean>;
+}
 
-  const queryClient = useQueryClient();
-  const create = useMutation({
-    mutationFn: () =>
-      request<Truck>('/v1/trucks', {
-        body: {
-          label,
-          equipment,
-          ...(maxWeightLbs ? { maxWeightLbs: Number(maxWeightLbs) } : {}),
-          shortHaulExempt,
-          capabilities,
-        },
-      }),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries();
-      onDone();
-    },
-  });
+const EMPTY_TRUCK_FORM: TruckFormValues = {
+  label: '',
+  equipment: 'STRAIGHT_BOX',
+  maxWeightLbs: '',
+  maxLengthFt: '',
+  shortHaulExempt: false,
+  capabilities: {},
+};
 
+/** The fields `AddTruck` and `EditTruck` share — same inputs either way, only what happens on submit differs. */
+function TruckFields({
+  values,
+  onChange,
+}: {
+  values: TruckFormValues;
+  onChange: (values: TruckFormValues) => void;
+}) {
   return (
-    <Card title="Add a truck">
-      <div className="grid gap-5 sm:grid-cols-3">
+    <>
+      <div className="grid gap-5 sm:grid-cols-4">
         <Field label="Label" hint="What you call it. “Unit 12”, “the white box”.">
           <input
             className="hq-input"
-            value={label}
-            onChange={(e) => setLabel(e.target.value)}
+            value={values.label}
+            onChange={(e) => onChange({ ...values, label: e.target.value })}
           />
         </Field>
         <Field label="Equipment">
           <select
             className="hq-input"
-            value={equipment}
-            onChange={(e) => setEquipment(e.target.value)}
+            value={values.equipment}
+            onChange={(e) => onChange({ ...values, equipment: e.target.value })}
           >
             {EQUIPMENT.map((e) => (
               <option key={e} value={e}>
@@ -246,8 +247,17 @@ function AddTruck({ onDone }: { onDone: () => void }) {
             className="hq-input"
             data-numeric="true"
             inputMode="numeric"
-            value={maxWeightLbs}
-            onChange={(e) => setMaxWeight(e.target.value)}
+            value={values.maxWeightLbs}
+            onChange={(e) => onChange({ ...values, maxWeightLbs: e.target.value })}
+          />
+        </Field>
+        <Field label="Max length (ft)">
+          <input
+            className="hq-input"
+            data-numeric="true"
+            inputMode="numeric"
+            value={values.maxLengthFt}
+            onChange={(e) => onChange({ ...values, maxLengthFt: e.target.value })}
           />
         </Field>
       </div>
@@ -267,9 +277,9 @@ function AddTruck({ onDone }: { onDone: () => void }) {
               <input
                 type="checkbox"
                 className="mt-0.5 accent-[--color-brand]"
-                checked={capabilities[c.key] ?? false}
+                checked={values.capabilities[c.key] ?? false}
                 onChange={(e) =>
-                  setCapabilities({ ...capabilities, [c.key]: e.target.checked })
+                  onChange({ ...values, capabilities: { ...values.capabilities, [c.key]: e.target.checked } })
                 }
               />
               <span>
@@ -285,8 +295,8 @@ function AddTruck({ onDone }: { onDone: () => void }) {
         <input
           type="checkbox"
           className="mt-0.5 accent-[--color-brand]"
-          checked={shortHaulExempt}
-          onChange={(e) => setShortHaul(e.target.checked)}
+          checked={values.shortHaulExempt}
+          onChange={(e) => onChange({ ...values, shortHaulExempt: e.target.checked })}
         />
         <span>
           <span className="block text-sm font-medium">
@@ -298,11 +308,40 @@ function AddTruck({ onDone }: { onDone: () => void }) {
           </span>
         </span>
       </label>
+    </>
+  );
+}
+
+function AddTruck({ onDone }: { onDone: () => void }) {
+  const [values, setValues] = useState<TruckFormValues>(EMPTY_TRUCK_FORM);
+
+  const queryClient = useQueryClient();
+  const create = useMutation({
+    mutationFn: () =>
+      request<Truck>('/v1/trucks', {
+        body: {
+          label: values.label,
+          equipment: values.equipment,
+          ...(values.maxWeightLbs ? { maxWeightLbs: Number(values.maxWeightLbs) } : {}),
+          ...(values.maxLengthFt ? { maxLengthFt: Number(values.maxLengthFt) } : {}),
+          shortHaulExempt: values.shortHaulExempt,
+          capabilities: values.capabilities,
+        },
+      }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries();
+      onDone();
+    },
+  });
+
+  return (
+    <Card title="Add a truck">
+      <TruckFields values={values} onChange={setValues} />
 
       <div className="mt-6 flex gap-3">
         <button
           className="hq-btn hq-btn-brand"
-          disabled={!label || create.isPending}
+          disabled={!values.label || create.isPending}
           onClick={() => create.mutate()}
         >
           {create.isPending ? 'Adding…' : 'Add truck'}
@@ -317,8 +356,129 @@ function AddTruck({ onDone }: { onDone: () => void }) {
   );
 }
 
+function EditTruck({ truck, onDone }: { truck: Truck; onDone: () => void }) {
+  const [values, setValues] = useState<TruckFormValues>({
+    label: truck.label,
+    equipment: truck.equipment,
+    maxWeightLbs: truck.maxWeightLbs !== null ? String(truck.maxWeightLbs) : '',
+    maxLengthFt: truck.maxLengthFt !== null ? String(truck.maxLengthFt) : '',
+    shortHaulExempt: truck.shortHaulExempt,
+    capabilities: truck.capabilities ?? {},
+  });
+
+  const queryClient = useQueryClient();
+  const save = useMutation({
+    mutationFn: () =>
+      request<Truck>(`/v1/trucks/${truck.id}`, {
+        method: 'PATCH',
+        body: {
+          label: values.label,
+          equipment: values.equipment,
+          maxWeightLbs: values.maxWeightLbs ? Number(values.maxWeightLbs) : null,
+          maxLengthFt: values.maxLengthFt ? Number(values.maxLengthFt) : null,
+          shortHaulExempt: values.shortHaulExempt,
+          capabilities: values.capabilities,
+        },
+      }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries();
+      onDone();
+    },
+  });
+
+  return (
+    <Card title={`Edit ${truck.label}`}>
+      <TruckFields values={values} onChange={setValues} />
+
+      <div className="mt-6 flex gap-3">
+        <button
+          className="hq-btn hq-btn-brand"
+          disabled={!values.label || save.isPending}
+          onClick={() => save.mutate()}
+        >
+          {save.isPending ? 'Saving…' : 'Save changes'}
+        </button>
+        <button className="hq-btn hq-btn-ghost" onClick={onDone}>
+          Cancel
+        </button>
+      </div>
+
+      <ErrorNote error={save.error} />
+    </Card>
+  );
+}
+
+/**
+ * Delete, in this app's sense: take the truck out of service, not erase it.
+ * `contracts`' `SetTruckActiveSchema` has the reasoning — a truck stays
+ * referenced by loads, drivers and telemetry for as long as it was ever
+ * run. Deactivating needs a confirm step the way `StatusControl`'s cancel
+ * does in `Loads.tsx`; reactivating does not, since nothing is lost by it.
+ */
+function TruckActiveControl({ truck }: { truck: Truck }) {
+  const queryClient = useQueryClient();
+  const [confirming, setConfirming] = useState(false);
+  const [reason, setReason] = useState('');
+
+  const setActive = useMutation({
+    mutationFn: (input: { active: boolean; reason?: string }) =>
+      request(`/v1/trucks/${truck.id}/active`, { method: 'PATCH', body: input }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries();
+      setConfirming(false);
+      setReason('');
+    },
+  });
+
+  if (!truck.active) {
+    return (
+      <button
+        className="hq-btn hq-btn-ghost px-2 py-1 text-xs"
+        disabled={setActive.isPending}
+        onClick={() => setActive.mutate({ active: true })}
+      >
+        {setActive.isPending ? 'Reactivating…' : 'Reactivate'}
+      </button>
+    );
+  }
+
+  if (confirming) {
+    return (
+      <div className="flex flex-wrap items-center gap-1.5">
+        <input
+          className="hq-input w-32 py-1 text-xs"
+          placeholder="Reason (optional)"
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+        />
+        <button
+          className="hq-btn hq-btn-ghost px-2 py-1 text-xs text-bad"
+          disabled={setActive.isPending}
+          onClick={() => setActive.mutate({ active: false, ...(reason.trim() ? { reason: reason.trim() } : {}) })}
+        >
+          {setActive.isPending ? 'Removing…' : 'Confirm'}
+        </button>
+        <button className="hq-btn hq-btn-ghost px-2 py-1 text-xs" onClick={() => setConfirming(false)}>
+          Cancel
+        </button>
+        <ErrorNote error={setActive.error} />
+      </div>
+    );
+  }
+
+  return (
+    <button
+      className="hq-btn hq-btn-ghost px-2 py-1 text-xs text-bad"
+      onClick={() => setConfirming(true)}
+    >
+      Delete
+    </button>
+  );
+}
+
 export function TrucksScreen() {
   const [adding, setAdding] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const trucks = useQuery({
     queryKey: ['trucks'],
     queryFn: () => request<{ items: Truck[] }>('/v1/trucks'),
@@ -349,6 +509,13 @@ export function TrucksScreen() {
 
       {adding && <AddTruck onDone={() => setAdding(false)} />}
 
+      {editingId &&
+        (() => {
+          const editing = trucks.data?.items.find((t) => t.id === editingId);
+          if (!editing) return null;
+          return <EditTruck truck={editing} onDone={() => setEditingId(null)} />;
+        })()}
+
       {motive.data && <MotiveMatchSuggestions suggestions={motive.data.suggestions} />}
       {motive.isError && !motiveNotConnected && <ErrorNote error={motive.error} />}
 
@@ -377,6 +544,7 @@ export function TrucksScreen() {
                       </span>
                     )}
                   </th>
+                  <th className="field-label">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -384,10 +552,17 @@ export function TrucksScreen() {
                   const enabled = Object.entries(truck.capabilities ?? {})
                     .filter(([, on]) => on)
                     .map(([k]) => CAPABILITIES.find((c) => c.key === k)?.label ?? k);
-  
+
                   return (
-                    <tr key={truck.id}>
-                      <td className="font-medium">{truck.label}</td>
+                    <tr key={truck.id} className={!truck.active ? 'opacity-60' : undefined}>
+                      <td className="font-medium">
+                        {truck.label}
+                        {!truck.active && (
+                          <span className="ml-1.5">
+                            <Pill tone="neutral">Inactive</Pill>
+                          </span>
+                        )}
+                      </td>
                       <td className="text-slate">{pretty(truck.equipment)}</td>
                       <td>
                         {truck.maxWeightLbs ? (
@@ -411,6 +586,17 @@ export function TrucksScreen() {
                       </td>
                       <td>
                         <MotiveVehicleCell truck={truck} vehicles={vehicles} />
+                      </td>
+                      <td>
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <button
+                            className="hq-btn hq-btn-ghost px-2 py-1 text-xs"
+                            onClick={() => setEditingId(truck.id)}
+                          >
+                            Edit
+                          </button>
+                          <TruckActiveControl truck={truck} />
+                        </div>
                       </td>
                     </tr>
                   );
