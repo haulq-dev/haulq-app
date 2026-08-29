@@ -26,6 +26,7 @@ import { createDriver } from './drivers.ts';
 import { createLoad, updateLoadStatus } from './loads.ts';
 import {
   findExceptionCandidates,
+  generateCheckinCode,
   issueCheckinLink,
   issueVisibilityLink,
   previewCheckin,
@@ -41,6 +42,26 @@ import { createTruck } from './trucks.ts';
 
 const url = process.env['DATABASE_URL'];
 const suite = url ? describe : describe.skip;
+
+// Pure — runs with or without DATABASE_URL, unlike everything else in this file.
+describe('generateCheckinCode', () => {
+  it('produces an 8-character code in two dashed groups', () => {
+    for (let i = 0; i < 200; i++) {
+      assert.match(generateCheckinCode(), /^[0-9A-Z]{4}-[0-9A-Z]{4}$/);
+    }
+  });
+
+  it('never uses I, L, O or U — visually confusable with 1, 1, 0, and each other', () => {
+    for (let i = 0; i < 500; i++) {
+      assert.doesNotMatch(generateCheckinCode(), /[ILOU]/);
+    }
+  });
+
+  it('does not repeat across a few hundred calls', () => {
+    const codes = new Set(Array.from({ length: 500 }, () => generateCheckinCode()));
+    assert.equal(codes.size, 500);
+  });
+});
 
 let db: Database;
 let orgId: string;
@@ -154,6 +175,21 @@ suite('track repository', () => {
       const driver = await createDriver(s, { fullName: 'Casey Driver' });
       const { link } = await issueCheckinLink(s, load.id, { driverId: driver.id });
       assert.equal(link.driverId, driver.id);
+    });
+
+    it('matches the code regardless of case, dash, or stray whitespace', async () => {
+      const load = await aDispatchedLoad();
+      const { token } = await issueCheckinLink(s, load.id);
+      const [firstHalf, secondHalf] = token.split('-');
+
+      const variants = [
+        token.toLowerCase(),
+        token.replace('-', ''),
+        `  ${firstHalf} ${secondHalf}  `.toLowerCase(),
+      ];
+      for (const variant of variants) {
+        await assert.doesNotReject(() => previewCheckin(db, variant));
+      }
     });
   });
 

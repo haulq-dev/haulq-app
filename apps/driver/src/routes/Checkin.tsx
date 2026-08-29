@@ -97,14 +97,15 @@ function TokenEntry({ onSubmit }: { onSubmit: (token: string) => void }) {
     <div className="mx-auto max-w-md px-6 py-16">
       <h1 className="mb-2 text-3xl">HaulQ Driver</h1>
       <p className="mb-6 text-slate">
-        Paste the check-in link your dispatcher sent, or the code from it.
+        Paste the check-in link your dispatcher sent, or type the code — case
+        and dashes don't matter.
       </p>
       <input
         className="hq-input"
-        placeholder="Check-in link or code"
+        placeholder="e.g. K4H7-QX2M"
         value={value}
         onChange={(e) => setValue(e.target.value)}
-        autoCapitalize="off"
+        autoCapitalize="characters"
         autoCorrect="off"
       />
       <button

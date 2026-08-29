@@ -206,4 +206,66 @@ suite('api', () => {
     });
     assert.equal(res.statusCode, 400);
   });
+
+  // --- cors ------------------------------------------------------------
+
+  describe('cross-origin policy', () => {
+    // The driver app is a Capacitor build (Origin: capacitor://localhost)
+    // and a broker's tracking link is opened in whatever browser they have —
+    // neither one is ever WEB_ORIGIN. If these routes stayed pinned to it,
+    // the fix would be indistinguishable from the bug it replaced.
+    const foreignOrigin = 'capacitor://localhost';
+
+    it('allows a foreign origin on the public checkin route', async () => {
+      const res = await app.inject({
+        method: 'GET',
+        url: '/v1/checkin/not-a-real-token',
+        headers: { origin: foreignOrigin },
+      });
+      assert.equal(res.headers['access-control-allow-origin'], foreignOrigin);
+    });
+
+    it('allows a foreign origin on the public tracking route', async () => {
+      const res = await app.inject({
+        method: 'GET',
+        url: '/v1/track/not-a-real-token',
+        headers: { origin: foreignOrigin },
+      });
+      assert.equal(res.headers['access-control-allow-origin'], foreignOrigin);
+    });
+
+    it('still refuses a foreign origin on an authenticated route', async () => {
+      const res = await app.inject({
+        method: 'GET',
+        url: '/v1/trucks',
+        headers: { ...as(), origin: foreignOrigin },
+      });
+      assert.notEqual(res.headers['access-control-allow-origin'], foreignOrigin);
+    });
+  });
+
+  // --- rate limiting ---------------------------------------------------
+
+  describe('rate limiting', () => {
+    // Shortening the check-in code to something a person can say aloud
+    // (repositories/track.ts's generateCheckinCode) only stays safe paired
+    // with something that makes guessing it slow — this is that something.
+    it('throttles the public checkin route past its per-minute limit', async () => {
+      let lastStatus = 200;
+      for (let i = 0; i < 31; i++) {
+        const res = await app.inject({ method: 'GET', url: '/v1/checkin/not-a-real-token' });
+        lastStatus = res.statusCode;
+      }
+      assert.equal(lastStatus, 429);
+    });
+
+    it('does not throttle an authenticated route at the same volume', async () => {
+      let sawLimit = false;
+      for (let i = 0; i < 31; i++) {
+        const res = await app.inject({ method: 'GET', url: '/v1/trucks', headers: as() });
+        if (res.statusCode === 429) sawLimit = true;
+      }
+      assert.equal(sawLimit, false);
+    });
+  });
 });

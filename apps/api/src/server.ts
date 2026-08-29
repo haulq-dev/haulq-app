@@ -12,7 +12,8 @@
 
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
-import Fastify, { type FastifyInstance } from 'fastify';
+import rateLimit from '@fastify/rate-limit';
+import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
 import {
   closeDatabase,
   createDatabase,
@@ -225,7 +226,41 @@ export async function buildServer(
   // Marketing (haulq.ai) and the app (app.haulq.ai) are separate origins by
   // design — build plan section 6 — so this is a real cross-origin setup, not
   // a development convenience.
-  await app.register(cors, { origin: env.WEB_ORIGIN, credentials: true });
+  //
+  // A function, not a fixed origin, because two route families deliberately
+  // do not fit a single-origin policy: `/v1/checkin/*` (the driver app) and
+  // `/v1/track/*` (a broker's link) are the public, token-authenticated
+  // routes `track.ts`'s own module note describes — "the token is the
+  // authority," not a session. A broker opens a tracking link in whatever
+  // browser they have open; the driver app is a Capacitor build with no web
+  // origin at all (`capacitor://localhost`, which cannot ever equal
+  // WEB_ORIGIN no matter what that is set to). Restricting those two route
+  // families to WEB_ORIGIN would only ever block the legitimate callers
+  // they exist for — everything else keeps the strict single-origin policy.
+  // The outer `() =>` is not decoration — Fastify's own `.register(plugin,
+  // opts)` calls a function passed as `opts` once, with the instance, and
+  // uses *that return value* as what the plugin actually receives
+  // (confirmed against @fastify/cors's own test suite, which registers
+  // exactly this shape: `register(cors, () => () => {...})`). Passing the
+  // per-request delegator directly, without this wrapper, means Fastify
+  // calls the delegator itself as the options-factory — `req` arrives as
+  // the Fastify instance and `callback` arrives as `undefined` — and the
+  // resulting `callback(...)` call throws inside plugin registration in a
+  // way that stalls the app before it ever starts rather than surfacing as
+  // a clean error. That is exactly what happened here the first time.
+  await app.register(cors, () => (req: FastifyRequest, callback: (err: Error | null, options: { origin: boolean | string; credentials: boolean }) => void) => {
+    const isPublicTrackRoute = /^\/v1\/(checkin|track)\//.test(req.url);
+    callback(null, { origin: isPublicTrackRoute ? true : env.WEB_ORIGIN, credentials: true });
+  });
+
+  // `global: false` — nothing gets a limit just by existing. The two route
+  // families opted in below (`config: { rateLimit: {...} }` in track.ts)
+  // are exactly the ones the CORS policy above just opened to any origin:
+  // shortening the driver check-in code from a 256-bit token to an 8-
+  // character one a person can say aloud (2^40 combinations) is only safe
+  // paired with something that makes guessing it slow, and nothing on this
+  // API has ever throttled anything before now.
+  await app.register(rateLimit, { global: false });
 
   /**
    * Liveness. Answers "is the process up", nothing more. Render polls this.

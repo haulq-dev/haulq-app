@@ -122,8 +122,21 @@ export async function trackRoutes(app: FastifyInstance) {
 
   // --- without a tenant ------------------------------------------------------
 
+  /**
+   * 30/minute per IP — generous for a real driver (a page load, a handful
+   * of milestone taps, a position ping every five minutes) but a real wall
+   * against guessing a token. It matters most here: `checkin/:token`'s
+   * token is now an 8-character code chosen specifically so a driver can
+   * read it aloud (`repositories/track.ts`'s `generateCheckinCode`), and
+   * nothing on this API has ever throttled a request before this. Applied
+   * to `/v1/track/:token` too — its own token stays full-entropy, but it is
+   * the other route the CORS policy above just opened to any origin, and
+   * `global: false` on the plugin means neither gets a limit for free.
+   */
+  const publicTrackRouteLimit = { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } };
+
   /** What a driver sees before tapping anything. */
-  app.get('/v1/checkin/:token', async (request) => {
+  app.get('/v1/checkin/:token', publicTrackRouteLimit, async (request) => {
     const { token } = request.params as { token: string };
     try {
       return await previewCheckin(app.db, token);
@@ -132,7 +145,7 @@ export async function trackRoutes(app: FastifyInstance) {
     }
   });
 
-  app.post('/v1/checkin/:token/stops/:stopId', async (request) => {
+  app.post('/v1/checkin/:token/stops/:stopId', publicTrackRouteLimit, async (request) => {
     const { token, stopId } = request.params as { token: string; stopId: string };
 
     const parsed = RecordStopCheckinSchema.safeParse(request.body);
@@ -151,7 +164,7 @@ export async function trackRoutes(app: FastifyInstance) {
     }
   });
 
-  app.post('/v1/checkin/:token/position', async (request, reply) => {
+  app.post('/v1/checkin/:token/position', publicTrackRouteLimit, async (request, reply) => {
     const { token } = request.params as { token: string };
 
     const parsed = RecordPositionSchema.safeParse(request.body);
@@ -176,7 +189,7 @@ export async function trackRoutes(app: FastifyInstance) {
    * more than status, stop timestamps and the truck's last known position.
    * No ETA, no detention badge — see `repositories/track.ts`'s module note.
    */
-  app.get('/v1/track/:token', async (request) => {
+  app.get('/v1/track/:token', publicTrackRouteLimit, async (request) => {
     const { token } = request.params as { token: string };
     try {
       return await previewTracking(app.db, token);

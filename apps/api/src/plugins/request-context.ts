@@ -71,12 +71,24 @@ export const requestContextPlugin = fp(async (app: FastifyInstance) => {
     // Fastify's own schema validation, when a route opts into it. Typed loosely
     // because `setErrorHandler` widens to unknown once other error classes are
     // narrowed above it.
-    const fastifyError = err as { validation?: unknown; message?: string };
+    const fastifyError = err as { validation?: unknown; message?: string; statusCode?: number };
     if (fastifyError.validation) {
       return reply.code(400).send({
         code: 'invalid_request',
         explanation: fastifyError.message ?? 'The request body is not valid.',
         details: fastifyError.validation,
+      });
+    }
+
+    // @fastify/rate-limit's own error, thrown with `statusCode: 429` already
+    // set — not a bug to hide behind a generic 500. Its message ("Rate limit
+    // exceeded, retry in N seconds") is safe to show as-is, unlike the
+    // catch-all below: it never carries a column name, a constraint name, or
+    // another tenant's data.
+    if (fastifyError.statusCode === 429) {
+      return reply.code(429).send({
+        code: 'rate_limited',
+        explanation: fastifyError.message ?? 'Too many requests. Try again shortly.',
       });
     }
 

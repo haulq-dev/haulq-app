@@ -59,6 +59,43 @@ const CHECKIN_LINK_TTL_DAYS = 45;
 const hashToken = (token: string): string =>
   createHash('sha256').update(token).digest('hex');
 
+/**
+ * Crockford's base32 alphabet — no `I`, `L`, `O`, `U`, so nothing a driver
+ * reads back sounds like a digit it isn't (`I`/`1`, `O`/`0`) and nothing
+ * spells out sideways. A real, established alphabet rather than an
+ * invented one, same reasoning this codebase already applies to not
+ * hand-rolling sealed-box crypto in `credential-crypto.ts`.
+ */
+const CHECKIN_CODE_ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+
+/**
+ * 8 characters from a 32-symbol alphabet is 2^40 combinations — the length
+ * a driver can read aloud or type on a phone keyboard without losing their
+ * place, chosen deliberately over the previous 32-byte token that made this
+ * exact request necessary. Short enough to matter for brute-forcing only
+ * because the link the code replaces lives 45 days; `publicTrackRouteLimit`
+ * in `routes/track.ts` is the other half of that trade, not a separate
+ * concern — see its own note.
+ */
+export function generateCheckinCode(): string {
+  const bytes = randomBytes(8);
+  let code = '';
+  for (const byte of bytes) {
+    code += CHECKIN_CODE_ALPHABET[byte % CHECKIN_CODE_ALPHABET.length];
+  }
+  return `${code.slice(0, 4)}-${code.slice(4)}`;
+}
+
+/**
+ * What a driver actually typed, back to what was hashed at issue time — a
+ * pasted "k4h7 qx2m" or "k4h7-qx2m" or "K4H7QX2M" all have to reach
+ * `findCheckinLink` as the same value. Never applied to a visibility
+ * link's token: that one is clicked from a link, never typed, and stays at
+ * full entropy with its original case and alphabet intact.
+ */
+const normalizeCheckinCode = (raw: string): string =>
+  raw.toUpperCase().replace(/[^0-9A-Z]/g, '');
+
 const MILESTONE_COLUMN = {
   arrived: 'arrivedAt',
   loading_started: 'loadingStartedAt',
@@ -115,7 +152,10 @@ export async function issueCheckinLink(
       .set({ revokedAt: new Date() })
       .where(and(eq(loadCheckinLinks.loadId, loadId), isNull(loadCheckinLinks.revokedAt)));
 
-    const token = randomBytes(32).toString('base64url');
+    // The display form keeps its dash; the hash is of the normalized form,
+    // so a driver's pasted "k4h7qx2m" (no dash, lowercase) hashes to the
+    // same value this row was stored under. See `normalizeCheckinCode`.
+    const code = generateCheckinCode();
 
     const [row] = await tx.db
       .insert(loadCheckinLinks)
@@ -123,7 +163,7 @@ export async function issueCheckinLink(
         orgId: tx.ctx.orgId,
         loadId,
         driverId: input.driverId ?? null,
-        tokenHash: hashToken(token),
+        tokenHash: hashToken(normalizeCheckinCode(code)),
         createdByUserId: tx.ctx.actor.type === 'user' ? tx.ctx.actor.id : null,
         expiresAt: new Date(Date.now() + CHECKIN_LINK_TTL_DAYS * 86_400_000),
       })
@@ -137,7 +177,7 @@ export async function issueCheckinLink(
     });
 
     const { tokenHash: _hash, ...link } = row;
-    return { link, token };
+    return { link, token: code };
   });
 }
 
@@ -176,7 +216,7 @@ async function findCheckinLink(
   db: Database,
   token: string,
 ): Promise<{ orgId: string; loadId: string; driverId: string | null }> {
-  const hash = hashToken(token);
+  const hash = hashToken(normalizeCheckinCode(token));
 
   const [row] = await db
     .select({ link: loadCheckinLinks })

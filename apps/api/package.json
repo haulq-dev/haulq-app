@@ -12,15 +12,16 @@
     "validate-here-etas": "node --env-file-if-exists=../../.env --experimental-strip-types src/scripts/validate-here-etas.ts"
   },
   "dependencies": {
+    "@clerk/backend": "^3.16.6",
+    "@fastify/cors": "^10.0.1",
+    "@fastify/helmet": "^13.0.0",
+    "@fastify/rate-limit": "^11.2.0",
     "@haulq/contracts": "workspace:*",
     "@haulq/db": "workspace:*",
     "fastify": "^5.2.0",
-    "pino": "^10.3.1",
-    "@fastify/cors": "^10.0.1",
-    "@fastify/helmet": "^13.0.0",
-    "zod": "^3.24.0",
     "fastify-plugin": "^5.0.1",
-    "@clerk/backend": "^3.16.6"
+    "pino": "^10.3.1",
+    "zod": "^3.24.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
