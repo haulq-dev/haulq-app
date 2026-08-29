@@ -126,7 +126,7 @@ function StopCard({ token, stop }: { token: string; stop: CheckinStop }) {
   const tap = useMutation({
     mutationFn: (milestone: StopMilestone) => {
       setPending(milestone);
-      return request(`/checkin/${token}/stops/${stop.id}`, {
+      return request(`/v1/checkin/${token}/stops/${stop.id}`, {
         method: 'POST',
         body: { milestone },
       });
@@ -194,7 +194,7 @@ function PositionControl({ token }: { token: string }) {
     setError(null);
     try {
       const position = await Geolocation.getCurrentPosition({ enableHighAccuracy: false });
-      await request(`/checkin/${token}/position`, {
+      await request(`/v1/checkin/${token}/position`, {
         method: 'POST',
         body: { lat: position.coords.latitude, lng: position.coords.longitude },
       });
@@ -235,7 +235,7 @@ function PositionControl({ token }: { token: string }) {
 function CheckinView({ token, onBack }: { token: string; onBack: () => void }) {
   const preview = useQuery({
     queryKey: ['checkin', token],
-    queryFn: () => request<CheckinPreview>(`/checkin/${token}`),
+    queryFn: () => request<CheckinPreview>(`/v1/checkin/${token}`),
     retry: false,
   });
 
