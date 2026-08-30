@@ -90,7 +90,7 @@ describe('PageQuerySchema', () => {
     assert.throws(() => PageQuerySchema.parse({ limit: 5000 }));
   });
 
-  it('defaults to a page a phone can render', () => {
-    assert.equal(PageQuerySchema.parse({}).limit, 25);
+  it('defaults to the same page size the repositories fall back to', () => {
+    assert.equal(PageQuerySchema.parse({}).limit, 50);
   });
 });

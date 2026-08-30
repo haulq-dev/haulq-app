@@ -20,11 +20,17 @@
  * backwards from booked to prospect" — and are passed through rather than
  * rewritten, so the message a carrier reads is the message the database
  * actually produced.
+ *
+ * Validation happens through Fastify's own `schema` option, the same as
+ * `trucks.ts` — see that file's module note for why. The Postgres-refusal
+ * translation below is unrelated to that and unaffected by it: it only ever
+ * runs after a request has already passed schema validation.
  */
 
 import {
   AssignLoadSchema,
   CreateLoadSchema,
+  PageQuerySchema,
   UpdateLoadStatusSchema,
   UpdateLoadStopSchema,
 } from '@haulq/contracts';
@@ -42,6 +48,8 @@ import {
   type LoadStatus,
 } from '@haulq/db';
 import type { FastifyInstance } from 'fastify';
+import type { ZodTypeProvider } from 'fastify-type-provider-zod';
+import { z } from 'zod';
 import { HttpError, requireRole, requireScope } from '../plugins/request-context.ts';
 
 /** Postgres SQLSTATEs this route knows how to explain. */
@@ -118,102 +126,136 @@ function rethrow(err: unknown): never {
   throw err;
 }
 
-function badRequest(issues: { path: (string | number)[]; message: string }[]): never {
-  throw new HttpError(
-    400,
-    'invalid_request',
-    issues.map((i) => `${i.path.join('.') || 'body'}: ${i.message}`).join('; '),
-  );
-}
+const IdParamSchema = z.object({ id: z.string().uuid() });
+const StopParamSchema = z.object({ id: z.string().uuid(), stopId: z.string().uuid() });
+
+/**
+ * `status`/`truckId` stay plain, unconstrained strings — same as before this
+ * file validated through Fastify at all. `status` in particular is read as
+ * "?status=booked&status=dispatched" or comma-separated below, and either
+ * shape is a valid string here.
+ */
+const ListLoadsQuerySchema = PageQuerySchema.extend({
+  status: z.string().optional(),
+  truckId: z.string().optional(),
+});
 
 export async function loadRoutes(app: FastifyInstance) {
-  app.get('/v1/loads', async (request) => {
-    const s = await requireScope(request);
-    const q = request.query as { status?: string; truckId?: string; limit?: string; cursor?: string };
+  const server = app.withTypeProvider<ZodTypeProvider>();
 
-    // Repeatable as `?status=booked&status=dispatched` or comma-separated —
-    // both are what a hand-written link tends to contain.
-    const status = q.status
-      ? (q.status.split(',').map((x) => x.trim()).filter(Boolean) as LoadStatus[])
-      : undefined;
+  server.get(
+    '/v1/loads',
+    { schema: { tags: ['Loads'], summary: 'List loads', querystring: ListLoadsQuerySchema } },
+    async (request) => {
+      const s = await requireScope(request);
+      const { status: statusParam, truckId, cursor, limit } = request.query;
 
-    try {
-      const { items, nextCursor } = await listLoads(s, {
-        ...(status?.length ? { status } : {}),
-        ...(q.truckId ? { truckId: q.truckId } : {}),
-        ...(q.limit ? { limit: Number(q.limit) } : {}),
-        ...(q.cursor ? { cursor: q.cursor } : {}),
-      });
+      // Repeatable as `?status=booked&status=dispatched` or comma-separated —
+      // both are what a hand-written link tends to contain.
+      const status = statusParam
+        ? (statusParam.split(',').map((x) => x.trim()).filter(Boolean) as LoadStatus[])
+        : undefined;
 
-      return { items, counts: await loadCounts(s), nextCursor };
-    } catch (err) {
-      rethrow(err);
-    }
-  });
+      try {
+        const { items, nextCursor } = await listLoads(s, {
+          ...(status?.length ? { status } : {}),
+          ...(truckId ? { truckId } : {}),
+          limit,
+          ...(cursor ? { cursor } : {}),
+        });
 
-  app.get('/v1/loads/:id', async (request) => {
-    const s = await requireScope(request);
-    const { id } = request.params as { id: string };
-    const load = await getLoad(s, id);
-    if (!load) throw new HttpError(404, 'not_found', 'That load no longer exists.');
-    return load;
-  });
+        return { items, counts: await loadCounts(s), nextCursor };
+      } catch (err) {
+        rethrow(err);
+      }
+    },
+  );
+
+  server.get(
+    '/v1/loads/:id',
+    { schema: { tags: ['Loads'], summary: 'Get a load', params: IdParamSchema } },
+    async (request) => {
+      const s = await requireScope(request);
+      const { id } = request.params;
+      const load = await getLoad(s, id);
+      if (!load) throw new HttpError(404, 'not_found', 'That load no longer exists.');
+      return load;
+    },
+  );
 
   /**
    * What this one load actually made. PHASE_1_PLAN.md section 4's per-load
    * gap — a single-row read, not a new aggregation engine.
    */
-  app.get('/v1/loads/:id/margin', async (request) => {
-    const s = await requireScope(request);
-    const { id } = request.params as { id: string };
-    const margin = await loadMargin(s, id);
-    if (!margin) throw new HttpError(404, 'not_found', 'That load no longer exists.');
-    return margin;
-  });
+  server.get(
+    '/v1/loads/:id/margin',
+    { schema: { tags: ['Loads'], summary: "A load's margin", params: IdParamSchema } },
+    async (request) => {
+      const s = await requireScope(request);
+      const { id } = request.params;
+      const margin = await loadMargin(s, id);
+      if (!margin) throw new HttpError(404, 'not_found', 'That load no longer exists.');
+      return margin;
+    },
+  );
 
-  app.post('/v1/loads', async (request, reply) => {
-    const s = await requireScope(request);
-    requireRole(request, 'owner', 'dispatcher');
+  server.post(
+    '/v1/loads',
+    { schema: { tags: ['Loads'], summary: 'Create a load', body: CreateLoadSchema } },
+    async (request, reply) => {
+      const s = await requireScope(request);
+      requireRole(request, 'owner', 'dispatcher');
+      try {
+        return reply.code(201).send(await createLoad(s, request.body));
+      } catch (err) {
+        rethrow(err);
+      }
+    },
+  );
 
-    const parsed = CreateLoadSchema.safeParse(request.body);
-    if (!parsed.success) badRequest(parsed.error.issues);
+  server.patch(
+    '/v1/loads/:id/status',
+    {
+      schema: {
+        tags: ['Loads'],
+        summary: "Move a load's status",
+        params: IdParamSchema,
+        body: UpdateLoadStatusSchema,
+      },
+    },
+    async (request) => {
+      const s = await requireScope(request);
+      requireRole(request, 'owner', 'dispatcher');
+      const { id } = request.params;
+      try {
+        return await updateLoadStatus(s, id, request.body);
+      } catch (err) {
+        rethrow(err);
+      }
+    },
+  );
 
-    try {
-      return reply.code(201).send(await createLoad(s, parsed.data));
-    } catch (err) {
-      rethrow(err);
-    }
-  });
-
-  app.patch('/v1/loads/:id/status', async (request) => {
-    const s = await requireScope(request);
-    requireRole(request, 'owner', 'dispatcher');
-    const { id } = request.params as { id: string };
-
-    const parsed = UpdateLoadStatusSchema.safeParse(request.body);
-    if (!parsed.success) badRequest(parsed.error.issues);
-
-    try {
-      return await updateLoadStatus(s, id, parsed.data);
-    } catch (err) {
-      rethrow(err);
-    }
-  });
-
-  app.patch('/v1/loads/:id/assignment', async (request) => {
-    const s = await requireScope(request);
-    requireRole(request, 'owner', 'dispatcher');
-    const { id } = request.params as { id: string };
-
-    const parsed = AssignLoadSchema.safeParse(request.body);
-    if (!parsed.success) badRequest(parsed.error.issues);
-
-    try {
-      return await assignLoad(s, id, parsed.data);
-    } catch (err) {
-      rethrow(err);
-    }
-  });
+  server.patch(
+    '/v1/loads/:id/assignment',
+    {
+      schema: {
+        tags: ['Loads'],
+        summary: 'Assign a truck and driver to a load',
+        params: IdParamSchema,
+        body: AssignLoadSchema,
+      },
+    },
+    async (request) => {
+      const s = await requireScope(request);
+      requireRole(request, 'owner', 'dispatcher');
+      const { id } = request.params;
+      try {
+        return await assignLoad(s, id, request.body);
+      } catch (err) {
+        rethrow(err);
+      }
+    },
+  );
 
   /**
    * Correct a stop's coordinates or appointment window after the load
@@ -221,18 +263,25 @@ export async function loadRoutes(app: FastifyInstance) {
    * closes — Routes' feasibility check depends on both and `CreateLoadSchema`
    * only ever sets them once, at creation.
    */
-  app.patch('/v1/loads/:id/stops/:stopId', async (request) => {
-    const s = await requireScope(request);
-    requireRole(request, 'owner', 'dispatcher');
-    const { id, stopId } = request.params as { id: string; stopId: string };
-
-    const parsed = UpdateLoadStopSchema.safeParse(request.body);
-    if (!parsed.success) badRequest(parsed.error.issues);
-
-    try {
-      return await updateLoadStop(s, id, stopId, parsed.data);
-    } catch (err) {
-      rethrow(err);
-    }
-  });
+  server.patch(
+    '/v1/loads/:id/stops/:stopId',
+    {
+      schema: {
+        tags: ['Loads'],
+        summary: "Correct a stop's coordinates or appointment window",
+        params: StopParamSchema,
+        body: UpdateLoadStopSchema,
+      },
+    },
+    async (request) => {
+      const s = await requireScope(request);
+      requireRole(request, 'owner', 'dispatcher');
+      const { id, stopId } = request.params;
+      try {
+        return await updateLoadStop(s, id, stopId, request.body);
+      } catch (err) {
+        rethrow(err);
+      }
+    },
+  );
 }

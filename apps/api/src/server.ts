@@ -13,7 +13,14 @@
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
+import fastifySwagger from '@fastify/swagger';
+import fastifySwaggerUi from '@fastify/swagger-ui';
 import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
+import {
+  jsonSchemaTransform,
+  serializerCompiler,
+  validatorCompiler,
+} from 'fastify-type-provider-zod';
 import {
   closeDatabase,
   createDatabase,
@@ -283,6 +290,28 @@ export async function buildServer(
   });
 
   await app.register(requestContextPlugin);
+
+  // The OpenAPI doc is generated from the same Zod schemas each route
+  // validates against, not hand-written separately — see the module note on
+  // `trucks.ts` and `loads.ts`, the two routes that opt into this so far.
+  // `setValidatorCompiler`/`setSerializerCompiler` must run before any route
+  // using `.withTypeProvider<ZodTypeProvider>()` is registered below.
+  app.setValidatorCompiler(validatorCompiler);
+  app.setSerializerCompiler(serializerCompiler);
+  await app.register(fastifySwagger, {
+    openapi: {
+      info: { title: 'HaulQ API', version: '1.0.0' },
+      components: {
+        securitySchemes: {
+          bearerAuth: { type: 'http', scheme: 'bearer' },
+        },
+      },
+      security: [{ bearerAuth: [] }],
+    },
+    transform: jsonSchemaTransform,
+  });
+  await app.register(fastifySwaggerUi, { routePrefix: '/documentation' });
+
   // Registered without fastify-plugin so its raw-body parser stays scoped to
   // the webhook route — the signature is over the bytes as sent.
   await app.register(webhookRoutes);

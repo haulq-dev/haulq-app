@@ -47,7 +47,9 @@ export const UserIdSchema = z.string().uuid();
  */
 export const PageQuerySchema = z.object({
   cursor: z.string().optional(),
-  limit: z.number().int().min(1).max(100).default(25),
+  // Coerced: query-string values arrive as strings (`?limit=50`), never as
+  // the number Zod would otherwise require.
+  limit: z.coerce.number().int().min(1).max(200).default(50),
 });
 export type PageQuery = z.infer<typeof PageQuerySchema>;
 
