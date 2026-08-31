@@ -539,14 +539,40 @@ function TrackingLink({ loadId, reference }: { loadId: string; reference: number
  * here would be a link that goes nowhere. The driver app's own paste box
  * already accepts a bare code for exactly this reason.
  */
+
+/**
+ * Remembers a just-issued code across a reload of this page, in this
+ * browser only — never sent to or stored by the server, which still only
+ * ever keeps the hash. Reloading a page mid-task is an easy way to lose a
+ * code nobody copied down yet, and the actual security property "the
+ * server cannot show it to you again" is unaffected either way: this is
+ * the same browser tab remembering what it already had on screen a moment
+ * ago, not a new way to retrieve it.
+ */
+const checkinCodeStorageKey = (loadId: string) => `haulq.checkinCode.${loadId}`;
+
+function storedCheckinCode(loadId: string): string | null {
+  try {
+    return localStorage.getItem(checkinCodeStorageKey(loadId));
+  } catch {
+    return null;
+  }
+}
+
 function CheckinLink({ loadId, reference }: { loadId: string; reference: number }) {
-  const [issuedToken, setIssuedToken] = useState<string | null>(null);
+  const [issuedToken, setIssuedToken] = useState<string | null>(() => storedCheckinCode(loadId));
   const [copied, setCopied] = useState(false);
 
   const issue = useMutation({
     mutationFn: () =>
       request<{ token: string }>(`/v1/loads/${loadId}/checkin-links`, { method: 'POST' }),
     onSuccess: (res) => {
+      try {
+        localStorage.setItem(checkinCodeStorageKey(loadId), res.token);
+      } catch {
+        // Private browsing or storage disabled — the code still works, it
+        // just will not survive a reload of this page.
+      }
       setIssuedToken(res.token);
       setCopied(false);
     },
@@ -554,7 +580,14 @@ function CheckinLink({ loadId, reference }: { loadId: string; reference: number 
 
   const revoke = useMutation({
     mutationFn: () => request(`/v1/loads/${loadId}/checkin-links`, { method: 'DELETE' }),
-    onSuccess: () => setIssuedToken(null),
+    onSuccess: () => {
+      try {
+        localStorage.removeItem(checkinCodeStorageKey(loadId));
+      } catch {
+        // Nothing to clean up if it was never stored.
+      }
+      setIssuedToken(null);
+    },
   });
 
   const copy = async () => {

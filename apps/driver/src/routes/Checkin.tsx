@@ -293,16 +293,48 @@ function tokenFromPath(): string | null {
   return match ? decodeURIComponent(match[1]!) : null;
 }
 
+/**
+ * Persisted across a real app kill, not just a background/resume — a
+ * Capacitor app's WebView reloads from scratch on a cold launch, so
+ * whatever URL `pushState` last landed on does not survive it the way it
+ * would in a normal browser tab. Without this, closing and reopening the
+ * app looks identical to never having entered a code at all. There is
+ * nothing sensitive to protect by forgetting it: the server, not this
+ * value's secrecy on one phone, is what decides whether the code still
+ * works — a driver revoked or expired mid-load sees exactly the same
+ * "this link isn't working" screen either way.
+ */
+const STORED_TOKEN_KEY = 'haulq.driver.checkinToken';
+
+function storedToken(): string | null {
+  try {
+    return localStorage.getItem(STORED_TOKEN_KEY);
+  } catch {
+    return null;
+  }
+}
+
 export function CheckinScreen() {
-  const [token, setToken] = useState<string | null>(() => tokenFromPath());
+  const [token, setToken] = useState<string | null>(() => tokenFromPath() ?? storedToken());
 
   const chooseToken = (t: string) => {
     window.history.pushState(null, '', `/checkin/${encodeURIComponent(t)}`);
+    try {
+      localStorage.setItem(STORED_TOKEN_KEY, t);
+    } catch {
+      // Private browsing or storage disabled — the code still works for
+      // this session, it just will not survive a real app kill.
+    }
     setToken(t);
   };
 
   const clearToken = () => {
     window.history.pushState(null, '', '/');
+    try {
+      localStorage.removeItem(STORED_TOKEN_KEY);
+    } catch {
+      // Same as above — nothing to clean up if it was never stored.
+    }
     setToken(null);
   };
 

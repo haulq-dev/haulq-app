@@ -104,6 +104,25 @@ suite('track routes', () => {
     assert.equal(preview.json().loadReference, load.reference);
   });
 
+  it('issues a checkin link with no payload at all, not just an empty one', async () => {
+    // The real bug this guards: `payload: {}` above sends an actual `{}`
+    // body, which always validated fine. A caller that omits the body
+    // entirely (the web app's own API client does exactly this) sends no
+    // bytes at all, and Fastify's JSON parser hands that through as `null`
+    // — which `IssueCheckinLinkSchema.optional()` rejected even though the
+    // route's own comment says a bare POST is the common case. Needs
+    // `.nullish()`. See the note at the schema's usage in this route.
+    const orgId = await newOrg('Track No Payload Carrier');
+    const load = await aDispatchedLoad(orgId);
+
+    const issued = await app.inject({
+      method: 'POST',
+      url: `/v1/loads/${load.id}/checkin-links`,
+      headers: as(orgId),
+    });
+    assert.equal(issued.statusCode, 201);
+  });
+
   it('refuses a driver issuing a checkin link', async () => {
     const orgId = await newOrg('Track Role Carrier');
     const load = await aDispatchedLoad(orgId);
