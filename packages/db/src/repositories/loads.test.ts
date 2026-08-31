@@ -39,6 +39,7 @@ import {
   updateLoadStop,
 } from './loads.ts';
 import { createTruck } from './trucks.ts';
+import { recordVerification } from './verify.ts';
 
 const url = process.env['DATABASE_URL'];
 const suite = url ? describe : describe.skip;
@@ -181,6 +182,79 @@ suite('loads repository', () => {
       const events = await readEvents(s, load.id);
       assert.ok(!events.some((e) => e.verb === 'load.booked'));
     });
+
+    describe('load.booked_with_authority_warning', () => {
+      /** Materializes a broker with a specific FMCSA status on file, under its own name so no other test's booking leaks in. */
+      async function brokerWithStatus(brokerName: string, operatingStatus: string | null) {
+        const seed = await createLoad(s, { brokerName, stops: wichitaToDenver });
+        await recordVerification(s, {
+          brokerId: seed.brokerId!,
+          source: 'FMCSA QCMobile',
+          operatingStatus,
+          raw: null,
+        });
+      }
+
+      it('fires when booked directly with a broker FMCSA currently shows as not authorized', async () => {
+        await brokerWithStatus('Not Authorized Freight', 'Not authorized');
+
+        const load = await createLoad(s, {
+          status: 'booked',
+          brokerName: 'Not Authorized Freight',
+          stops: wichitaToDenver,
+        });
+
+        const events = await readEvents(s, load.id);
+        assert.ok(events.some((e) => e.verb === 'load.booked'), 'still booked — a warning must not block it');
+        const warning = events.find((e) => e.verb === 'load.booked_with_authority_warning');
+        assert.ok(warning);
+        assert.match(warning!.explanation, /Not Authorized Freight/);
+      });
+
+      it('does not warn when the broker has never been verified', async () => {
+        const load = await createLoad(s, {
+          status: 'booked',
+          brokerName: 'Never Verified Booking Freight',
+          stops: wichitaToDenver,
+        });
+        const events = await readEvents(s, load.id);
+        assert.ok(!events.some((e) => e.verb === 'load.booked_with_authority_warning'));
+      });
+
+      it('does not warn when FMCSA shows the broker as authorized', async () => {
+        await brokerWithStatus('Authorized Booking Freight', 'Authorized');
+        const load = await createLoad(s, {
+          status: 'booked',
+          brokerName: 'Authorized Booking Freight',
+          stops: wichitaToDenver,
+        });
+        const events = await readEvents(s, load.id);
+        assert.ok(!events.some((e) => e.verb === 'load.booked_with_authority_warning'));
+      });
+
+      it('does not warn on "Unknown" — not a confirmed negative', async () => {
+        await brokerWithStatus('Unknown Status Booking Freight', 'Unknown');
+        const load = await createLoad(s, {
+          status: 'booked',
+          brokerName: 'Unknown Status Booking Freight',
+          stops: wichitaToDenver,
+        });
+        const events = await readEvents(s, load.id);
+        assert.ok(!events.some((e) => e.verb === 'load.booked_with_authority_warning'));
+      });
+
+      it('does not warn on a CSV replay, even with an unauthorized broker on file', async () => {
+        await brokerWithStatus('Csv Replay Unauthorized Freight', 'Not authorized');
+        const load = await createLoad(s, {
+          status: 'booked',
+          source: 'csv_import',
+          brokerName: 'Csv Replay Unauthorized Freight',
+          stops: wichitaToDenver,
+        });
+        const events = await readEvents(s, load.id);
+        assert.ok(!events.some((e) => e.verb === 'load.booked_with_authority_warning'));
+      });
+    });
   });
 
   // --- listLoads / getLoad ----------------------------------------------------
@@ -298,6 +372,37 @@ suite('loads repository', () => {
       const events = await readEvents(s, load.id);
       assert.ok(events.some((e) => e.verb === 'load.booked'));
       assert.ok(!events.some((e) => e.verb === 'load.status_changed'));
+    });
+
+    it('warns on reaching booked with a broker FMCSA currently shows as not authorized', async () => {
+      const seed = await createLoad(s, { brokerName: 'Status Move Unauthorized Co', stops: wichitaToDenver });
+      await recordVerification(s, {
+        brokerId: seed.brokerId!,
+        source: 'FMCSA QCMobile',
+        operatingStatus: 'Not authorized',
+        raw: null,
+      });
+
+      const load = await createLoad(s, {
+        brokerName: 'Status Move Unauthorized Co',
+        stops: wichitaToDenver,
+      });
+      await updateLoadStatus(s, load.id, { status: 'booked' });
+
+      const events = await readEvents(s, load.id);
+      assert.ok(events.some((e) => e.verb === 'load.booked'));
+      assert.ok(events.some((e) => e.verb === 'load.booked_with_authority_warning'));
+    });
+
+    it('does not warn, and does not throw, moving to booked with no broker on the load', async () => {
+      const load = await createLoad(s, { stops: wichitaToDenver });
+      assert.equal(load.brokerId, null);
+
+      await updateLoadStatus(s, load.id, { status: 'booked' });
+
+      const events = await readEvents(s, load.id);
+      assert.ok(events.some((e) => e.verb === 'load.booked'));
+      assert.ok(!events.some((e) => e.verb === 'load.booked_with_authority_warning'));
     });
 
     it('backfills every skipped timestamp, not just the destination\'s', async () => {

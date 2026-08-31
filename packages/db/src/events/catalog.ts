@@ -319,6 +319,28 @@ export const eventCatalog = {
     topic: 'load.booked',
   }),
 
+  /**
+   * Phase 0b-ii. FMCSA's automatic authority check, advisory only —
+   * guardrail 5's posture, same as operating-facts and document
+   * validation: warn, never silently refuse. Fires alongside
+   * `load.booked`, never instead of it, only when the broker's latest
+   * FMCSA check on file says "Not authorized" outright. `operatingStatus`
+   * is deliberately not a payload field: this verb only ever means one
+   * thing, so the sentence says it directly rather than interpolating a
+   * status that could be undefined.
+   */
+  'load.booked_with_authority_warning': define<{
+    reference: number;
+    brokerName: string;
+    source: string;
+  }>({
+    subjectType: 'load',
+    describe: (p) =>
+      `Booked ${formatLoad(p.reference)} with ${p.brokerName} even though ` +
+      `${p.source} currently shows them as not authorized to operate. ` +
+      `Confirm their authority before dispatching.`,
+  }),
+
   'load.assigned': define<{
     reference: number;
     truckLabel: string;

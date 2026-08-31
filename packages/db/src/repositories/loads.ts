@@ -30,6 +30,7 @@ import { brokers } from '../schema/brokers.ts';
 import { drivers, trucks } from '../schema/fleet.ts';
 import { loads, loadStops } from '../schema/loads.ts';
 import { withTransaction } from '../transaction.ts';
+import { getLatestVerification } from './verify.ts';
 
 export type Load = typeof loads.$inferSelect;
 export type LoadStop = typeof loadStops.$inferSelect;
@@ -166,6 +167,36 @@ async function resolveBroker(
   return created!;
 }
 
+/**
+ * Phase 0b-ii. FMCSA's authority check is automatic and advisory only — a
+ * load can still be booked with a broker FMCSA currently shows as "Not
+ * authorized"; this only makes sure the carrier is told, on the timeline,
+ * the same place every other Phase 0b warning surfaces. No verification on
+ * record at all is not a warning — same "don't warn on absence" reasoning
+ * `findBrokersDueForRecheck` (repositories/brokers.ts) already applies: a
+ * broker nobody has checked gives no baseline to warn from. Only a
+ * confirmed "Not authorized" does; "Unknown" is not a confirmed negative
+ * either.
+ */
+async function warnIfAuthorityLapsed(
+  tx: Scope,
+  args: { loadId: string; reference: number; brokerId: string | null; brokerName: string | null },
+): Promise<void> {
+  if (!args.brokerId) return;
+
+  const verification = await getLatestVerification(tx, args.brokerId);
+  if (verification?.operatingStatus !== 'Not authorized') return;
+
+  await recordEvent(tx, 'load.booked_with_authority_warning', {
+    subjectId: args.loadId,
+    payload: {
+      reference: args.reference,
+      brokerName: args.brokerName ?? 'an unnamed broker',
+      source: verification.source,
+    },
+  });
+}
+
 export async function createLoad(
   s: Scope,
   input: CreateLoadInput,
@@ -289,6 +320,12 @@ export async function createLoad(
           rateAmount: row.rateAmount ?? 0,
           rateCurrency: row.rateCurrency ?? 'USD',
         },
+      });
+      await warnIfAuthorityLapsed(tx, {
+        loadId: row.id,
+        reference: row.reference,
+        brokerId: broker.id,
+        brokerName: broker.name,
       });
     }
 
@@ -499,6 +536,12 @@ export async function updateLoadStatus(
           rateAmount: row.rateAmount ?? 0,
           rateCurrency: row.rateCurrency ?? 'USD',
         },
+      });
+      await warnIfAuthorityLapsed(tx, {
+        loadId: row.id,
+        reference: row.reference,
+        brokerId: current.brokerId,
+        brokerName: current.brokerName,
       });
     } else if (input.status === 'delivered') {
       await recordEvent(tx, 'load.delivered', {

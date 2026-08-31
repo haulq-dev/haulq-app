@@ -47,6 +47,17 @@ describe('event explanations', () => {
     );
   });
 
+  it('warns without blocking when the broker on file is not authorized', () => {
+    assert.equal(
+      eventCatalog['load.booked_with_authority_warning'].describe({
+        reference: 1042,
+        brokerName: 'Acme Logistics',
+        source: 'FMCSA QCMobile',
+      }),
+      'Booked load 1042 with Acme Logistics even though FMCSA QCMobile currently shows them as not authorized to operate. Confirm their authority before dispatching.',
+    );
+  });
+
   it('says what a capability change does, not just that it happened', () => {
     // "Updated capabilities" would be useless to the carrier wondering why the
     // liftgate loads vanished.
