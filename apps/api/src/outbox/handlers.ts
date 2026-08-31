@@ -24,6 +24,7 @@ import {
 import { exceptionAlertEmail } from '../email/exception-alert-email.ts';
 import { inviteEmail, type InvitePayload } from '../email/invite-email.ts';
 import { MailerError, type Mailer } from '../email/postmark.ts';
+import { verifyWatchlistEmail } from '../email/verify-watchlist-email.ts';
 import { processDocument } from '../documents/pipeline.ts';
 import type { ModelDocumentReader } from '../documents/model-reader.ts';
 import type { DocumentReader } from '../documents/reader.ts';
@@ -293,6 +294,100 @@ function exceptionAlertHandler(deps: HandlerDeps): OutboxHandler {
   };
 }
 
+/** Enough of the payload to email on, or nothing. */
+function asVerificationChanged(
+  message: OutboxMessage,
+): { brokerName: string; previousStatus: string | null; newStatus: string | null } | null {
+  const p = message.payload as Partial<{
+    brokerName: string;
+    previousStatus: string | null;
+    newStatus: string | null;
+  }>;
+  if (typeof p.brokerName !== 'string') return null;
+  return {
+    brokerName: p.brokerName,
+    previousStatus: p.previousStatus ?? null,
+    newStatus: p.newStatus ?? null,
+  };
+}
+
+/**
+ * Tell a human a broker's FMCSA status changed. HaulQ Verify's own
+ * "automatic" promise, made real — same audience and the same reasoning
+ * `exceptionAlertHandler` above already gives for it: sent to every active
+ * owner and dispatcher, not just whoever happens to be looking, because a
+ * small carrier's dispatcher and its owner are often the same two or three
+ * people.
+ */
+function verificationChangedHandler(deps: HandlerDeps): OutboxHandler {
+  return async (message) => {
+    const alert = asVerificationChanged(message);
+    if (!alert) {
+      deps.log.warn(
+        { seq: message.seq.toString(), topic: message.topic },
+        'verification-changed alert skipped: payload missing fields',
+      );
+      return;
+    }
+
+    const s = scope(deps.db, {
+      orgId: message.orgId,
+      actor: { type: 'system', name: 'outbox-consumer' },
+      correlationId: randomUUID(),
+    });
+
+    const [org, members] = await Promise.all([getOrg(s), listAllMembers(s)]);
+    const recipients = members.filter((m) => m.role === 'owner' || m.role === 'dispatcher');
+
+    if (recipients.length === 0) {
+      // Not retryable — no amount of waiting adds a dispatcher to the account.
+      deps.log.warn(
+        { seq: message.seq.toString(), orgId: message.orgId },
+        'verification-changed alert has nobody to send to',
+      );
+      return;
+    }
+
+    for (const recipient of recipients) {
+      const email = verifyWatchlistEmail(
+        {
+          to: recipient.email,
+          orgName: org?.name ?? 'your carrier',
+          brokerName: alert.brokerName,
+          previousStatus: alert.previousStatus,
+          newStatus: alert.newStatus,
+        },
+        deps.webOrigin,
+      );
+
+      try {
+        await deps.mailer.send({
+          ...email,
+          metadata: { outboxSeq: message.seq.toString(), orgId: message.orgId },
+        });
+      } catch (error) {
+        if (error instanceof MailerError && !error.retryable) {
+          deps.log.warn(
+            { seq: message.seq.toString(), to: recipient.email, status: error.status },
+            'verification-changed alert permanently rejected for this recipient — not retrying',
+          );
+          continue;
+        }
+        // Same trade this file already makes for the exception alert: a
+        // transient failure partway through the recipient list is retried
+        // whole, so an owner who already got it may get a second copy — a
+        // rare, harmless cost against a dispatcher never hearing at all.
+        throw error;
+      }
+    }
+
+    deps.log.info(
+      { seq: message.seq.toString(), recipients: recipients.length },
+      'verification-changed alert sent',
+    );
+  };
+}
+
 /**
  * The topic map. Only topics in here are claimed; anything else stays queued
  * untouched.
@@ -306,6 +401,7 @@ export function buildOutboxHandlers(deps: HandlerDeps): Record<string, OutboxHan
     'member.invite_email': inviteHandler(deps),
     'document.received': documentHandler(deps),
     'track.exception_alerted': exceptionAlertHandler(deps),
+    'broker.verification_changed': verificationChangedHandler(deps),
   };
 }
 
@@ -358,6 +454,7 @@ export function buildOutboxGroups(deps: HandlerDeps): OutboxGroup[] {
       handlers: {
         'member.invite_email': inviteHandler(deps),
         'track.exception_alerted': exceptionAlertHandler(deps),
+        'broker.verification_changed': verificationChangedHandler(deps),
       },
       batchSize: 20,
       leaseSeconds: 300,

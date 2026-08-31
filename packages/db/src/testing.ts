@@ -20,6 +20,7 @@ import { scope, type Actor, type Scope } from './context.ts';
 import { eventLog, eventOutbox } from './schema/events.ts';
 import { loads } from './schema/loads.ts';
 import { orgInvitations, orgMemberships, orgs, users } from './schema/tenancy.ts';
+import { brokerVerifications } from './schema/verify.ts';
 
 export interface TestOrg {
   id: string;
@@ -206,6 +207,25 @@ export async function pendingOutboxTopics(
     .from(eventOutbox)
     .where(and(eq(eventOutbox.orgId, orgId), isNull(eventOutbox.processedAt)));
   return rows.map((r) => r.topic);
+}
+
+/**
+ * Move a verification's `checkedAt` into the past.
+ *
+ * The nightly re-check sweep decides what is "due" purely off this column,
+ * and nothing in the application ever backdates it — a test that wants to
+ * exercise "stale" has no real path to that state except reaching in
+ * directly, the same reason `expireInvitationForTest` exists above.
+ */
+export async function backdateVerificationForTest(
+  db: Database,
+  verificationId: string,
+  checkedAt: Date,
+): Promise<void> {
+  await db
+    .update(brokerVerifications)
+    .set({ checkedAt })
+    .where(eq(brokerVerifications.id, verificationId));
 }
 
 /** Look up by the Clerk id, which is what a webhook test has to hand. */

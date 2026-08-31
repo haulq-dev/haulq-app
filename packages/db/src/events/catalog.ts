@@ -201,6 +201,31 @@ export const eventCatalog = {
         : `Checked ${p.brokerName} against ${p.source} — nothing found for the number on file.`,
   }),
 
+  /**
+   * The nightly re-check's own verb — deliberately separate from
+   * `broker.verified` rather than reusing it with a different payload
+   * shape. `broker.verified` fires on every on-demand check regardless of
+   * outcome; this one fires only when a re-check's answer actually
+   * disagrees with the last one, which is a distinct enough fact (and a
+   * distinct enough audience — this is also what the watchlist email is
+   * built from) to earn its own line in the log rather than being inferred
+   * from two `broker.verified` entries read side by side.
+   */
+  'broker.verification_changed': define<{
+    brokerName: string;
+    previousStatus: string | null;
+    newStatus: string | null;
+    source: string;
+  }>({
+    subjectType: 'broker',
+    describe: (p) => {
+      const from = p.previousStatus ? p.previousStatus.toLowerCase() : 'no record';
+      const to = p.newStatus ? p.newStatus.toLowerCase() : 'nothing found';
+      return `${p.brokerName}'s status with ${p.source} changed from ${from} to ${to} on a nightly re-check.`;
+    },
+    topic: 'broker.verification_changed',
+  }),
+
   // --- fleet ---------------------------------------------------------------
 
   'truck.added': define<{ label: string; equipment: string }>({

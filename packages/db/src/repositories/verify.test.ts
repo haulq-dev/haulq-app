@@ -21,7 +21,12 @@ import { readTimeline } from '../events/record.ts';
 import { createTestOrg, createTestUser, destroyTestOrg, destroyTestUser, testScope } from '../testing.ts';
 import { BrokerError, getBroker } from './brokers.ts';
 import { createLoad } from './loads.ts';
-import { getLatestVerification, listVerifications, recordVerification } from './verify.ts';
+import {
+  getLatestVerification,
+  listVerifications,
+  recordScheduledVerification,
+  recordVerification,
+} from './verify.ts';
 
 const url = process.env['DATABASE_URL'];
 const suite = url ? describe : describe.skip;
@@ -176,5 +181,96 @@ suite('verify repository', () => {
 
     assert.ok(await getLatestVerification(s, brokerId));
     assert.equal(await getLatestVerification(other, brokerId), undefined);
+  });
+
+  describe('recordScheduledVerification', () => {
+    it('writes the row and advances the pointer, same as recordVerification', async () => {
+      const brokerId = await aBroker(s, 'Scheduled Freight');
+
+      const { verification } = await recordScheduledVerification(db, {
+        orgId,
+        brokerId,
+        brokerName: 'Scheduled Freight',
+        source: 'FMCSA QCMobile',
+        operatingStatus: 'Authorized',
+        raw: null,
+        previousOperatingStatus: null,
+      });
+
+      assert.equal(verification.operatingStatus, 'Authorized');
+      const broker = await getBroker(s, brokerId);
+      assert.equal(broker!.latestVerificationId, verification.id);
+    });
+
+    it('fires broker.verification_changed when the status actually differs', async () => {
+      const brokerId = await aBroker(s, 'Changed Status Freight');
+
+      const { changed } = await recordScheduledVerification(db, {
+        orgId,
+        brokerId,
+        brokerName: 'Changed Status Freight',
+        source: 'FMCSA QCMobile',
+        operatingStatus: 'Not authorized',
+        raw: null,
+        previousOperatingStatus: 'Authorized',
+      });
+
+      assert.equal(changed, true);
+      const events = await readTimeline(s, { subjectId: brokerId });
+      const event = events.find((e) => e.verb === 'broker.verification_changed');
+      assert.ok(event);
+      assert.match(event!.explanation, /authorized to not authorized/);
+    });
+
+    it('fires nothing when the status is unchanged', async () => {
+      const brokerId = await aBroker(s, 'Unchanged Status Freight');
+
+      const { changed } = await recordScheduledVerification(db, {
+        orgId,
+        brokerId,
+        brokerName: 'Unchanged Status Freight',
+        source: 'FMCSA QCMobile',
+        operatingStatus: 'Authorized',
+        raw: null,
+        previousOperatingStatus: 'Authorized',
+      });
+
+      assert.equal(changed, false);
+      const events = await readTimeline(s, { subjectId: brokerId });
+      assert.ok(!events.some((e) => e.verb === 'broker.verification_changed'));
+    });
+
+    it('fires nothing on a broker\'s first-ever scheduled check — nothing real to compare against', async () => {
+      const brokerId = await aBroker(s, 'First Scheduled Check Freight');
+
+      const { changed } = await recordScheduledVerification(db, {
+        orgId,
+        brokerId,
+        brokerName: 'First Scheduled Check Freight',
+        source: 'FMCSA QCMobile',
+        operatingStatus: 'Authorized',
+        raw: null,
+        previousOperatingStatus: null,
+      });
+
+      assert.equal(changed, false);
+    });
+
+    it('writes the history row even when nothing changed', async () => {
+      const brokerId = await aBroker(s, 'Silent History Freight');
+
+      await recordScheduledVerification(db, {
+        orgId,
+        brokerId,
+        brokerName: 'Silent History Freight',
+        source: 'FMCSA QCMobile',
+        operatingStatus: 'Authorized',
+        raw: null,
+        previousOperatingStatus: 'Authorized',
+      });
+
+      const history = await listVerifications(s, brokerId);
+      assert.equal(history.length, 1);
+    });
   });
 });

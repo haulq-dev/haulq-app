@@ -119,6 +119,20 @@ const EnvSchema = z.object({
    */
   EXCEPTION_THRESHOLD_HOURS: z.coerce.number().int().min(1).default(4),
 
+  /**
+   * How often the nightly broker re-check sweeps for stale FMCSA checks, in
+   * milliseconds. 0 is off, same reasoning and same default as
+   * `EXCEPTION_SCAN_POLL_MS` — see `verify/recheck-runner.ts`. Set well
+   * below a day on purpose (a recommended value is 6h): the sweep frequency
+   * and how stale a check has to be before it is re-run are two different
+   * numbers, the second one being `VERIFY_RECHECK_STALE_HOURS` below, the
+   * same decoupling `EXCEPTION_SCAN_POLL_MS`/`EXCEPTION_THRESHOLD_HOURS`
+   * already uses.
+   */
+  VERIFY_RECHECK_POLL_MS: z.coerce.number().int().min(0).default(0),
+  /** How many hours a broker's last FMCSA check can stand before the nightly sweep re-checks it. */
+  VERIFY_RECHECK_STALE_HOURS: z.coerce.number().int().min(1).default(24),
+
   WEB_ORIGIN: z.string().url().default('http://localhost:5173'),
 
   /**

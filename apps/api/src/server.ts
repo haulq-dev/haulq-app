@@ -36,6 +36,7 @@ import type { Env } from './env.ts';
 import type { Mailer } from './email/postmark.ts';
 import { startExceptionScanRunner } from './exceptions/runner.ts';
 import { startMotiveSyncRunner } from './integrations/motive-sync-runner.ts';
+import { startVerifyRecheckRunner } from './verify/recheck-runner.ts';
 import { buildOutboxGroups } from './outbox/handlers.ts';
 import { startOutboxRunner } from './outbox/runner.ts';
 import { buildDocumentReader, buildMailer, buildModelReader, buildRoutingProvider, buildStorage } from './runtime.ts';
@@ -198,6 +199,20 @@ export async function buildServer(
     intervalMs: env.EXCEPTION_SCAN_POLL_MS,
     thresholdHours: env.EXCEPTION_THRESHOLD_HOURS,
   });
+
+  // Same guard shape the Motive block below already uses: a poll interval
+  // set without the config it needs skips the runner rather than crashing
+  // the whole process on boot.
+  if (env.VERIFY_RECHECK_POLL_MS > 0 && env.FMCSA_WEBKEY) {
+    startVerifyRecheckRunner(app, {
+      intervalMs: env.VERIFY_RECHECK_POLL_MS,
+      staleHours: env.VERIFY_RECHECK_STALE_HOURS,
+      fmcsaWebKey: env.FMCSA_WEBKEY,
+      fmcsaBaseUrl: env.FMCSA_BASE_URL,
+    });
+  } else if (env.VERIFY_RECHECK_POLL_MS > 0) {
+    app.log.warn({}, 'VERIFY_RECHECK_POLL_MS is set but FMCSA_WEBKEY is not — recheck will not run');
+  }
 
   // Same guard `routes/integrations.ts`'s `requireMotiveConfig`/
   // `requireEncryptionConfig` apply per-request: nothing here can run

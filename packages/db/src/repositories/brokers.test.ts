@@ -11,9 +11,17 @@ import { after, before, describe, it } from 'node:test';
 import { closeDatabase, createDatabase, type Database } from '../client.ts';
 import type { Scope } from '../context.ts';
 import { readTimeline } from '../events/record.ts';
-import { createTestOrg, createTestUser, destroyTestOrg, destroyTestUser, testScope } from '../testing.ts';
-import { BrokerError, getBroker, updateBrokerDetentionThreshold } from './brokers.ts';
+import {
+  backdateVerificationForTest,
+  createTestOrg,
+  createTestUser,
+  destroyTestOrg,
+  destroyTestUser,
+  testScope,
+} from '../testing.ts';
+import { BrokerError, findBrokersDueForRecheck, getBroker, updateBrokerDetentionThreshold } from './brokers.ts';
 import { createLoad } from './loads.ts';
+import { recordVerification } from './verify.ts';
 
 const url = process.env['DATABASE_URL'];
 const suite = url ? describe : describe.skip;
@@ -94,5 +102,77 @@ suite('brokers repository', () => {
     const brokerId = await aBroker('Tenant Check Freight');
     assert.ok(await getBroker(s, brokerId));
     assert.equal(await getBroker(other, brokerId), undefined);
+  });
+
+  describe('findBrokersDueForRecheck', () => {
+    it('excludes a broker that has never been verified', async () => {
+      const brokerId = await aBroker('Never Verified Freight');
+      const due = await findBrokersDueForRecheck(db, 24);
+      assert.ok(!due.some((d) => d.brokerId === brokerId));
+    });
+
+    it('excludes a broker checked inside the stale window', async () => {
+      const brokerId = await aBroker('Freshly Checked Freight');
+      await recordVerification(s, {
+        brokerId,
+        source: 'FMCSA QCMobile',
+        operatingStatus: 'Authorized',
+        raw: null,
+      });
+
+      const due = await findBrokersDueForRecheck(db, 24);
+      assert.ok(!due.some((d) => d.brokerId === brokerId));
+    });
+
+    it('includes a broker checked past the stale window, with its prior status', async () => {
+      const brokerId = await aBroker('Stale Freight');
+      const verification = await recordVerification(s, {
+        brokerId,
+        source: 'FMCSA QCMobile',
+        operatingStatus: 'Authorized',
+        raw: null,
+      });
+      await backdateVerificationForTest(db, verification.id, new Date(Date.now() - 30 * 3_600_000));
+
+      const due = await findBrokersDueForRecheck(db, 24);
+      const found = due.find((d) => d.brokerId === brokerId);
+      assert.ok(found, 'stale broker was not returned');
+      assert.equal(found!.previousOperatingStatus, 'Authorized');
+      assert.equal(found!.previousSource, 'FMCSA QCMobile');
+      assert.equal(found!.brokerName, 'Stale Freight');
+    });
+
+    it('crosses tenants — the sweep is not scoped to one org', async () => {
+      const brokerId = await aBroker('Cross-Org Stale Freight');
+      const verification = await recordVerification(s, {
+        brokerId,
+        source: 'FMCSA QCMobile',
+        operatingStatus: 'Authorized',
+        raw: null,
+      });
+      await backdateVerificationForTest(db, verification.id, new Date(Date.now() - 30 * 3_600_000));
+
+      const theirBrokerId = await (async () => {
+        const load = await createLoad(other, {
+          brokerName: 'Other Org Stale Freight',
+          stops: [
+            { type: 'pickup', city: 'Wichita', state: 'KS' },
+            { type: 'delivery', city: 'Denver', state: 'CO' },
+          ],
+        });
+        return load.brokerId!;
+      })();
+      const theirVerification = await recordVerification(other, {
+        brokerId: theirBrokerId,
+        source: 'FMCSA QCMobile',
+        operatingStatus: 'Not authorized',
+        raw: null,
+      });
+      await backdateVerificationForTest(db, theirVerification.id, new Date(Date.now() - 30 * 3_600_000));
+
+      const due = await findBrokersDueForRecheck(db, 24);
+      assert.ok(due.some((d) => d.brokerId === brokerId && d.orgId === orgId));
+      assert.ok(due.some((d) => d.brokerId === theirBrokerId && d.orgId === otherOrgId));
+    });
   });
 });

@@ -8,10 +8,12 @@
  * the per-broker detention free time PHASE_2_PLAN.md section 7 landed on.
  */
 
-import { and, eq } from 'drizzle-orm';
+import { and, eq, isNotNull, lt } from 'drizzle-orm';
+import type { Database } from '../client.ts';
 import type { Scope } from '../context.ts';
 import { recordEvent } from '../events/record.ts';
 import { brokers } from '../schema/brokers.ts';
+import { brokerVerifications } from '../schema/verify.ts';
 import { withTransaction } from '../transaction.ts';
 
 export type Broker = typeof brokers.$inferSelect;
@@ -120,4 +122,45 @@ export async function updateBrokerDocket(
 
     return row;
   });
+}
+
+export interface DueBroker {
+  orgId: string;
+  brokerId: string;
+  brokerName: string;
+  mcNumber: string | null;
+  usdotNumber: string | null;
+  previousOperatingStatus: string | null;
+  previousSource: string;
+}
+
+/**
+ * Brokers whose last FMCSA check has aged past `staleHours` — the nightly
+ * re-check's worklist.
+ *
+ * Unscoped, like `findExceptionCandidates` in `repositories/track.ts` — this
+ * is a cross-org sweep, not a request answered inside one tenant. Only
+ * brokers with a `latestVerificationId` are returned: a broker nobody has
+ * ever clicked "verify" on does not get pulled into automatic FMCSA calls
+ * just for having a docket number on file. A single join is enough — unlike
+ * `findExceptionCandidates`'s three-time-source aggregation, a broker's
+ * latest verification is a direct 1:1 pointer, already the shape
+ * `latestVerificationId` exists for.
+ */
+export async function findBrokersDueForRecheck(db: Database, staleHours: number): Promise<DueBroker[]> {
+  const cutoff = new Date(Date.now() - staleHours * 3_600_000);
+
+  return db
+    .select({
+      orgId: brokers.orgId,
+      brokerId: brokers.id,
+      brokerName: brokers.name,
+      mcNumber: brokers.mcNumber,
+      usdotNumber: brokers.usdotNumber,
+      previousOperatingStatus: brokerVerifications.operatingStatus,
+      previousSource: brokerVerifications.source,
+    })
+    .from(brokers)
+    .innerJoin(brokerVerifications, eq(brokers.latestVerificationId, brokerVerifications.id))
+    .where(and(isNotNull(brokers.latestVerificationId), lt(brokerVerifications.checkedAt, cutoff)));
 }
