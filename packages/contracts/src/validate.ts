@@ -97,6 +97,13 @@ function normalizeEquipment(raw: string): string {
 /** A reference number, ignoring the punctuation different systems add. */
 const normalizeRef = (raw: string) => raw.toUpperCase().replace(/[^A-Z0-9]/g, '');
 
+/** Everything after the last `@`, lower-cased. Null for anything that isn't plainly an address. */
+function emailDomain(address: string): string | null {
+  const at = address.lastIndexOf('@');
+  if (at === -1 || at === address.length - 1) return null;
+  return address.slice(at + 1).toLowerCase().trim();
+}
+
 interface Comparison {
   field: string;
   documentValue: string | null;
@@ -142,8 +149,12 @@ export function validateAgainstLoad(args: {
   kind: DocumentKind;
   extracted: Record<string, unknown> | null;
   load: LoadFacts;
+  /** This document's sender address, for the senderDomain check below. Null for anything not email-sourced. */
+  receivedFrom?: string | null;
+  /** Addresses documents for this broker have arrived from before. Null or empty means no baseline yet. */
+  priorSenders?: readonly string[] | null;
 }): ValidationFinding[] {
-  const { extracted, load } = args;
+  const { extracted, load, receivedFrom, priorSenders } = args;
 
   /**
    * Null is "never read", `{}` is "read and found nothing".
@@ -254,6 +265,36 @@ export function validateAgainstLoad(args: {
       severity: 'warning',
       ...(agrees ? {} : { note: 'The trailer type on the document is not the one dispatched.' }),
     });
+  }
+
+  // --- sender domain ---------------------------------------------------------
+  //
+  // Not a load field — broker-identity provenance. A known trucking fraud
+  // pattern is someone impersonating a broker with a lookalike domain to
+  // redirect a rate confirmation's payment. `severity` stays `warning`,
+  // never `error`: too many benign explanations exist (a broker switching
+  // TMS providers, forwarding through a personal address) for this alone to
+  // ever reject a document — it is a signal, not proof.
+  if (receivedFrom && priorSenders && priorSenders.length > 0) {
+    const currentDomain = emailDomain(receivedFrom);
+    const known = [
+      ...new Set(priorSenders.map(emailDomain).filter((d): d is string => d !== null)),
+    ];
+    if (currentDomain && known.length > 0) {
+      const agrees = known.includes(currentDomain);
+      out.push({
+        field: 'senderDomain',
+        documentValue: currentDomain,
+        loadValue: known.join(' or '),
+        agrees,
+        severity: 'warning',
+        ...(agrees
+          ? {}
+          : {
+              note: `Prior paperwork for this broker arrived from ${known.join(' or ')}; this arrived from ${currentDomain}.`,
+            }),
+      });
+    }
   }
 
   return out.map(

@@ -80,7 +80,12 @@ export type ValidationSeverity = z.infer<typeof ValidationSeveritySchema>;
  * component.
  */
 export const ValidationFindingSchema = z.object({
-  /** Load field this is about, e.g. `rateAmount`, `pickupCity`, `weightLbs`. */
+  /**
+   * What this finding is about, e.g. `rateAmount`, `pickupCity`, `weightLbs`
+   * — usually a load field, but not always: `senderDomain` compares a
+   * document's sender against broker history rather than anything on
+   * `LoadFacts`. See `validateAgainstLoad` in `validate.ts`.
+   */
   field: z.string().min(1),
   /** What the document says. Null when the document does not mention it. */
   documentValue: z.string().nullable(),

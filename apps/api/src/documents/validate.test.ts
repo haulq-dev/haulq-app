@@ -12,15 +12,18 @@
  */
 
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
 import { deflateSync } from 'node:zlib';
 import { after, before, describe, it } from 'node:test';
 import {
+  createDocument,
   createLoad,
   createTestUser,
   destroyTestOrg,
   destroyTestUser,
   drainOutbox,
   MemoryObjectStore,
+  recordExtraction,
   testScope,
 } from '@haulq/db';
 import type { FastifyInstance } from 'fastify';
@@ -297,6 +300,85 @@ suite('document validation', () => {
       const weight = after.validation.find((f: { field: string }) => f.field === 'weightLbs');
       assert.equal(weight.agrees, false);
       assert.equal(weight.severity, 'warning');
+    });
+  });
+
+  describe('sender domain consistency', () => {
+    /** A distinct digest per call, so documents do not dedupe into each other. */
+    const digest = () => randomUUID().replace(/-/g, '').repeat(2).slice(0, 64);
+
+    /**
+     * A document seeded directly through the repository rather than the
+     * upload route — `POST /v1/documents` never sets `receivedFrom` (only
+     * Postmark inbound intake does), and this suite needs full control over
+     * it to set up a broker's sending history.
+     */
+    async function emailedDoc(orgId: string, loadId: string, receivedFrom: string) {
+      const s = testScope(app.db, orgId, { type: 'user', id: userId });
+      const { document } = await createDocument(s, {
+        storageKey: `${orgId}/documents/${randomUUID()}.pdf`,
+        sha256: digest(),
+        source: 'email_intake',
+        receivedFrom,
+        loadId,
+      });
+      await recordExtraction(s, document.id, {
+        extracted: {},
+        extractorVersion: 'test',
+        kind: 'rate_confirmation',
+      });
+      // Already attached at creation — re-attaching to the same load is a
+      // no-op on the load pointer, but the route still runs validateDocument
+      // afterward, which is what actually records a verdict.
+      await attach(orgId, document.id, loadId);
+      return document;
+    }
+
+    it('says nothing about a broker\'s first-ever emailed document — no baseline yet', async () => {
+      const orgId = await newOrg('First Email Co');
+      const load = await aLoad(orgId);
+      const doc = await emailedDoc(orgId, load.id, 'dispatch@realbroker.test');
+
+      const fetched = await fetchDoc(orgId, doc.id);
+      assert.equal(
+        fetched.validation.find((f: { field: string }) => f.field === 'senderDomain'),
+        undefined,
+      );
+    });
+
+    it('agrees when a later document arrives from the same domain', async () => {
+      const orgId = await newOrg('Repeat Domain Co');
+      const first = await aLoad(orgId);
+      await emailedDoc(orgId, first.id, 'dispatch@realbroker.test');
+
+      const second = await aLoad(orgId, { brokerLoadNumber: '55555' });
+      const doc = await emailedDoc(orgId, second.id, 'ops@realbroker.test');
+
+      const fetched = await fetchDoc(orgId, doc.id);
+      const finding = fetched.validation.find((f: { field: string }) => f.field === 'senderDomain');
+      assert.ok(finding, 'no senderDomain finding recorded');
+      assert.equal(finding.agrees, true);
+      assert.equal(fetched.status, 'validated');
+    });
+
+    it('warns without rejecting when a later document arrives from a different domain', async () => {
+      const orgId = await newOrg('Different Domain Co');
+      const first = await aLoad(orgId);
+      await emailedDoc(orgId, first.id, 'dispatch@realbroker.test');
+
+      const second = await aLoad(orgId, { brokerLoadNumber: '55555' });
+      const doc = await emailedDoc(orgId, second.id, 'someone@totally-different.test');
+
+      const fetched = await fetchDoc(orgId, doc.id);
+      const finding = fetched.validation.find((f: { field: string }) => f.field === 'senderDomain');
+      assert.ok(finding, 'no senderDomain finding recorded');
+      assert.equal(finding.agrees, false);
+      assert.equal(finding.severity, 'warning');
+      assert.equal(
+        fetched.status,
+        'validated',
+        'a domain mismatch is a signal, not proof — it must never reject a document on its own',
+      );
     });
   });
 });

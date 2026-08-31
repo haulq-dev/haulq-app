@@ -38,6 +38,7 @@ import {
   findDocumentBySha,
   getDocument,
   listDocuments,
+  listPriorSenderAddresses,
   quarantineDocument,
   recordExtraction,
   recordManualFields,
@@ -254,6 +255,96 @@ suite('documents repository', () => {
       const counts = await documentCounts(s);
       assert.ok((counts['received'] ?? 0) > 0);
       assert.equal(counts['nonexistent_status'], undefined);
+    });
+  });
+
+  describe('listPriorSenderAddresses', () => {
+    /**
+     * A load against a broker named just for this test. `aLoad()` always
+     * resolves the same 'Prairie Freight' broker within org `s`, which is
+     * exactly wrong here — these tests are specifically about what is and
+     * is not visible per broker, and sharing one broker across tests would
+     * leak an earlier test's senders into a later one.
+     */
+    async function loadFor(brokerName: string, scope_: Scope = s) {
+      return createLoad(scope_, {
+        brokerName,
+        stops: [
+          { type: 'pickup', city: 'Wichita', state: 'KS' },
+          { type: 'delivery', city: 'Denver', state: 'CO' },
+        ],
+      });
+    }
+
+    it('is empty for a broker with no prior email-sourced documents', async () => {
+      const load = await loadFor('Never Emailed Freight');
+      const { document } = await upload({ loadId: load.id });
+      assert.deepEqual(await listPriorSenderAddresses(s, load.brokerId!, document.id), []);
+    });
+
+    it('returns prior senders across other loads for the same broker', async () => {
+      const first = await loadFor('Repeat Sender Freight');
+      const second = await loadFor('Repeat Sender Freight'); // same name, same broker
+      await upload({
+        loadId: first.id,
+        source: 'email_intake',
+        receivedFrom: 'dispatch@repeat-sender.test',
+      });
+      const { document: current } = await upload({ loadId: second.id });
+
+      const senders = await listPriorSenderAddresses(s, second.brokerId!, current.id);
+      assert.deepEqual(senders, ['dispatch@repeat-sender.test']);
+    });
+
+    it('excludes the document passed as excludeDocumentId', async () => {
+      const load = await loadFor('Self Exclusion Freight');
+      const { document } = await upload({
+        loadId: load.id,
+        source: 'email_intake',
+        receivedFrom: 'dispatch@self-exclusion.test',
+      });
+
+      // Without excluding itself, a document's own address would trivially
+      // "agree" with the baseline — the whole mechanism this guards.
+      const senders = await listPriorSenderAddresses(s, load.brokerId!, document.id);
+      assert.deepEqual(senders, []);
+    });
+
+    it('excludes an upload with no receivedFrom', async () => {
+      const first = await loadFor('No Received From Freight');
+      const second = await loadFor('No Received From Freight');
+      await upload({ loadId: first.id }); // a plain upload, no receivedFrom
+      const { document: current } = await upload({ loadId: second.id });
+
+      assert.deepEqual(await listPriorSenderAddresses(s, second.brokerId!, current.id), []);
+    });
+
+    it('excludes documents belonging to a different broker', async () => {
+      const theirs = await loadFor('A Totally Different Broker');
+      await upload({
+        loadId: theirs.id,
+        source: 'email_intake',
+        receivedFrom: 'dispatch@different-broker.test',
+      });
+
+      const load = await loadFor('Cross Broker Isolation Freight');
+      const { document } = await upload({ loadId: load.id });
+      assert.deepEqual(await listPriorSenderAddresses(s, load.brokerId!, document.id), []);
+    });
+
+    it('is tenant-scoped', async () => {
+      const theirLoad = await loadFor('Tenant Scoped Freight', other);
+      await createDocument(other, {
+        storageKey: `${otherOrgId}/documents/${randomUUID()}.pdf`,
+        sha256: digest(),
+        source: 'email_intake',
+        receivedFrom: 'dispatch@tenant-scoped.test',
+        loadId: theirLoad.id,
+      });
+
+      const load = await loadFor('Tenant Scoped Freight'); // same name, different org
+      const { document } = await upload({ loadId: load.id });
+      assert.deepEqual(await listPriorSenderAddresses(s, load.brokerId!, document.id), []);
     });
   });
 

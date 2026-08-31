@@ -221,6 +221,97 @@ describe('validateAgainstLoad — linehaul', () => {
   });
 });
 
+describe('validateAgainstLoad — sender domain', () => {
+  it('agrees when the current sender matches a domain seen before for this broker', () => {
+    const findings = validateAgainstLoad({
+      kind: 'rate_confirmation',
+      extracted: {},
+      load: LOAD,
+      receivedFrom: 'dispatch@realbroker.com',
+      priorSenders: ['ops@realbroker.com'],
+    });
+    const finding = find(findings, 'senderDomain')!;
+    assert.equal(finding.agrees, true);
+    assert.equal(finding.documentValue, 'realbroker.com');
+  });
+
+  it('warns, but does not reject, when the sender is a domain never seen before for this broker', () => {
+    const findings = validateAgainstLoad({
+      kind: 'rate_confirmation',
+      extracted: {},
+      load: LOAD,
+      receivedFrom: 'someone@totally-different.com',
+      priorSenders: ['ops@realbroker.com'],
+    });
+    const finding = find(findings, 'senderDomain')!;
+    assert.equal(finding.agrees, false);
+    assert.equal(finding.severity, 'warning');
+    assert.match(finding.note ?? '', /realbroker\.com/);
+    assert.equal(
+      summarizeValidation(findings).outcome,
+      'validated',
+      'a domain mismatch is a signal, not proof — it must never reject a document on its own',
+    );
+  });
+
+  it('says nothing on a broker\'s first-ever email-sourced document — no baseline yet', () => {
+    const findings = validateAgainstLoad({
+      kind: 'rate_confirmation',
+      extracted: {},
+      load: LOAD,
+      receivedFrom: 'dispatch@realbroker.com',
+      priorSenders: [],
+    });
+    assert.equal(find(findings, 'senderDomain'), undefined);
+  });
+
+  it('says nothing for a document that did not arrive by email', () => {
+    const findings = validateAgainstLoad({
+      kind: 'rate_confirmation',
+      extracted: {},
+      load: LOAD,
+      receivedFrom: null,
+      priorSenders: ['ops@realbroker.com'],
+    });
+    assert.equal(find(findings, 'senderDomain'), undefined);
+  });
+
+  it('matches case-insensitively', () => {
+    const findings = validateAgainstLoad({
+      kind: 'rate_confirmation',
+      extracted: {},
+      load: LOAD,
+      receivedFrom: 'Dispatch@RealBroker.COM',
+      priorSenders: ['ops@realbroker.com'],
+    });
+    assert.equal(find(findings, 'senderDomain')?.agrees, true);
+  });
+
+  it('does not throw on a malformed address, and says nothing about it', () => {
+    const findings = validateAgainstLoad({
+      kind: 'rate_confirmation',
+      extracted: {},
+      load: LOAD,
+      receivedFrom: 'not-an-email',
+      priorSenders: ['ops@realbroker.com'],
+    });
+    assert.equal(find(findings, 'senderDomain'), undefined);
+  });
+
+  it('lists every domain a broker has used when there is more than one', () => {
+    const findings = validateAgainstLoad({
+      kind: 'rate_confirmation',
+      extracted: {},
+      load: LOAD,
+      receivedFrom: 'someone@a-third-domain.com',
+      priorSenders: ['ops@realbroker.com', 'billing@realbroker-billing.com'],
+    });
+    const finding = find(findings, 'senderDomain')!;
+    assert.match(finding.loadValue ?? '', /realbroker\.com/);
+    assert.match(finding.loadValue ?? '', /realbroker-billing\.com/);
+  });
+});
+
 describe('validateAgainstLoad — robustness', () => {
   it('finds nothing to say about an unread document', () => {
     assert.deepEqual(validateAgainstLoad({ kind: 'pod', extracted: null, load: LOAD }), []);

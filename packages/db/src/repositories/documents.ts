@@ -34,7 +34,7 @@
  * just wrote.
  */
 
-import { and, desc, eq, isNull, lt, or, sql } from 'drizzle-orm';
+import { and, desc, eq, isNotNull, isNull, lt, ne, or, sql } from 'drizzle-orm';
 import {
   summarizeValidation,
   type DocumentKind,
@@ -259,6 +259,41 @@ export async function documentCounts(s: Scope): Promise<Record<string, number>> 
     .groupBy(documents.status);
 
   return Object.fromEntries(rows.map((r) => [r.status, r.count]));
+}
+
+/**
+ * Every address documents for this broker's loads have arrived from, except
+ * this one. The baseline `validateAgainstLoad`'s `senderDomain` comparison
+ * (`@haulq/contracts`) checks a new document against — raw addresses, not
+ * domains, since all parsing happens in that pure function rather than here.
+ *
+ * `excludeDocumentId` is load-bearing, not a convenience: `receivedFrom` is
+ * written at intake time, before extraction, so a document that did not
+ * exclude itself would trivially find its own address as a "prior" sender
+ * and silently defeat the whole baseline. No `kind` or `status` filter — a
+ * sender's identity is broker-reputation data, equally valid regardless of
+ * what kind of paperwork it arrived on or whether it was later rejected or
+ * quarantined for an unrelated reason.
+ */
+export async function listPriorSenderAddresses(
+  s: Scope,
+  brokerId: string,
+  excludeDocumentId: string,
+): Promise<string[]> {
+  const rows = await s.db
+    .select({ receivedFrom: documents.receivedFrom })
+    .from(documents)
+    .innerJoin(loads, eq(documents.loadId, loads.id))
+    .where(
+      and(
+        inOrg(s),
+        eq(loads.brokerId, brokerId),
+        isNotNull(documents.receivedFrom),
+        ne(documents.id, excludeDocumentId),
+      ),
+    );
+
+  return rows.map((r) => r.receivedFrom).filter((v): v is string => v !== null);
 }
 
 // ---------------------------------------------------------------------------

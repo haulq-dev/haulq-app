@@ -20,7 +20,13 @@ import {
   type LoadFacts,
   type ValidationVerdict,
 } from '@haulq/contracts';
-import { getDocument, getLoad, recordValidation, type Scope } from '@haulq/db';
+import {
+  getDocument,
+  getLoad,
+  listPriorSenderAddresses,
+  recordValidation,
+  type Scope,
+} from '@haulq/db';
 
 export type ValidationAttempt =
   /** Not ready. Named so a log line says which half is missing. */
@@ -59,10 +65,20 @@ export async function validateDocument(
     equipment: load.equipment,
   };
 
+  // The domain-mismatch baseline — see validateAgainstLoad's senderDomain
+  // comparison. Only worth asking for when both halves exist: a broker on
+  // the load, and an email address this document actually arrived from.
+  const priorSenders =
+    load.brokerId && document.receivedFrom
+      ? await listPriorSenderAddresses(s, load.brokerId, documentId)
+      : null;
+
   const findings = validateAgainstLoad({
     kind: document.kind as never,
     extracted: document.extracted as Record<string, unknown>,
     load: facts,
+    receivedFrom: document.receivedFrom,
+    priorSenders,
   });
 
   const { verdict } = await recordValidation(s, documentId, findings);
