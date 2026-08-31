@@ -26,7 +26,7 @@ import {
   type LoadFeasibilityResponse,
   type LoadStatus,
 } from '@haulq/contracts';
-import { ApiRequestError, request, type Truck } from '../lib/api.ts';
+import { ApiRequestError, request, type Driver, type Truck } from '../lib/api.ts';
 import { useOrgs, useSession } from '../components/AuthGate.tsx';
 import { Card, Empty, ErrorNote, Field, Label, LoadMore, Money, Num, Pill } from '../components/ui.tsx';
 
@@ -63,6 +63,7 @@ interface Load {
   expectedLoadedMiles: number | null;
   truckId: string | null;
   truckLabel: string | null;
+  driverId: string | null;
   driverName: string | null;
   cancelledReason: string | null;
   stops: Stop[];
@@ -547,33 +548,57 @@ function TrackingLink({ loadId, reference }: { loadId: string; reference: number
  * code nobody copied down yet, and the actual security property "the
  * server cannot show it to you again" is unaffected either way: this is
  * the same browser tab remembering what it already had on screen a moment
- * ago, not a new way to retrieve it.
+ * ago, not a new way to retrieve it. Keeps the assigned driver alongside
+ * the code so a reload does not lose track of who it was for either.
  */
 const checkinCodeStorageKey = (loadId: string) => `haulq.checkinCode.${loadId}`;
 
-function storedCheckinCode(loadId: string): string | null {
+interface IssuedCheckin {
+  token: string;
+  driverId: string | null;
+}
+
+function storedCheckin(loadId: string): IssuedCheckin | null {
   try {
-    return localStorage.getItem(checkinCodeStorageKey(loadId));
+    const raw = localStorage.getItem(checkinCodeStorageKey(loadId));
+    return raw ? (JSON.parse(raw) as IssuedCheckin) : null;
   } catch {
     return null;
   }
 }
 
-function CheckinLink({ loadId, reference }: { loadId: string; reference: number }) {
-  const [issuedToken, setIssuedToken] = useState<string | null>(() => storedCheckinCode(loadId));
+function CheckinLink({
+  loadId,
+  reference,
+  drivers,
+  currentDriverId,
+}: {
+  loadId: string;
+  reference: number;
+  drivers: Driver[];
+  currentDriverId: string | null;
+}) {
+  const [issued, setIssued] = useState<IssuedCheckin | null>(() => storedCheckin(loadId));
+  // Defaults to whoever the load is already assigned to — the common case
+  // is issuing a code for the driver already running it, not a stranger.
+  const [selectedDriverId, setSelectedDriverId] = useState(currentDriverId ?? '');
   const [copied, setCopied] = useState(false);
 
   const issue = useMutation({
     mutationFn: () =>
-      request<{ token: string }>(`/v1/loads/${loadId}/checkin-links`, { method: 'POST' }),
+      request<{ token: string; link: { driverId: string | null } }>(
+        `/v1/loads/${loadId}/checkin-links`,
+        { method: 'POST', body: selectedDriverId ? { driverId: selectedDriverId } : {} },
+      ),
     onSuccess: (res) => {
+      const record: IssuedCheckin = { token: res.token, driverId: res.link.driverId };
       try {
-        localStorage.setItem(checkinCodeStorageKey(loadId), res.token);
+        localStorage.setItem(checkinCodeStorageKey(loadId), JSON.stringify(record));
       } catch {
         // Private browsing or storage disabled — the code still works, it
         // just will not survive a reload of this page.
       }
-      setIssuedToken(res.token);
+      setIssued(record);
       setCopied(false);
     },
   });
@@ -586,27 +611,35 @@ function CheckinLink({ loadId, reference }: { loadId: string; reference: number 
       } catch {
         // Nothing to clean up if it was never stored.
       }
-      setIssuedToken(null);
+      setIssued(null);
     },
   });
 
   const copy = async () => {
-    if (!issuedToken) return;
-    await navigator.clipboard.writeText(issuedToken);
+    if (!issued) return;
+    await navigator.clipboard.writeText(issued.token);
     setCopied(true);
   };
 
+  const assignedDriver = issued?.driverId ? drivers.find((d) => d.id === issued.driverId) : undefined;
+
   return (
     <Card title={`Load ${reference} — driver check-in code`}>
-      {issuedToken ? (
+      {issued ? (
         <div className="space-y-3">
+          {assignedDriver && (
+            <p className="text-sm text-slate">
+              For <span className="font-medium">{assignedDriver.fullName}</span>
+              {assignedDriver.phone && <> — {assignedDriver.phone}</>}
+            </p>
+          )}
           <p className="text-sm text-slate">
             Text or read this to the driver. They open the HaulQ Driver app
             and paste it in — shown only once, copy it now.
           </p>
           <div className="flex flex-wrap items-center gap-2">
             <code className="break-all border border-line bg-wash px-3 py-2 text-xs">
-              {issuedToken}
+              {issued.token}
             </code>
             <button className="hq-btn hq-btn-ghost" onClick={copy}>
               {copied ? 'Copied' : 'Copy'}
@@ -621,13 +654,29 @@ function CheckinLink({ loadId, reference }: { loadId: string; reference: number 
           </button>
         </div>
       ) : (
-        <button
-          className="hq-btn hq-btn-brand"
-          disabled={issue.isPending}
-          onClick={() => issue.mutate()}
-        >
-          {issue.isPending ? 'Creating…' : 'Create a check-in code'}
-        </button>
+        <div className="space-y-3">
+          <Field label="Driver" hint="Optional — leave unassigned if you don't know who yet.">
+            <select
+              className="hq-input"
+              value={selectedDriverId}
+              onChange={(e) => setSelectedDriverId(e.target.value)}
+            >
+              <option value="">Not assigned yet</option>
+              {drivers.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.fullName}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <button
+            className="hq-btn hq-btn-brand"
+            disabled={issue.isPending}
+            onClick={() => issue.mutate()}
+          >
+            {issue.isPending ? 'Creating…' : 'Create a check-in code'}
+          </button>
+        </div>
       )}
       <ErrorNote error={issue.error ?? revoke.error} />
     </Card>
@@ -1059,6 +1108,11 @@ export function LoadsScreen() {
     queryFn: () => request<{ items: Truck[] }>('/v1/trucks'),
   });
 
+  const drivers = useQuery({
+    queryKey: ['drivers'],
+    queryFn: () => request<{ items: Driver[] }>('/v1/drivers'),
+  });
+
   const myRole = orgs.data?.items.find((o) => o.id === session?.orgId)?.role;
   const canWrite = myRole === 'owner' || myRole === 'dispatcher';
 
@@ -1220,6 +1274,8 @@ export function LoadsScreen() {
           <CheckinLink
             loadId={selectedId}
             reference={items.find((l) => l.id === selectedId)?.reference ?? 0}
+            drivers={drivers.data?.items ?? []}
+            currentDriverId={items.find((l) => l.id === selectedId)?.driverId ?? null}
           />
         )}
         {selectedId &&
