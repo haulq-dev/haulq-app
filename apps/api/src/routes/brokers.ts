@@ -172,10 +172,22 @@ export async function brokerRoutes(app: FastifyInstance) {
       if (!broker) throw new HttpError(404, 'not_found', 'That broker is not on this account.');
 
       const verification = await getLatestVerification(s, id);
+      const recheckEnabled = app.env.VERIFY_RECHECK_POLL_MS > 0;
       return {
         mcNumber: broker.mcNumber,
         usdotNumber: broker.usdotNumber,
         verification: verification ?? null,
+        recheckEnabled,
+        // Not a guarantee — the nightly sweep runs on its own interval, not
+        // exactly at this instant — but it is the true rule the sweep itself
+        // applies (`findBrokersDueForRecheck`), so this is when this broker
+        // becomes *eligible*, not a promise of the exact minute.
+        nextRecheckDue:
+          recheckEnabled && verification
+            ? new Date(
+                verification.checkedAt.getTime() + app.env.VERIFY_RECHECK_STALE_HOURS * 3_600_000,
+              ).toISOString()
+            : null,
       };
     },
   );

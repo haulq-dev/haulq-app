@@ -261,6 +261,55 @@ suite('broker routes', () => {
         headers: as(orgId),
       });
       assert.equal(read.json().verification.operatingStatus, 'Authorized');
+      // VERIFY_RECHECK_POLL_MS is unset on this server (defaults to 0, off),
+      // so this deployment should say so rather than promising a schedule
+      // nothing is actually running.
+      assert.equal(read.json().recheckEnabled, false);
+      assert.equal(read.json().nextRecheckDue, null);
+    });
+
+    it('reports when this checked-in-with-authority broker is next eligible for an automatic re-check', async () => {
+      fmcsaScript = { status: 200, body: AUTHORIZED_CARRIER };
+      const recheckApp = await buildServer(
+        loadEnv({
+          ...process.env,
+          NODE_ENV: 'test',
+          DATABASE_URL: url!,
+          FMCSA_WEBKEY: 'test-key',
+          FMCSA_BASE_URL: fmcsaBase,
+          VERIFY_RECHECK_POLL_MS: '3600000',
+          VERIFY_RECHECK_STALE_HOURS: '24',
+        }),
+      );
+      try {
+        const orgId = await newOrg('Verify Recheck Carrier');
+        const brokerId = await aBroker(orgId);
+        await recheckApp.inject({
+          method: 'PATCH',
+          url: `/v1/brokers/${brokerId}/docket`,
+          headers: as(orgId),
+          payload: { mcNumber: '123456' },
+        });
+        const verified = await recheckApp.inject({
+          method: 'POST',
+          url: `/v1/brokers/${brokerId}/verify`,
+          headers: as(orgId),
+        });
+        const checkedAt = new Date(verified.json().verification.checkedAt);
+
+        const read = await recheckApp.inject({
+          method: 'GET',
+          url: `/v1/brokers/${brokerId}/verification`,
+          headers: as(orgId),
+        });
+        assert.equal(read.json().recheckEnabled, true);
+        assert.equal(
+          read.json().nextRecheckDue,
+          new Date(checkedAt.getTime() + 24 * 3_600_000).toISOString(),
+        );
+      } finally {
+        await recheckApp.close();
+      }
     });
 
     it('answers 502, not 500, when FMCSA fails', async () => {
