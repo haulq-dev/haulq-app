@@ -231,6 +231,7 @@ function AddLoad({ trucks, onDone }: { trucks: Truck[]; onDone: () => void }) {
   const [deadheadMiles, setDeadhead] = useState('');
   const [commodity, setCommodity] = useState('');
   const [weightLbs, setWeight] = useState('');
+  const [hazmat, setHazmat] = useState(false);
   const [status, setStatus] = useState<LoadStatus>('prospect');
   const [truckId, setTruckId] = useState('');
   const [pickup, setPickup] = useState({ city: '', state: '', lat: '', lng: '' });
@@ -246,6 +247,7 @@ function AddLoad({ trucks, onDone }: { trucks: Truck[]; onDone: () => void }) {
           ...(brokerName ? { brokerName } : {}),
           ...(commodity ? { commodity } : {}),
           ...(weightLbs ? { weightLbs: Number(weightLbs) } : {}),
+          ...(hazmat ? { hazmat: true } : {}),
           // Dollars in the box, minor units on the wire. Build plan section 5 —
           // never floats near an invoice.
           ...(rate ? { rate: { amount: Math.round(Number(rate) * 100), currency: 'USD' } } : {}),
@@ -360,6 +362,22 @@ function AddLoad({ trucks, onDone }: { trucks: Truck[]; onDone: () => void }) {
           </select>
         </Field>
       </div>
+
+      <label className="mt-5 flex cursor-pointer items-start gap-2.5">
+        <input
+          type="checkbox"
+          className="mt-0.5 accent-[--color-brand]"
+          checked={hazmat}
+          onChange={(e) => setHazmat(e.target.checked)}
+        />
+        <span>
+          <span className="block text-sm font-medium">Hazmat</span>
+          <span className="block text-xs text-mute">
+            Placarded freight. Reaches HaulQ Routes' feasibility check, which then screens
+            for hazmat-restricted roads and tunnels along the route.
+          </span>
+        </span>
+      </label>
 
       <div className="mt-6 flex gap-3">
         <button className="hq-btn hq-btn-brand" disabled={!ready || create.isPending} onClick={() => create.mutate()}>
@@ -975,6 +993,8 @@ interface BrokerVerificationResponse {
     operatingStatus: string | null;
     checkedAt: string;
   } | null;
+  recheckEnabled: boolean;
+  nextRecheckDue: string | null;
 }
 
 /**
@@ -1064,7 +1084,12 @@ function VerifyBroker({ brokerId, brokerName }: { brokerId: string; brokerName: 
       {info.data?.verification?.checkedAt && (
         <p className="text-xs text-mute">
           Last checked {new Date(info.data.verification.checkedAt).toLocaleString()} via{' '}
-          {info.data.verification.source}.
+          {info.data.verification.source}.{' '}
+          {info.data.nextRecheckDue ? (
+            <>Due for automatic re-check {new Date(info.data.nextRecheckDue).toLocaleString()}.</>
+          ) : (
+            <>Automatic re-checks are not turned on for this deployment.</>
+          )}
         </p>
       )}
 
