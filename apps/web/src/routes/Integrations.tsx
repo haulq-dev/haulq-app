@@ -23,6 +23,22 @@ interface BoardCredential {
   lastError: string | null;
 }
 
+interface DeploymentStatus {
+  azureDocumentIntelligence: { configured: boolean };
+  anthropicModelPass: { configured: boolean };
+  fmcsaVerify: { configured: boolean };
+  hereRouting: { configured: boolean };
+  motive: { configured: boolean };
+}
+
+const DEPLOYMENT_LABEL: Record<keyof DeploymentStatus, string> = {
+  azureDocumentIntelligence: 'Docs — Azure OCR',
+  anthropicModelPass: 'Docs — model pass',
+  fmcsaVerify: 'Verify — FMCSA',
+  hereRouting: 'Routes — HERE',
+  motive: 'Track — Motive',
+};
+
 const STATUS_TONE: Record<string, 'ok' | 'warn' | 'neutral'> = {
   active: 'ok',
   failed: 'warn',
@@ -74,7 +90,8 @@ export function IntegrationsScreen() {
 
   const items = useQuery({
     queryKey: ['integrations'],
-    queryFn: () => request<{ items: BoardCredential[] }>('/v1/integrations'),
+    queryFn: () =>
+      request<{ items: BoardCredential[]; deployment: DeploymentStatus }>('/v1/integrations'),
   });
 
   const connect = useMutation({
@@ -194,6 +211,26 @@ export function IntegrationsScreen() {
                   <Pill tone={STATUS_TONE[i.status] ?? 'neutral'}>{i.status}</Pill>
                 </li>
               ))}
+          </ul>
+        </Card>
+      )}
+
+      {items.data?.deployment && (
+        <Card title="Deployment status">
+          <p className="mb-3 max-w-prose text-sm text-slate">
+            Whether each optional service has a key set on this deployment — not a live
+            check, since pinging every real API on every load of this page would spend
+            money to answer a question that only changes when someone edits a secret.
+          </p>
+          <ul className="space-y-2">
+            {(Object.keys(items.data.deployment) as Array<keyof DeploymentStatus>).map((key) => (
+              <li key={key} className="flex items-center justify-between">
+                <span>{DEPLOYMENT_LABEL[key]}</span>
+                <Pill tone={items.data!.deployment[key].configured ? 'ok' : 'neutral'}>
+                  {items.data!.deployment[key].configured ? 'Configured' : 'Not configured'}
+                </Pill>
+              </li>
+            ))}
           </ul>
         </Card>
       )}

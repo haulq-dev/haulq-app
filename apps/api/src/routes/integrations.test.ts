@@ -204,3 +204,105 @@ suite('integration routes — Motive callback', () => {
     assert.doesNotMatch(res.body, /"code"\s*:\s*"/);
   });
 });
+
+suite('GET /v1/integrations — deployment status', () => {
+  before(async () => {
+    app = await buildServer(loadEnv({ ...process.env, NODE_ENV: 'test', DATABASE_URL: url! }));
+    userId = (await createTestUser(app.db)).id;
+  });
+
+  after(async () => {
+    for (const id of createdOrgs) await destroyTestOrg(app.db, id);
+    await destroyTestUser(app.db, userId);
+    await app.close();
+  });
+
+  it('reports every optional integration as unconfigured on a bare deployment', async () => {
+    // Not `app` — this machine's own .env carries real HERE and Motive
+    // credentials (see PROJECT-STATUS.md), so the ambient environment is
+    // not actually bare. A dedicated instance with every optional key
+    // explicitly cleared is the only reliable way to test the "nothing
+    // configured" branch on a machine where that happens to be true.
+    const bareApp = await buildServer(
+      loadEnv({
+        ...process.env,
+        NODE_ENV: 'test',
+        DATABASE_URL: url!,
+        AZURE_DI_ENDPOINT: undefined,
+        AZURE_DI_KEY: undefined,
+        ANTHROPIC_API_KEY: undefined,
+        FMCSA_WEBKEY: undefined,
+        HERE_API_KEY: undefined,
+        MOTIVE_CLIENT_ID: undefined,
+        MOTIVE_CLIENT_SECRET: undefined,
+        MOTIVE_REDIRECT_URI: undefined,
+      }),
+    );
+    try {
+      const orgRes = await bareApp.inject({
+        method: 'POST',
+        url: '/v1/orgs',
+        headers: { 'x-haulq-user-id': userId },
+        payload: { name: 'Bare Deployment Carrier', contactEmail: 'owner@example.com' },
+      });
+      const orgId = orgRes.json().org.id as string;
+      createdOrgs.push(orgId);
+
+      const res = await bareApp.inject({ method: 'GET', url: '/v1/integrations', headers: as(orgId) });
+
+      assert.equal(res.statusCode, 200);
+      assert.deepEqual(res.json().deployment, {
+        azureDocumentIntelligence: { configured: false },
+        anthropicModelPass: { configured: false },
+        fmcsaVerify: { configured: false },
+        hereRouting: { configured: false },
+        motive: { configured: false },
+      });
+    } finally {
+      await bareApp.close();
+    }
+  });
+
+  it('reports each integration configured once its keys are set', async () => {
+    const configuredApp = await buildServer(
+      loadEnv({
+        ...process.env,
+        NODE_ENV: 'test',
+        DATABASE_URL: url!,
+        AZURE_DI_ENDPOINT: 'https://example.cognitiveservices.azure.com',
+        AZURE_DI_KEY: 'test-azure-key',
+        ANTHROPIC_API_KEY: 'test-anthropic-key',
+        FMCSA_WEBKEY: 'test-fmcsa-key',
+        HERE_API_KEY: 'test-here-key',
+        MOTIVE_CLIENT_ID: 'test-client-id',
+        MOTIVE_CLIENT_SECRET: 'test-client-secret',
+        MOTIVE_REDIRECT_URI: 'http://localhost:3001/v1/integrations/motive/callback',
+      }),
+    );
+    try {
+      const orgRes = await configuredApp.inject({
+        method: 'POST',
+        url: '/v1/orgs',
+        headers: { 'x-haulq-user-id': userId },
+        payload: { name: 'Fully Configured Carrier', contactEmail: 'owner@example.com' },
+      });
+      const orgId = orgRes.json().org.id as string;
+      createdOrgs.push(orgId);
+
+      const res = await configuredApp.inject({
+        method: 'GET',
+        url: '/v1/integrations',
+        headers: as(orgId),
+      });
+      assert.deepEqual(res.json().deployment, {
+        azureDocumentIntelligence: { configured: true },
+        anthropicModelPass: { configured: true },
+        fmcsaVerify: { configured: true },
+        hereRouting: { configured: true },
+        motive: { configured: true },
+      });
+    } finally {
+      await configuredApp.close();
+    }
+  });
+});

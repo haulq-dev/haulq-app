@@ -105,12 +105,37 @@ const MotiveCallbackQuerySchema = z.object({
 export async function integrationRoutes(app: FastifyInstance) {
   const server = app.withTypeProvider<ZodTypeProvider>();
 
+  /**
+   * `items` is per-org — board credentials like Motive, one row per
+   * connection this account made. `deployment` is not: Azure, Anthropic,
+   * FMCSA and HERE are each a single key this whole deployment either has
+   * or does not, the same fact every one of them already logs once at boot
+   * (`runtime.ts`) — this is that fact, queryable without log access,
+   * instead of five separate "check the boot log" rituals scattered across
+   * as many docs. `configured` only, never a live ping: hitting each real
+   * API on every load of this response would trade a free read for a paid
+   * or rate-limited one, for a fact that only changes when someone edits
+   * Doppler.
+   */
   server.get(
     '/v1/integrations',
     { schema: { tags: ['Integrations'], summary: 'List connected boards and ELDs' } },
     async (request) => {
       const s = await requireScope(request);
-      return { items: await listBoardCredentials(s) };
+      return {
+        items: await listBoardCredentials(s),
+        deployment: {
+          azureDocumentIntelligence: { configured: Boolean(app.env.AZURE_DI_ENDPOINT && app.env.AZURE_DI_KEY) },
+          anthropicModelPass: { configured: Boolean(app.env.ANTHROPIC_API_KEY) },
+          fmcsaVerify: { configured: Boolean(app.env.FMCSA_WEBKEY) },
+          hereRouting: { configured: Boolean(app.routingProvider) },
+          motive: {
+            configured: Boolean(
+              app.env.MOTIVE_CLIENT_ID && app.env.MOTIVE_CLIENT_SECRET && app.env.MOTIVE_REDIRECT_URI,
+            ),
+          },
+        },
+      };
     },
   );
 
