@@ -749,6 +749,21 @@ export const eventCatalog = {
       `${p.hoursSinceActivity} hours while in transit. Flagged for follow-up.`,
     topic: 'track.exception_alerted',
   }),
+
+  'track.detention_alerted': define<{
+    reference: number;
+    stopId: string;
+    stopSeq: number;
+    city: string;
+    state: string;
+    detentionMinutes: number;
+  }>({
+    subjectType: 'load',
+    describe: (p) =>
+      `Detention past free time at stop ${p.stopSeq} (${formatPlace(p.city, p.state)}) on ` +
+      `${formatLoad(p.reference)}: ${p.detentionMinutes} minutes over. Flagged for follow-up.`,
+    topic: 'track.detention_alerted',
+  }),
 } as const;
 
 export type EventVerb = keyof typeof eventCatalog;

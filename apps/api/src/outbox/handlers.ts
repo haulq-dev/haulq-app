@@ -21,6 +21,7 @@ import {
   type OutboxHandler,
   type OutboxMessage,
 } from '@haulq/db';
+import { detentionAlertEmail } from '../email/detention-alert-email.ts';
 import { exceptionAlertEmail } from '../email/exception-alert-email.ts';
 import { inviteEmail, type InvitePayload } from '../email/invite-email.ts';
 import { MailerError, type Mailer } from '../email/postmark.ts';
@@ -294,6 +295,106 @@ function exceptionAlertHandler(deps: HandlerDeps): OutboxHandler {
   };
 }
 
+/** Enough of the payload to alert on, or nothing. */
+function asDetentionAlert(
+  message: OutboxMessage,
+): { reference: number; stopSeq: number; city: string; state: string; detentionMinutes: number } | null {
+  const p = message.payload as Partial<{
+    reference: number;
+    stopSeq: number;
+    city: string;
+    state: string;
+    detentionMinutes: number;
+  }>;
+  if (
+    typeof p.reference !== 'number' ||
+    typeof p.stopSeq !== 'number' ||
+    typeof p.city !== 'string' ||
+    typeof p.state !== 'string' ||
+    typeof p.detentionMinutes !== 'number'
+  ) {
+    return null;
+  }
+  return {
+    reference: p.reference,
+    stopSeq: p.stopSeq,
+    city: p.city,
+    state: p.state,
+    detentionMinutes: p.detentionMinutes,
+  };
+}
+
+/**
+ * Tell a human the moment a stop crosses free time. Same audience as
+ * `exceptionAlertHandler` above, same reasoning: a small carrier's
+ * dispatcher and its owner are often the same two or three people.
+ */
+function detentionAlertHandler(deps: HandlerDeps): OutboxHandler {
+  return async (message) => {
+    const alert = asDetentionAlert(message);
+    if (!alert) {
+      deps.log.warn(
+        { seq: message.seq.toString(), topic: message.topic },
+        'detention alert skipped: payload missing fields',
+      );
+      return;
+    }
+
+    const s = scope(deps.db, {
+      orgId: message.orgId,
+      actor: { type: 'system', name: 'outbox-consumer' },
+      correlationId: randomUUID(),
+    });
+
+    const [org, members] = await Promise.all([getOrg(s), listAllMembers(s)]);
+    const recipients = members.filter((m) => m.role === 'owner' || m.role === 'dispatcher');
+
+    if (recipients.length === 0) {
+      deps.log.warn(
+        { seq: message.seq.toString(), orgId: message.orgId },
+        'detention alert has nobody to send to',
+      );
+      return;
+    }
+
+    for (const recipient of recipients) {
+      const email = detentionAlertEmail(
+        {
+          to: recipient.email,
+          orgName: org?.name ?? 'your carrier',
+          loadReference: alert.reference,
+          stopSeq: alert.stopSeq,
+          city: alert.city,
+          state: alert.state,
+          detentionMinutes: alert.detentionMinutes,
+        },
+        deps.webOrigin,
+      );
+
+      try {
+        await deps.mailer.send({
+          ...email,
+          metadata: { outboxSeq: message.seq.toString(), orgId: message.orgId },
+        });
+      } catch (error) {
+        if (error instanceof MailerError && !error.retryable) {
+          deps.log.warn(
+            { seq: message.seq.toString(), to: recipient.email, status: error.status },
+            'detention alert permanently rejected for this recipient — not retrying',
+          );
+          continue;
+        }
+        throw error;
+      }
+    }
+
+    deps.log.info(
+      { seq: message.seq.toString(), recipients: recipients.length },
+      'detention alert sent',
+    );
+  };
+}
+
 /** Enough of the payload to email on, or nothing. */
 function asVerificationChanged(
   message: OutboxMessage,
@@ -401,6 +502,7 @@ export function buildOutboxHandlers(deps: HandlerDeps): Record<string, OutboxHan
     'member.invite_email': inviteHandler(deps),
     'document.received': documentHandler(deps),
     'track.exception_alerted': exceptionAlertHandler(deps),
+    'track.detention_alerted': detentionAlertHandler(deps),
     'broker.verification_changed': verificationChangedHandler(deps),
   };
 }
@@ -454,6 +556,7 @@ export function buildOutboxGroups(deps: HandlerDeps): OutboxGroup[] {
       handlers: {
         'member.invite_email': inviteHandler(deps),
         'track.exception_alerted': exceptionAlertHandler(deps),
+        'track.detention_alerted': detentionAlertHandler(deps),
         'broker.verification_changed': verificationChangedHandler(deps),
       },
       batchSize: 20,

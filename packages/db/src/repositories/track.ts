@@ -19,7 +19,7 @@
  */
 
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
-import { and, desc, eq, gt, inArray, isNull } from 'drizzle-orm';
+import { and, desc, eq, gt, inArray, isNotNull, isNull, sql } from 'drizzle-orm';
 import type { Database } from '../client.ts';
 import type { Scope } from '../context.ts';
 import { eventLog } from '../schema/events.ts';
@@ -1027,6 +1027,138 @@ export async function raiseExceptionAlert(
     await recordEvent(tx, 'track.exception_alerted', {
       subjectId: candidate.loadId,
       payload: { reference: candidate.reference, hoursSinceActivity: candidate.hoursSinceActivity },
+    });
+    return true;
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Detention alerts
+// ---------------------------------------------------------------------------
+//
+// A different sweep from the one above, deliberately — same reasoning
+// `verify/recheck-loop.ts`'s own module note gives for not sharing code with
+// `exceptions/scan-loop.ts`: the unit of work differs (a per-stop dwell-time
+// check here, an activity-staleness check there) enough that one abstraction
+// would serve neither well. "The moment detention crosses free time" is a
+// tighter promise than "quiet for N hours" — this fires once per stop, not
+// on a fixed threshold everyone shares.
+
+export interface DetentionCandidate {
+  orgId: string;
+  loadId: string;
+  reference: number;
+  stopId: string;
+  stopSeq: number;
+  city: string;
+  state: string;
+  arrivedAt: Date;
+  detentionMinutes: number;
+}
+
+/**
+ * Stops currently accruing detention past free time, across every org.
+ *
+ * "Currently on site" is `arrivedAt` set and `departedAt` still null — the
+ * same `stillOnSite` definition `previewTracking` already uses, so a
+ * dispatcher's alert and a broker's tracking page never disagree about
+ * whether a truck is still there. Cancelled and already-delivered loads are
+ * excluded: nobody needs to hear that a closed load's last stop, months ago,
+ * ran over its free time.
+ */
+export async function findDetentionCandidates(db: Database): Promise<DetentionCandidate[]> {
+  const rows = await db
+    .select({
+      orgId: loads.orgId,
+      loadId: loads.id,
+      reference: loads.reference,
+      stopId: loadStops.id,
+      stopSeq: loadStops.seq,
+      city: loadStops.city,
+      state: loadStops.state,
+      arrivedAt: loadStops.arrivedAt,
+      detentionFreeMinutes: brokers.detentionFreeMinutes,
+    })
+    .from(loadStops)
+    .innerJoin(loads, eq(loadStops.loadId, loads.id))
+    .leftJoin(brokers, eq(brokers.id, loads.brokerId))
+    .where(
+      and(
+        isNotNull(loadStops.arrivedAt),
+        isNull(loadStops.departedAt),
+        isNull(loads.deletedAt),
+        sql`${loads.status} not in ('cancelled', 'delivered', 'invoiced', 'paid')`,
+      ),
+    );
+
+  const now = Date.now();
+  const candidates: DetentionCandidate[] = [];
+  for (const row of rows) {
+    const freeMinutes = row.detentionFreeMinutes ?? DEFAULT_DETENTION_FREE_MINUTES;
+    const dwellMinutes = Math.round((now - row.arrivedAt!.getTime()) / 60_000);
+    const detentionMinutes = dwellMinutes - freeMinutes;
+    if (detentionMinutes <= 0) continue;
+
+    candidates.push({
+      orgId: row.orgId,
+      loadId: row.loadId,
+      reference: row.reference,
+      stopId: row.stopId,
+      stopSeq: row.stopSeq,
+      city: row.city,
+      state: row.state,
+      arrivedAt: row.arrivedAt!,
+      detentionMinutes,
+    });
+  }
+  return candidates;
+}
+
+/**
+ * Fires `track.detention_alerted` once per stop, not once per sweep.
+ *
+ * Simpler dedup than `raiseExceptionAlert`'s: a stop's `arrivedAt` cannot
+ * change while it is still on site (only `undoStopCheckin` can clear it,
+ * which also removes the stop from `findDetentionCandidates`'s results
+ * entirely), so "already alerted for this exact stop" is enough — no
+ * "since" comparison needed the way a repeatable condition like staleness
+ * requires one.
+ */
+export async function raiseDetentionAlert(db: Database, candidate: DetentionCandidate): Promise<boolean> {
+  const s: Scope = {
+    ctx: {
+      orgId: candidate.orgId,
+      actor: { type: 'system', name: 'detention-scan' },
+      correlationId: randomUUID(),
+    },
+    db,
+  };
+
+  return withTransaction(s, async (tx) => {
+    const [already] = await tx.db
+      .select({ seq: eventLog.seq })
+      .from(eventLog)
+      .where(
+        and(
+          eq(eventLog.orgId, candidate.orgId),
+          eq(eventLog.subjectId, candidate.loadId),
+          eq(eventLog.verb, 'track.detention_alerted'),
+          sql`${eventLog.data}->>'stopId' = ${candidate.stopId}`,
+        ),
+      )
+      .limit(1);
+    if (already) return false;
+
+    await recordEvent(tx, 'track.detention_alerted', {
+      subjectId: candidate.loadId,
+      payload: {
+        reference: candidate.reference,
+        stopId: candidate.stopId,
+        stopSeq: candidate.stopSeq,
+        city: candidate.city,
+        state: candidate.state,
+        detentionMinutes: candidate.detentionMinutes,
+      },
     });
     return true;
   });

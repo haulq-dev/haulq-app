@@ -32,6 +32,8 @@ import {
   previewCheckin,
   previewTracking,
   raiseExceptionAlert,
+  findDetentionCandidates,
+  raiseDetentionAlert,
   recordCheckinPosition,
   recordStopCheckin,
   revokeCheckinLink,
@@ -705,6 +707,95 @@ suite('track repository', () => {
       };
       const third = await raiseExceptionAlert(db, later);
       assert.equal(third, true, 'a fresh silence window should alert again');
+    });
+  });
+
+  describe('findDetentionCandidates / raiseDetentionAlert', () => {
+    /**
+     * A dispatched load with a driver already on site at stop 1,
+     * `minutesAgo` in the past — on its own, uniquely-named broker, not
+     * `aDispatchedLoad`'s shared "Prairie Freight". `detentionFreeMinutes`
+     * lives on the broker row, brokers are matched and reused by name
+     * within an org, and this describe block's own "uses the broker's own
+     * free time" test mutates it — sharing a broker here would make every
+     * other test's notion of "the default" depend on execution order,
+     * exactly the hazard `aQuietLoad`'s own comment above already names for
+     * trucks.
+     */
+    async function anOnSiteLoad(minutesAgo: number) {
+      const load = await createLoad(s, {
+        status: 'dispatched',
+        brokerName: `Detention Test Broker ${randomUUID().slice(0, 8)}`,
+        truckId,
+        stops: wichitaToDenver,
+      });
+      const { token } = await issueCheckinLink(s, load.id);
+      const preview = await previewCheckin(db, token);
+      const stopId = preview.stops[0]!.id;
+      const arrivedAt = new Date(Date.now() - minutesAgo * 60_000).toISOString();
+      await recordStopCheckin(db, {
+        token,
+        stopId,
+        milestone: 'arrived',
+        occurredAt: arrivedAt,
+        correlationId: randomUUID(),
+      });
+      return { load, stopId };
+    }
+
+    it('flags a stop past the default two-hour free time', async () => {
+      const { load } = await anOnSiteLoad(150);
+      const candidates = await findDetentionCandidates(db);
+      const candidate = candidates.find((c) => c.loadId === load.id);
+      assert.ok(candidate);
+      assert.ok(candidate!.detentionMinutes >= 29 && candidate!.detentionMinutes <= 31);
+    });
+
+    it('does not flag a stop still inside free time', async () => {
+      const { load } = await anOnSiteLoad(60);
+      const candidates = await findDetentionCandidates(db);
+      assert.ok(!candidates.some((c) => c.loadId === load.id));
+    });
+
+    it('uses the broker\'s own free time once set', async () => {
+      const { load } = await anOnSiteLoad(45);
+      await updateBrokerDetentionThreshold(s, load.brokerId!, 30);
+
+      const candidates = await findDetentionCandidates(db);
+      const candidate = candidates.find((c) => c.loadId === load.id);
+      assert.ok(candidate, 'should be flagged against the 30-minute override, not the 2h default');
+    });
+
+    it('does not flag a stop once the truck has departed', async () => {
+      const { load, stopId } = await anOnSiteLoad(150);
+      const { token } = await issueCheckinLink(s, load.id);
+      const preview = await previewCheckin(db, token);
+      await recordStopCheckin(db, {
+        token,
+        stopId: preview.stops[0]!.id,
+        milestone: 'departed',
+        correlationId: randomUUID(),
+      });
+
+      const candidates = await findDetentionCandidates(db);
+      assert.ok(!candidates.some((c) => c.stopId === stopId));
+    });
+
+    it('raises an alert once per stop, not once per sweep', async () => {
+      const { load } = await anOnSiteLoad(150);
+      const candidates = await findDetentionCandidates(db);
+      const candidate = candidates.find((c) => c.loadId === load.id)!;
+
+      const first = await raiseDetentionAlert(db, candidate);
+      assert.equal(first, true);
+
+      const second = await raiseDetentionAlert(db, candidate);
+      assert.equal(second, false, 'the same stop should not alert twice');
+
+      const events = await readEvents(s, load.id);
+      const alerts = events.filter((e) => e.verb === 'track.detention_alerted');
+      assert.equal(alerts.length, 1);
+      assert.match(alerts[0]!.explanation, /Detention past free time/);
     });
   });
 });

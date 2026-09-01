@@ -103,7 +103,7 @@ describe('outbox groups — the lease has to fit the batch', () => {
   });
 
   it('puts the document topic in the slow group and mail in the fast one', () => {
-    assert.deepEqual(Object.keys(fast.handlers), ['member.invite_email', 'track.exception_alerted', 'broker.verification_changed']);
+    assert.deepEqual(Object.keys(fast.handlers), ['member.invite_email', 'track.exception_alerted', 'track.detention_alerted', 'broker.verification_changed']);
     assert.deepEqual(Object.keys(slow.handlers), ['document.received']);
   });
 
@@ -311,7 +311,7 @@ describe('startOutboxLoop', () => {
     assert.deepEqual(started!.o['groups'], [
       {
         name: 'fast',
-        topics: ['member.invite_email', 'track.exception_alerted', 'broker.verification_changed'],
+        topics: ['member.invite_email', 'track.exception_alerted', 'track.detention_alerted', 'broker.verification_changed'],
         batchSize: 20,
         leaseSeconds: 300,
       },

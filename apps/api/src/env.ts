@@ -120,6 +120,17 @@ const EnvSchema = z.object({
   EXCEPTION_THRESHOLD_HOURS: z.coerce.number().int().min(1).default(4),
 
   /**
+   * How often the detention scan sweeps for stops currently over free time,
+   * in milliseconds. 0 is off, same reasoning and same default as
+   * `EXCEPTION_SCAN_POLL_MS` — see `exceptions/detention-runner.ts`. No
+   * companion threshold constant the way the exception scan has one: the
+   * threshold here is each broker's own `detentionFreeMinutes` (or
+   * `DEFAULT_DETENTION_FREE_MINUTES`), already a per-broker decision rather
+   * than a deployment-wide guess.
+   */
+  DETENTION_SCAN_POLL_MS: z.coerce.number().int().min(0).default(0),
+
+  /**
    * How often the nightly broker re-check sweeps for stale FMCSA checks, in
    * milliseconds. 0 is off, same reasoning and same default as
    * `EXCEPTION_SCAN_POLL_MS` — see `verify/recheck-runner.ts`. Set well

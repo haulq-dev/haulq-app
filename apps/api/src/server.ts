@@ -34,6 +34,7 @@ import { ClerkAuthenticator } from './auth/clerk-authenticator.ts';
 import { DevAuthenticator } from './auth/dev-authenticator.ts';
 import type { Env } from './env.ts';
 import type { Mailer } from './email/postmark.ts';
+import { startDetentionScanRunner } from './exceptions/detention-runner.ts';
 import { startExceptionScanRunner } from './exceptions/runner.ts';
 import { startMotiveSyncRunner } from './integrations/motive-sync-runner.ts';
 import { startVerifyRecheckRunner } from './verify/recheck-runner.ts';
@@ -199,6 +200,8 @@ export async function buildServer(
     intervalMs: env.EXCEPTION_SCAN_POLL_MS,
     thresholdHours: env.EXCEPTION_THRESHOLD_HOURS,
   });
+
+  startDetentionScanRunner(app, { intervalMs: env.DETENTION_SCAN_POLL_MS });
 
   // Same guard shape the Motive block below already uses: a poll interval
   // set without the config it needs skips the runner rather than crashing
