@@ -14,6 +14,7 @@ vi.mock('@capacitor/geolocation', () => ({
   Geolocation: { getCurrentPosition: vi.fn().mockRejectedValue(new Error('not used in these tests')) },
 }));
 
+import { Geolocation } from '@capacitor/geolocation';
 import { request } from '../lib/api.ts';
 
 const STORED_TOKEN_KEY = 'haulq.driver.checkinToken';
@@ -202,5 +203,49 @@ describe('CheckinScreen — reporting a milestone', () => {
     await screen.findByText('Arrived');
 
     expect(screen.queryByRole('button', { name: /Undo/ })).not.toBeInTheDocument();
+  });
+});
+
+describe('CheckinScreen — PositionControl', () => {
+  beforeEach(() => {
+    window.localStorage.setItem(STORED_TOKEN_KEY, 'A-TOKEN');
+    vi.mocked(request).mockReset();
+    vi.mocked(Geolocation.getCurrentPosition).mockReset();
+  });
+
+  it('sends the real fix to the position endpoint', async () => {
+    vi.mocked(request).mockResolvedValue(somePreview);
+    vi.mocked(Geolocation.getCurrentPosition).mockResolvedValue({
+      coords: { latitude: 39.0997, longitude: -94.5786 },
+    } as never);
+    const user = userEvent.setup();
+
+    renderScreen();
+    await user.click(await screen.findByRole('button', { name: 'Send my location now' }));
+
+    await waitFor(() =>
+      expect(vi.mocked(request)).toHaveBeenCalledWith('/v1/checkin/A-TOKEN/position', {
+        method: 'POST',
+        body: { lat: 39.0997, lng: -94.5786 },
+      }),
+    );
+    expect(await screen.findByText('Location sent.')).toBeInTheDocument();
+  });
+
+  it('shows an error rather than silently failing when the device refuses the fix', async () => {
+    vi.mocked(request).mockResolvedValue(somePreview);
+    vi.mocked(Geolocation.getCurrentPosition).mockRejectedValue(new Error('User denied Geolocation'));
+    const user = userEvent.setup();
+
+    renderScreen();
+    await user.click(await screen.findByRole('button', { name: 'Send my location now' }));
+
+    await waitFor(() => expect(screen.queryByText('Location sent.')).not.toBeInTheDocument());
+    // The position endpoint must never be called on a failed fix — there is
+    // nothing real to report.
+    expect(vi.mocked(request)).not.toHaveBeenCalledWith(
+      expect.stringContaining('/position'),
+      expect.anything(),
+    );
   });
 });
