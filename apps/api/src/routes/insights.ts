@@ -17,30 +17,39 @@ import {
   revenueByTruck,
 } from '@haulq/db';
 import type { FastifyInstance } from 'fastify';
-import { HttpError, requireScope } from '../plugins/request-context.ts';
+import type { ZodTypeProvider } from 'fastify-type-provider-zod';
+import { z } from 'zod';
+import { requireScope } from '../plugins/request-context.ts';
+
+const InsightsQuerySchema = z.object({
+  days: z.coerce.number().int().min(1).max(730).default(90),
+});
 
 export async function insightsRoutes(app: FastifyInstance) {
-  app.get('/v1/insights', async (request) => {
-    const s = await requireScope(request);
-    const q = request.query as { days?: string };
+  const server = app.withTypeProvider<ZodTypeProvider>();
 
-    const days = q.days ? Number(q.days) : 90;
-    if (!Number.isFinite(days) || days < 1 || days > 730) {
-      throw new HttpError(
-        400,
-        'invalid_request',
-        'The window must be between 1 and 730 days.',
-      );
-    }
+  server.get(
+    '/v1/insights',
+    {
+      schema: {
+        tags: ['Insights'],
+        summary: 'Revenue, margin and payment-performance rollups',
+        querystring: InsightsQuerySchema,
+      },
+    },
+    async (request) => {
+      const s = await requireScope(request);
+      const { days } = request.query;
 
-    const [summary, byBroker, byLane, byTruck, payment] = await Promise.all([
-      insightsSummary(s, { days }),
-      revenueByBroker(s, { days }),
-      revenueByLane(s, { days }),
-      revenueByTruck(s, { days }),
-      paymentPerformance(s, { days }),
-    ]);
+      const [summary, byBroker, byLane, byTruck, payment] = await Promise.all([
+        insightsSummary(s, { days }),
+        revenueByBroker(s, { days }),
+        revenueByLane(s, { days }),
+        revenueByTruck(s, { days }),
+        paymentPerformance(s, { days }),
+      ]);
 
-    return { summary, byBroker, byLane, byTruck, payment };
-  });
+      return { summary, byBroker, byLane, byTruck, payment };
+    },
+  );
 }

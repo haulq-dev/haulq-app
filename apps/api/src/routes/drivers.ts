@@ -7,43 +7,44 @@
  * notification system exists to send it.
  */
 
-import { CreateDriverSchema } from '@haulq/contracts';
+import { CreateDriverSchema, PageQuerySchema } from '@haulq/contracts';
 import { createDriver, CursorError, expiringCredentials, listDrivers } from '@haulq/db';
 import type { FastifyInstance } from 'fastify';
+import type { ZodTypeProvider } from 'fastify-type-provider-zod';
+import { z } from 'zod';
 import { HttpError, requireRole, requireScope } from '../plugins/request-context.ts';
 
+const ExpiringQuerySchema = z.object({
+  days: z.coerce.number().int().min(0).max(365).default(30),
+});
+
 export async function driverRoutes(app: FastifyInstance) {
-  app.get('/v1/drivers', async (request) => {
-    const s = await requireScope(request);
-    const q = request.query as { cursor?: string; limit?: string };
-    try {
-      return await listDrivers(s, {
-        ...(q.cursor ? { cursor: q.cursor } : {}),
-        ...(q.limit ? { limit: Number(q.limit) } : {}),
-      });
-    } catch (err) {
-      if (err instanceof CursorError) throw new HttpError(400, err.code, err.explanation);
-      throw err;
-    }
-  });
+  const server = app.withTypeProvider<ZodTypeProvider>();
 
-  app.post('/v1/drivers', async (request, reply) => {
-    const s = await requireScope(request);
-    requireRole(request, 'owner', 'dispatcher');
+  server.get(
+    '/v1/drivers',
+    { schema: { tags: ['Drivers'], summary: 'List drivers', querystring: PageQuerySchema } },
+    async (request) => {
+      const s = await requireScope(request);
+      const { cursor, limit } = request.query;
+      try {
+        return await listDrivers(s, { ...(cursor ? { cursor } : {}), limit });
+      } catch (err) {
+        if (err instanceof CursorError) throw new HttpError(400, err.code, err.explanation);
+        throw err;
+      }
+    },
+  );
 
-    const parsed = CreateDriverSchema.safeParse(request.body);
-    if (!parsed.success) {
-      throw new HttpError(
-        400,
-        'invalid_request',
-        parsed.error.issues
-          .map((i) => `${i.path.join('.') || 'body'}: ${i.message}`)
-          .join('; '),
-      );
-    }
-
-    return reply.code(201).send(await createDriver(s, parsed.data));
-  });
+  server.post(
+    '/v1/drivers',
+    { schema: { tags: ['Drivers'], summary: 'Add a driver', body: CreateDriverSchema } },
+    async (request, reply) => {
+      const s = await requireScope(request);
+      requireRole(request, 'owner', 'dispatcher');
+      return reply.code(201).send(await createDriver(s, request.body));
+    },
+  );
 
   /**
    * Credentials expiring soon.
@@ -52,27 +53,22 @@ export async function driverRoutes(app: FastifyInstance) {
    * cannot be covered rather than a paperwork problem. Surfacing it 30 days out
    * is the difference between a renewal and a cancellation.
    */
-  app.get('/v1/drivers/expiring', async (request) => {
-    const s = await requireScope(request);
-    const q = request.query as { days?: string };
-    const days = q.days ? Number(q.days) : 30;
+  server.get(
+    '/v1/drivers/expiring',
+    { schema: { tags: ['Drivers'], summary: 'Credentials expiring soon', querystring: ExpiringQuerySchema } },
+    async (request) => {
+      const s = await requireScope(request);
+      const { days } = request.query;
 
-    if (!Number.isFinite(days) || days < 0 || days > 365) {
-      throw new HttpError(
-        400,
-        'invalid_request',
-        'The "days" window must be a number between 0 and 365.',
-      );
-    }
-
-    const items = await expiringCredentials(s, days);
-    return {
-      items: items.map((i) => ({
-        driverId: i.driver.id,
-        driverName: i.driver.fullName,
-        what: i.what,
-        expiresAt: i.expiresAt,
-      })),
-    };
-  });
+      const items = await expiringCredentials(s, days);
+      return {
+        items: items.map((i) => ({
+          driverId: i.driver.id,
+          driverName: i.driver.fullName,
+          what: i.what,
+          expiresAt: i.expiresAt,
+        })),
+      };
+    },
+  );
 }

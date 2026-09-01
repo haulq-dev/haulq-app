@@ -32,6 +32,8 @@ import {
   type Truck,
 } from '@haulq/db';
 import type { FastifyInstance } from 'fastify';
+import type { ZodTypeProvider } from 'fastify-type-provider-zod';
+import { z } from 'zod';
 import { exchangeMotiveCode, motiveAuthorizeUrl } from '../integrations/motive.ts';
 import { suggestMotiveMatches } from '../integrations/motive-match.ts';
 import { accessTokenFor, fetchMotiveVehicles } from '../integrations/motive-sync.ts';
@@ -94,11 +96,23 @@ function requireDecryptionConfig(app: FastifyInstance) {
   return { publicKey: CREDENTIAL_ENCRYPTION_PUBLIC_KEY, privateKey: CREDENTIAL_ENCRYPTION_PRIVATE_KEY };
 }
 
+const MotiveCallbackQuerySchema = z.object({
+  code: z.string().optional(),
+  state: z.string().optional(),
+  error: z.string().optional(),
+});
+
 export async function integrationRoutes(app: FastifyInstance) {
-  app.get('/v1/integrations', async (request) => {
-    const s = await requireScope(request);
-    return { items: await listBoardCredentials(s) };
-  });
+  const server = app.withTypeProvider<ZodTypeProvider>();
+
+  server.get(
+    '/v1/integrations',
+    { schema: { tags: ['Integrations'], summary: 'List connected boards and ELDs' } },
+    async (request) => {
+      const s = await requireScope(request);
+      return { items: await listBoardCredentials(s) };
+    },
+  );
 
   /**
    * Every Motive vehicle on this account, plus a best-effort suggested
@@ -109,117 +123,141 @@ export async function integrationRoutes(app: FastifyInstance) {
    * already makes; there is no separate "confirm" endpoint because there is
    * nothing about accepting a suggestion that differs from picking by hand.
    */
-  app.get('/v1/integrations/motive/vehicles', async (request) => {
-    const s = await requireScope(request);
-    requireRole(request, 'owner', 'dispatcher');
+  server.get(
+    '/v1/integrations/motive/vehicles',
+    {
+      schema: {
+        tags: ['Integrations'],
+        summary: 'Motive vehicles, with suggested truck matches',
+      },
+    },
+    async (request) => {
+      const s = await requireScope(request);
+      requireRole(request, 'owner', 'dispatcher');
 
-    const credential = await getBoardCredential(s, 'motive');
-    if (!credential || credential.status !== 'active') {
-      throw new HttpError(
-        409,
-        'not_connected',
-        'Connect Motive before matching trucks to vehicles.',
+      const credential = await getBoardCredential(s, 'motive');
+      if (!credential || credential.status !== 'active') {
+        throw new HttpError(
+          409,
+          'not_connected',
+          'Connect Motive before matching trucks to vehicles.',
+        );
+      }
+
+      const config = requireMotiveConfig(app);
+      const { publicKey, privateKey } = requireDecryptionConfig(app);
+
+      const [accessToken, trucks] = await Promise.all([
+        accessTokenFor(
+          { db: app.db, config, publicKey, privateKey, log: app.log },
+          credential,
+        ),
+        listAllTrucks(s),
+      ]);
+
+      const vehicles = await fetchMotiveVehicles(accessToken);
+      const suggestions = suggestMotiveMatches(
+        trucks.map((t) => ({ id: t.id, label: t.label, motiveVehicleId: t.motiveVehicleId })),
+        vehicles.map((v) => ({ id: v.id, number: v.number })),
       );
-    }
 
-    const config = requireMotiveConfig(app);
-    const { publicKey, privateKey } = requireDecryptionConfig(app);
-
-    const [accessToken, trucks] = await Promise.all([
-      accessTokenFor(
-        { db: app.db, config, publicKey, privateKey, log: app.log },
-        credential,
-      ),
-      listAllTrucks(s),
-    ]);
-
-    const vehicles = await fetchMotiveVehicles(accessToken);
-    const suggestions = suggestMotiveMatches(
-      trucks.map((t) => ({ id: t.id, label: t.label, motiveVehicleId: t.motiveVehicleId })),
-      vehicles.map((v) => ({ id: v.id, number: v.number })),
-    );
-
-    return { vehicles, suggestions };
-  });
+      return { vehicles, suggestions };
+    },
+  );
 
   /**
    * Returns the authorize URL; does not redirect. See the module note.
    */
-  app.get('/v1/integrations/motive/connect', async (request) => {
-    const s = await requireScope(request);
-    requireRole(request, 'owner');
-
-    const config = requireMotiveConfig(app);
-    // The client secret signs state rather than a dedicated secret existing
-    // just for this — both stay server-side, and adding a second secret to
-    // configure for one HMAC buys nothing.
-    const state = signOAuthState(config.clientSecret, s.ctx.orgId);
-    return { url: motiveAuthorizeUrl(config, state) };
-  });
-
-  app.get('/v1/integrations/motive/callback', async (request, reply) => {
-    const q = request.query as { code?: string; state?: string; error?: string };
-    const webOrigin = app.env.WEB_ORIGIN.replace(/\/$/, '');
-
-    // Every exit from here on is a redirect back into the web app, never a
-    // raw JSON response — the browser is mid-navigation on Motive's own
-    // redirect, not making an API call something can render an error for.
-    // A config check thrown outside this try (as `requireMotiveConfig` and
-    // `requireEncryptionConfig` do everywhere else) would otherwise land the
-    // user on a bare `{"code":"not_configured",...}` page with no way back.
-    try {
-      if (q.error) {
-        return reply.redirect(`${webOrigin}/integrations?motive=denied`);
-      }
+  server.get(
+    '/v1/integrations/motive/connect',
+    { schema: { tags: ['Integrations'], summary: 'Get the Motive OAuth authorize URL' } },
+    async (request) => {
+      const s = await requireScope(request);
+      requireRole(request, 'owner');
 
       const config = requireMotiveConfig(app);
+      // The client secret signs state rather than a dedicated secret existing
+      // just for this — both stay server-side, and adding a second secret to
+      // configure for one HMAC buys nothing.
+      const state = signOAuthState(config.clientSecret, s.ctx.orgId);
+      return { url: motiveAuthorizeUrl(config, state) };
+    },
+  );
 
-      if (!q.code || !q.state) {
-        throw new HttpError(400, 'invalid_request', 'Motive did not send a code and state.');
+  server.get(
+    '/v1/integrations/motive/callback',
+    {
+      schema: {
+        tags: ['Integrations'],
+        summary: "Motive's OAuth redirect target",
+        querystring: MotiveCallbackQuerySchema,
+      },
+    },
+    async (request, reply) => {
+      const q = request.query;
+      const webOrigin = app.env.WEB_ORIGIN.replace(/\/$/, '');
+
+      // Every exit from here on is a redirect back into the web app, never a
+      // raw JSON response — the browser is mid-navigation on Motive's own
+      // redirect, not making an API call something can render an error for.
+      // A config check thrown outside this try (as `requireMotiveConfig` and
+      // `requireEncryptionConfig` do everywhere else) would otherwise land
+      // the user on a bare `{"code":"not_configured",...}` page with no way
+      // back.
+      try {
+        if (q.error) {
+          return reply.redirect(`${webOrigin}/integrations?motive=denied`);
+        }
+
+        const config = requireMotiveConfig(app);
+
+        if (!q.code || !q.state) {
+          throw new HttpError(400, 'invalid_request', 'Motive did not send a code and state.');
+        }
+
+        const orgId = verifyOAuthState(config.clientSecret, q.state);
+        if (!orgId) {
+          throw new HttpError(400, 'invalid_state', 'That connection request could not be verified.');
+        }
+
+        const publicKey = requireEncryptionConfig(app);
+
+        const tokens = await exchangeMotiveCode(config, q.code);
+        const [encryptedAccessToken, encryptedRefreshToken] = await Promise.all([
+          encryptCredential(publicKey, tokens.accessToken),
+          encryptCredential(publicKey, tokens.refreshToken),
+        ]);
+
+        const s = scope(app.db, {
+          orgId,
+          // No person is at the keyboard for this request — Motive's server
+          // redirected the browser here. Same actor family
+          // `postmark-inbound.ts` uses for an external caller authenticating
+          // by possessing a secret rather than by signing in.
+          actor: { type: 'integration', provider: 'motive-oauth' },
+          correlationId: randomUUID(),
+        });
+
+        await storeOAuthCredential(s, {
+          board: 'motive',
+          encryptedAccessToken,
+          encryptedRefreshToken,
+          expiresAt: tokens.expiresAt,
+        });
+
+        return reply.redirect(`${webOrigin}/integrations?motive=connected`);
+      } catch (err) {
+        const notConfigured = err instanceof HttpError && err.code === 'not_configured';
+        app.log.error(
+          { err: err instanceof Error ? err.message : String(err) },
+          'motive oauth callback failed',
+        );
+        return reply.redirect(
+          `${webOrigin}/integrations?motive=${notConfigured ? 'not_configured' : 'error'}`,
+        );
       }
-
-      const orgId = verifyOAuthState(config.clientSecret, q.state);
-      if (!orgId) {
-        throw new HttpError(400, 'invalid_state', 'That connection request could not be verified.');
-      }
-
-      const publicKey = requireEncryptionConfig(app);
-
-      const tokens = await exchangeMotiveCode(config, q.code);
-      const [encryptedAccessToken, encryptedRefreshToken] = await Promise.all([
-        encryptCredential(publicKey, tokens.accessToken),
-        encryptCredential(publicKey, tokens.refreshToken),
-      ]);
-
-      const s = scope(app.db, {
-        orgId,
-        // No person is at the keyboard for this request — Motive's server
-        // redirected the browser here. Same actor family
-        // `postmark-inbound.ts` uses for an external caller authenticating
-        // by possessing a secret rather than by signing in.
-        actor: { type: 'integration', provider: 'motive-oauth' },
-        correlationId: randomUUID(),
-      });
-
-      await storeOAuthCredential(s, {
-        board: 'motive',
-        encryptedAccessToken,
-        encryptedRefreshToken,
-        expiresAt: tokens.expiresAt,
-      });
-
-      return reply.redirect(`${webOrigin}/integrations?motive=connected`);
-    } catch (err) {
-      const notConfigured = err instanceof HttpError && err.code === 'not_configured';
-      app.log.error(
-        { err: err instanceof Error ? err.message : String(err) },
-        'motive oauth callback failed',
-      );
-      return reply.redirect(
-        `${webOrigin}/integrations?motive=${notConfigured ? 'not_configured' : 'error'}`,
-      );
-    }
-  });
+    },
+  );
 
   /**
    * Disconnect, deliberately separate from `connect` rather than a PATCH
@@ -227,10 +265,14 @@ export async function integrationRoutes(app: FastifyInstance) {
    * action as the connect button was, and DELETE reads as final in a way a
    * status flag does not.
    */
-  app.delete('/v1/integrations/motive', async (request) => {
-    const s = await requireScope(request);
-    requireRole(request, 'owner');
-    await disconnectBoardCredential(s, 'motive');
-    return { ok: true };
-  });
+  server.delete(
+    '/v1/integrations/motive',
+    { schema: { tags: ['Integrations'], summary: 'Disconnect Motive' } },
+    async (request) => {
+      const s = await requireScope(request);
+      requireRole(request, 'owner');
+      await disconnectBoardCredential(s, 'motive');
+      return { ok: true };
+    },
+  );
 }

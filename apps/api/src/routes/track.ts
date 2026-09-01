@@ -35,6 +35,8 @@ import {
 } from '@haulq/db';
 import { randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
+import type { ZodTypeProvider } from 'fastify-type-provider-zod';
+import { z } from 'zod';
 import { HttpError, requireRole, requireScope } from '../plugins/request-context.ts';
 
 const STATUS: Record<string, number> = {
@@ -53,72 +55,100 @@ function rethrow(err: unknown): never {
   throw err;
 }
 
-function badRequest(issues: { path: (string | number)[]; message: string }[]): never {
-  throw new HttpError(
-    400,
-    'invalid_request',
-    issues.map((i) => `${i.path.join('.') || 'body'}: ${i.message}`).join('; '),
-  );
-}
+const IdParamSchema = z.object({ id: z.string().uuid() });
+// Not `.uuid()` — a checkin token is deliberately an 8-character code a
+// driver can read aloud, and a visibility token is a different, full-entropy
+// opaque string. Neither is a UUID; see the module note on `checkin/:token`.
+const TokenParamSchema = z.object({ token: z.string().min(1) });
+const StopCheckinParamSchema = z.object({ token: z.string().min(1), stopId: z.string().uuid() });
 
 export async function trackRoutes(app: FastifyInstance) {
+  const server = app.withTypeProvider<ZodTypeProvider>();
+
   // --- inside a tenant -----------------------------------------------------
 
-  app.post('/v1/loads/:id/checkin-links', async (request, reply) => {
-    const s = await requireScope(request);
-    requireRole(request, 'owner', 'dispatcher');
-    const { id } = request.params as { id: string };
+  server.post(
+    '/v1/loads/:id/checkin-links',
+    {
+      schema: {
+        tags: ['Track'],
+        summary: 'Issue a driver check-in link for a load',
+        params: IdParamSchema,
+        // `.nullish()`, not `.optional()` — every field on
+        // IssueCheckinLinkSchema has a default, so a bare POST with no body
+        // is the common case, but Fastify's own JSON body parser hands an
+        // empty body through as `null`, not `undefined`. `.optional()` only
+        // widens to accept the latter, so the actual common case was
+        // rejected by the schema before the handler's `request.body ?? {}`
+        // ever ran.
+        body: IssueCheckinLinkSchema.nullish(),
+      },
+    },
+    async (request, reply) => {
+      const s = await requireScope(request);
+      requireRole(request, 'owner', 'dispatcher');
+      const { id } = request.params;
 
-    const parsed = IssueCheckinLinkSchema.safeParse(request.body ?? {});
-    if (!parsed.success) badRequest(parsed.error.issues);
+      try {
+        const result = await issueCheckinLink(s, id, request.body ?? {});
+        // Returned once and never again — only the hash is stored.
+        return reply.code(201).send({ link: result.link, token: result.token });
+      } catch (err) {
+        rethrow(err);
+      }
+    },
+  );
 
-    try {
-      const result = await issueCheckinLink(s, id, parsed.data);
-      // Returned once and never again — only the hash is stored.
-      return reply.code(201).send({ link: result.link, token: result.token });
-    } catch (err) {
-      rethrow(err);
-    }
-  });
+  server.delete(
+    '/v1/loads/:id/checkin-links',
+    { schema: { tags: ['Track'], summary: 'Revoke a check-in link', params: IdParamSchema } },
+    async (request, reply) => {
+      const s = await requireScope(request);
+      requireRole(request, 'owner', 'dispatcher');
+      const { id } = request.params;
 
-  app.delete('/v1/loads/:id/checkin-links', async (request, reply) => {
-    const s = await requireScope(request);
-    requireRole(request, 'owner', 'dispatcher');
-    const { id } = request.params as { id: string };
+      try {
+        await revokeCheckinLink(s, id);
+        return reply.code(204).send();
+      } catch (err) {
+        rethrow(err);
+      }
+    },
+  );
 
-    try {
-      await revokeCheckinLink(s, id);
-      return reply.code(204).send();
-    } catch (err) {
-      rethrow(err);
-    }
-  });
+  server.post(
+    '/v1/loads/:id/visibility-links',
+    { schema: { tags: ['Track'], summary: "Issue a broker's tracking link", params: IdParamSchema } },
+    async (request, reply) => {
+      const s = await requireScope(request);
+      requireRole(request, 'owner', 'dispatcher');
+      const { id } = request.params;
 
-  app.post('/v1/loads/:id/visibility-links', async (request, reply) => {
-    const s = await requireScope(request);
-    requireRole(request, 'owner', 'dispatcher');
-    const { id } = request.params as { id: string };
+      try {
+        const result = await issueVisibilityLink(s, id);
+        return reply.code(201).send({ link: result.link, token: result.token });
+      } catch (err) {
+        rethrow(err);
+      }
+    },
+  );
 
-    try {
-      const result = await issueVisibilityLink(s, id);
-      return reply.code(201).send({ link: result.link, token: result.token });
-    } catch (err) {
-      rethrow(err);
-    }
-  });
+  server.delete(
+    '/v1/loads/:id/visibility-links',
+    { schema: { tags: ['Track'], summary: 'Revoke a tracking link', params: IdParamSchema } },
+    async (request, reply) => {
+      const s = await requireScope(request);
+      requireRole(request, 'owner', 'dispatcher');
+      const { id } = request.params;
 
-  app.delete('/v1/loads/:id/visibility-links', async (request, reply) => {
-    const s = await requireScope(request);
-    requireRole(request, 'owner', 'dispatcher');
-    const { id } = request.params as { id: string };
-
-    try {
-      await revokeVisibilityLink(s, id);
-      return reply.code(204).send();
-    } catch (err) {
-      rethrow(err);
-    }
-  });
+      try {
+        await revokeVisibilityLink(s, id);
+        return reply.code(204).send();
+      } catch (err) {
+        rethrow(err);
+      }
+    },
+  );
 
   // --- without a tenant ------------------------------------------------------
 
@@ -133,55 +163,80 @@ export async function trackRoutes(app: FastifyInstance) {
    * the other route the CORS policy above just opened to any origin, and
    * `global: false` on the plugin means neither gets a limit for free.
    */
-  const publicTrackRouteLimit = { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } };
+  const publicTrackRouteLimit = { rateLimit: { max: 30, timeWindow: '1 minute' } };
 
   /** What a driver sees before tapping anything. */
-  app.get('/v1/checkin/:token', publicTrackRouteLimit, async (request) => {
-    const { token } = request.params as { token: string };
-    try {
-      return await previewCheckin(app.db, token);
-    } catch (err) {
-      rethrow(err);
-    }
-  });
+  server.get(
+    '/v1/checkin/:token',
+    {
+      config: publicTrackRouteLimit,
+      schema: { tags: ['Track'], summary: 'Preview a check-in link', params: TokenParamSchema },
+    },
+    async (request) => {
+      const { token } = request.params;
+      try {
+        return await previewCheckin(app.db, token);
+      } catch (err) {
+        rethrow(err);
+      }
+    },
+  );
 
-  app.post('/v1/checkin/:token/stops/:stopId', publicTrackRouteLimit, async (request) => {
-    const { token, stopId } = request.params as { token: string; stopId: string };
+  server.post(
+    '/v1/checkin/:token/stops/:stopId',
+    {
+      config: publicTrackRouteLimit,
+      schema: {
+        tags: ['Track'],
+        summary: 'Record a stop milestone',
+        params: StopCheckinParamSchema,
+        body: RecordStopCheckinSchema,
+      },
+    },
+    async (request) => {
+      const { token, stopId } = request.params;
 
-    const parsed = RecordStopCheckinSchema.safeParse(request.body);
-    if (!parsed.success) badRequest(parsed.error.issues);
+      try {
+        return await recordStopCheckin(app.db, {
+          token,
+          stopId,
+          milestone: request.body.milestone,
+          occurredAt: request.body.occurredAt,
+          correlationId: randomUUID(),
+        });
+      } catch (err) {
+        rethrow(err);
+      }
+    },
+  );
 
-    try {
-      return await recordStopCheckin(app.db, {
-        token,
-        stopId,
-        milestone: parsed.data.milestone,
-        occurredAt: parsed.data.occurredAt,
-        correlationId: randomUUID(),
-      });
-    } catch (err) {
-      rethrow(err);
-    }
-  });
+  server.post(
+    '/v1/checkin/:token/position',
+    {
+      config: publicTrackRouteLimit,
+      schema: {
+        tags: ['Track'],
+        summary: "Record the driver's position",
+        params: TokenParamSchema,
+        body: RecordPositionSchema,
+      },
+    },
+    async (request, reply) => {
+      const { token } = request.params;
 
-  app.post('/v1/checkin/:token/position', publicTrackRouteLimit, async (request, reply) => {
-    const { token } = request.params as { token: string };
-
-    const parsed = RecordPositionSchema.safeParse(request.body);
-    if (!parsed.success) badRequest(parsed.error.issues);
-
-    try {
-      await recordCheckinPosition(app.db, {
-        token,
-        lat: parsed.data.lat,
-        lng: parsed.data.lng,
-        recordedAt: parsed.data.recordedAt,
-      });
-      return reply.code(204).send();
-    } catch (err) {
-      rethrow(err);
-    }
-  });
+      try {
+        await recordCheckinPosition(app.db, {
+          token,
+          lat: request.body.lat,
+          lng: request.body.lng,
+          recordedAt: request.body.recordedAt,
+        });
+        return reply.code(204).send();
+      } catch (err) {
+        rethrow(err);
+      }
+    },
+  );
 
   /**
    * A broker's read-only tracking page. Unauthenticated on purpose — the
@@ -189,12 +244,19 @@ export async function trackRoutes(app: FastifyInstance) {
    * more than status, stop timestamps and the truck's last known position.
    * No ETA, no detention badge — see `repositories/track.ts`'s module note.
    */
-  app.get('/v1/track/:token', publicTrackRouteLimit, async (request) => {
-    const { token } = request.params as { token: string };
-    try {
-      return await previewTracking(app.db, token);
-    } catch (err) {
-      rethrow(err);
-    }
-  });
+  server.get(
+    '/v1/track/:token',
+    {
+      config: publicTrackRouteLimit,
+      schema: { tags: ['Track'], summary: "A broker's tracking page", params: TokenParamSchema },
+    },
+    async (request) => {
+      const { token } = request.params;
+      try {
+        return await previewTracking(app.db, token);
+      } catch (err) {
+        rethrow(err);
+      }
+    },
+  );
 }

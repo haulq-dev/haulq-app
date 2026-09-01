@@ -7,6 +7,11 @@
  * open-ended columns, so a refusal can arrive as a raw Postgres error naming
  * a constraint. `rethrow` is where that becomes a sentence a carrier reads,
  * same split of responsibility as `loads.ts` describes in its own header.
+ *
+ * Validation happens through Fastify's own `schema` option, same as
+ * `trucks.ts`/`loads.ts` — see that file's module note for why. The
+ * Postgres-refusal translation below is unrelated to that and unaffected by
+ * it: it only ever runs after a request has already passed schema validation.
  */
 
 import {
@@ -14,6 +19,7 @@ import {
   CreateFactoringCompanySchema,
   FactoringResponseSchema,
   GenerateInvoiceSchema,
+  PageQuerySchema,
   RecordPaymentSchema,
   VoidInvoiceSchema,
 } from '@haulq/contracts';
@@ -40,6 +46,8 @@ import {
   type InvoiceStatus,
 } from '@haulq/db';
 import type { FastifyInstance } from 'fastify';
+import type { ZodTypeProvider } from 'fastify-type-provider-zod';
+import { z } from 'zod';
 import { HttpError, requireRole, requireScope } from '../plugins/request-context.ts';
 
 /** Postgres SQLSTATEs this route knows how to explain. Same as `loads.ts`. */
@@ -118,224 +126,289 @@ function rethrow(err: unknown): never {
   throw err;
 }
 
-function badRequest(issues: { path: (string | number)[]; message: string }[]): never {
-  throw new HttpError(
-    400,
-    'invalid_request',
-    issues.map((i) => `${i.path.join('.') || 'body'}: ${i.message}`).join('; '),
-  );
-}
+const IdParamSchema = z.object({ id: z.string().uuid() });
+
+const InvoicesQuerySchema = PageQuerySchema.extend({
+  status: z.string().optional(),
+  loadId: z.string().uuid().optional(),
+});
+
+const FactoringPacketsQuerySchema = PageQuerySchema.extend({
+  invoiceId: z.string().uuid().optional(),
+  status: z.string().optional(),
+});
 
 export async function payRoutes(app: FastifyInstance) {
+  const server = app.withTypeProvider<ZodTypeProvider>();
+
   // --- invoices --------------------------------------------------------------
 
-  app.get('/v1/invoices', async (request) => {
-    const s = await requireScope(request);
-    const q = request.query as { status?: string; loadId?: string; limit?: string; cursor?: string };
+  server.get(
+    '/v1/invoices',
+    { schema: { tags: ['Pay'], summary: 'List invoices', querystring: InvoicesQuerySchema } },
+    async (request) => {
+      const s = await requireScope(request);
+      const { status: statusParam, loadId, cursor, limit } = request.query;
 
-    const status = q.status
-      ? (q.status.split(',').map((x) => x.trim()).filter(Boolean) as InvoiceStatus[])
-      : undefined;
+      const status = statusParam
+        ? (statusParam.split(',').map((x) => x.trim()).filter(Boolean) as InvoiceStatus[])
+        : undefined;
 
-    try {
-      const { items, nextCursor } = await listInvoices(s, {
-        ...(status?.length ? { status } : {}),
-        ...(q.loadId ? { loadId: q.loadId } : {}),
-        ...(q.limit ? { limit: Number(q.limit) } : {}),
-        ...(q.cursor ? { cursor: q.cursor } : {}),
-      });
+      try {
+        const { items, nextCursor } = await listInvoices(s, {
+          ...(status?.length ? { status } : {}),
+          ...(loadId ? { loadId } : {}),
+          limit,
+          ...(cursor ? { cursor } : {}),
+        });
 
-      return { items, nextCursor, counts: await invoiceCounts(s) };
-    } catch (err) {
-      rethrow(err);
-    }
-  });
+        return { items, nextCursor, counts: await invoiceCounts(s) };
+      } catch (err) {
+        rethrow(err);
+      }
+    },
+  );
 
   /** Registered before `/:id` so the router does not read "receivables-aging" as an id. */
-  app.get('/v1/invoices/receivables-aging', async (request) => {
-    const s = await requireScope(request);
-    return { buckets: await receivablesAging(s) };
-  });
+  server.get(
+    '/v1/invoices/receivables-aging',
+    { schema: { tags: ['Pay'], summary: 'Receivables aging buckets' } },
+    async (request) => {
+      const s = await requireScope(request);
+      return { buckets: await receivablesAging(s) };
+    },
+  );
 
-  app.get('/v1/invoices/:id', async (request) => {
-    const s = await requireScope(request);
-    const { id } = request.params as { id: string };
-    const invoice = await getInvoice(s, id);
-    if (!invoice) throw new HttpError(404, 'not_found', 'That invoice is not in this account.');
-    return { invoice };
-  });
+  server.get(
+    '/v1/invoices/:id',
+    { schema: { tags: ['Pay'], summary: 'Get an invoice', params: IdParamSchema } },
+    async (request) => {
+      const s = await requireScope(request);
+      const { id } = request.params;
+      const invoice = await getInvoice(s, id);
+      if (!invoice) throw new HttpError(404, 'not_found', 'That invoice is not in this account.');
+      return { invoice };
+    },
+  );
 
-  app.get('/v1/invoices/:id/payments', async (request) => {
-    const s = await requireScope(request);
-    const { id } = request.params as { id: string };
-    return { items: await listPayments(s, id) };
-  });
+  server.get(
+    '/v1/invoices/:id/payments',
+    { schema: { tags: ['Pay'], summary: "An invoice's payments", params: IdParamSchema } },
+    async (request) => {
+      const s = await requireScope(request);
+      const { id } = request.params;
+      return { items: await listPayments(s, id) };
+    },
+  );
 
-  app.post('/v1/invoices', async (request, reply) => {
-    const s = await requireScope(request);
-    requireRole(request, 'owner', 'dispatcher', 'accountant');
+  server.post(
+    '/v1/invoices',
+    { schema: { tags: ['Pay'], summary: 'Generate an invoice for a delivered load', body: GenerateInvoiceSchema } },
+    async (request, reply) => {
+      const s = await requireScope(request);
+      requireRole(request, 'owner', 'dispatcher', 'accountant');
 
-    const parsed = GenerateInvoiceSchema.safeParse(request.body);
-    if (!parsed.success) badRequest(parsed.error.issues);
+      try {
+        return reply.code(201).send(await generateInvoice(s, request.body));
+      } catch (err) {
+        rethrow(err);
+      }
+    },
+  );
 
-    try {
-      return reply.code(201).send(await generateInvoice(s, parsed.data));
-    } catch (err) {
-      rethrow(err);
-    }
-  });
+  server.post(
+    '/v1/invoices/:id/send',
+    { schema: { tags: ['Pay'], summary: 'Send an invoice', params: IdParamSchema } },
+    async (request) => {
+      const s = await requireScope(request);
+      requireRole(request, 'owner', 'dispatcher', 'accountant');
+      const { id } = request.params;
 
-  app.post('/v1/invoices/:id/send', async (request) => {
-    const s = await requireScope(request);
-    requireRole(request, 'owner', 'dispatcher', 'accountant');
-    const { id } = request.params as { id: string };
+      try {
+        return await sendInvoice(s, id);
+      } catch (err) {
+        rethrow(err);
+      }
+    },
+  );
 
-    try {
-      return await sendInvoice(s, id);
-    } catch (err) {
-      rethrow(err);
-    }
-  });
+  server.post(
+    '/v1/invoices/:id/void',
+    {
+      schema: {
+        tags: ['Pay'],
+        summary: 'Void an invoice',
+        params: IdParamSchema,
+        body: VoidInvoiceSchema,
+      },
+    },
+    async (request) => {
+      const s = await requireScope(request);
+      requireRole(request, 'owner', 'accountant');
+      const { id } = request.params;
 
-  app.post('/v1/invoices/:id/void', async (request) => {
-    const s = await requireScope(request);
-    requireRole(request, 'owner', 'accountant');
-    const { id } = request.params as { id: string };
+      try {
+        return await voidInvoice(s, id, request.body.reason);
+      } catch (err) {
+        rethrow(err);
+      }
+    },
+  );
 
-    const parsed = VoidInvoiceSchema.safeParse(request.body);
-    if (!parsed.success) badRequest(parsed.error.issues);
+  server.post(
+    '/v1/invoices/:id/payments',
+    {
+      schema: {
+        tags: ['Pay'],
+        summary: 'Record a payment against an invoice',
+        params: IdParamSchema,
+        body: RecordPaymentSchema,
+      },
+    },
+    async (request, reply) => {
+      const s = await requireScope(request);
+      requireRole(request, 'owner', 'accountant');
+      const { id } = request.params;
+      const body = request.body;
 
-    try {
-      return await voidInvoice(s, id, parsed.data.reason);
-    } catch (err) {
-      rethrow(err);
-    }
-  });
-
-  app.post('/v1/invoices/:id/payments', async (request, reply) => {
-    const s = await requireScope(request);
-    requireRole(request, 'owner', 'accountant');
-    const { id } = request.params as { id: string };
-
-    const parsed = RecordPaymentSchema.safeParse(request.body);
-    if (!parsed.success) badRequest(parsed.error.issues);
-
-    try {
-      const result = await recordPayment(s, {
-        invoiceId: id,
-        amountCents: parsed.data.amount.amount,
-        currency: parsed.data.amount.currency,
-        source: parsed.data.source,
-        ...(parsed.data.receivedAt ? { receivedAt: parsed.data.receivedAt } : {}),
-        ...(parsed.data.reference ? { reference: parsed.data.reference } : {}),
-        ...(parsed.data.notes ? { notes: parsed.data.notes } : {}),
-        ...(parsed.data.factoringPacketId
-          ? { factoringPacketId: parsed.data.factoringPacketId }
-          : {}),
-      });
-      return reply.code(201).send(result);
-    } catch (err) {
-      rethrow(err);
-    }
-  });
+      try {
+        const result = await recordPayment(s, {
+          invoiceId: id,
+          amountCents: body.amount.amount,
+          currency: body.amount.currency,
+          source: body.source,
+          ...(body.receivedAt ? { receivedAt: body.receivedAt } : {}),
+          ...(body.reference ? { reference: body.reference } : {}),
+          ...(body.notes ? { notes: body.notes } : {}),
+          ...(body.factoringPacketId ? { factoringPacketId: body.factoringPacketId } : {}),
+        });
+        return reply.code(201).send(result);
+      } catch (err) {
+        rethrow(err);
+      }
+    },
+  );
 
   // --- factoring companies -----------------------------------------------------
 
-  app.get('/v1/factoring-companies', async (request) => {
-    const s = await requireScope(request);
-    const q = request.query as { cursor?: string; limit?: string };
-    try {
-      return await listFactoringCompanies(s, {
-        ...(q.cursor ? { cursor: q.cursor } : {}),
-        ...(q.limit ? { limit: Number(q.limit) } : {}),
-      });
-    } catch (err) {
-      rethrow(err);
-    }
-  });
+  server.get(
+    '/v1/factoring-companies',
+    { schema: { tags: ['Pay'], summary: 'List factoring companies', querystring: PageQuerySchema } },
+    async (request) => {
+      const s = await requireScope(request);
+      const { cursor, limit } = request.query;
+      try {
+        return await listFactoringCompanies(s, { ...(cursor ? { cursor } : {}), limit });
+      } catch (err) {
+        rethrow(err);
+      }
+    },
+  );
 
-  app.post('/v1/factoring-companies', async (request, reply) => {
-    const s = await requireScope(request);
-    requireRole(request, 'owner', 'accountant');
+  server.post(
+    '/v1/factoring-companies',
+    { schema: { tags: ['Pay'], summary: 'Add a factoring company', body: CreateFactoringCompanySchema } },
+    async (request, reply) => {
+      const s = await requireScope(request);
+      requireRole(request, 'owner', 'accountant');
 
-    const parsed = CreateFactoringCompanySchema.safeParse(request.body);
-    if (!parsed.success) badRequest(parsed.error.issues);
-
-    try {
-      return reply.code(201).send(await createFactoringCompany(s, parsed.data));
-    } catch (err) {
-      rethrow(err);
-    }
-  });
+      try {
+        return reply.code(201).send(await createFactoringCompany(s, request.body));
+      } catch (err) {
+        rethrow(err);
+      }
+    },
+  );
 
   // --- factoring packets ----------------------------------------------------
 
-  app.get('/v1/factoring-packets', async (request) => {
-    const s = await requireScope(request);
-    const q = request.query as { invoiceId?: string; status?: string; cursor?: string; limit?: string };
+  server.get(
+    '/v1/factoring-packets',
+    { schema: { tags: ['Pay'], summary: 'List factoring packets', querystring: FactoringPacketsQuerySchema } },
+    async (request) => {
+      const s = await requireScope(request);
+      const { invoiceId, status: statusParam, cursor, limit } = request.query;
 
-    const status = q.status
-      ? (q.status.split(',').map((x) => x.trim()).filter(Boolean) as FactoringPacketStatus[])
-      : undefined;
+      const status = statusParam
+        ? (statusParam.split(',').map((x) => x.trim()).filter(Boolean) as FactoringPacketStatus[])
+        : undefined;
 
-    try {
-      return await listFactoringPackets(s, {
-        ...(q.invoiceId ? { invoiceId: q.invoiceId } : {}),
-        ...(status?.length ? { status } : {}),
-        ...(q.cursor ? { cursor: q.cursor } : {}),
-        ...(q.limit ? { limit: Number(q.limit) } : {}),
-      });
-    } catch (err) {
-      rethrow(err);
-    }
-  });
+      try {
+        return await listFactoringPackets(s, {
+          ...(invoiceId ? { invoiceId } : {}),
+          ...(status?.length ? { status } : {}),
+          ...(cursor ? { cursor } : {}),
+          limit,
+        });
+      } catch (err) {
+        rethrow(err);
+      }
+    },
+  );
 
-  app.get('/v1/factoring-packets/:id', async (request) => {
-    const s = await requireScope(request);
-    const { id } = request.params as { id: string };
-    const packet = await getFactoringPacket(s, id);
-    if (!packet) throw new HttpError(404, 'not_found', 'That factoring packet is not in this account.');
-    return { packet };
-  });
+  server.get(
+    '/v1/factoring-packets/:id',
+    { schema: { tags: ['Pay'], summary: 'Get a factoring packet', params: IdParamSchema } },
+    async (request) => {
+      const s = await requireScope(request);
+      const { id } = request.params;
+      const packet = await getFactoringPacket(s, id);
+      if (!packet) throw new HttpError(404, 'not_found', 'That factoring packet is not in this account.');
+      return { packet };
+    },
+  );
 
-  app.post('/v1/factoring-packets', async (request, reply) => {
-    const s = await requireScope(request);
-    requireRole(request, 'owner', 'dispatcher', 'accountant');
+  server.post(
+    '/v1/factoring-packets',
+    { schema: { tags: ['Pay'], summary: 'Assemble a factoring packet', body: AssembleFactoringPacketSchema } },
+    async (request, reply) => {
+      const s = await requireScope(request);
+      requireRole(request, 'owner', 'dispatcher', 'accountant');
 
-    const parsed = AssembleFactoringPacketSchema.safeParse(request.body);
-    if (!parsed.success) badRequest(parsed.error.issues);
+      try {
+        return reply.code(201).send(await assembleFactoringPacket(s, request.body));
+      } catch (err) {
+        rethrow(err);
+      }
+    },
+  );
 
-    try {
-      return reply.code(201).send(await assembleFactoringPacket(s, parsed.data));
-    } catch (err) {
-      rethrow(err);
-    }
-  });
+  server.post(
+    '/v1/factoring-packets/:id/submit',
+    { schema: { tags: ['Pay'], summary: 'Mark a factoring packet submitted', params: IdParamSchema } },
+    async (request) => {
+      const s = await requireScope(request);
+      requireRole(request, 'owner', 'dispatcher', 'accountant');
+      const { id } = request.params;
 
-  app.post('/v1/factoring-packets/:id/submit', async (request) => {
-    const s = await requireScope(request);
-    requireRole(request, 'owner', 'dispatcher', 'accountant');
-    const { id } = request.params as { id: string };
+      try {
+        return await submitFactoringPacket(s, id);
+      } catch (err) {
+        rethrow(err);
+      }
+    },
+  );
 
-    try {
-      return await submitFactoringPacket(s, id);
-    } catch (err) {
-      rethrow(err);
-    }
-  });
+  server.post(
+    '/v1/factoring-packets/:id/response',
+    {
+      schema: {
+        tags: ['Pay'],
+        summary: "Record a factor's response to a packet",
+        params: IdParamSchema,
+        body: FactoringResponseSchema,
+      },
+    },
+    async (request) => {
+      const s = await requireScope(request);
+      requireRole(request, 'owner', 'accountant');
+      const { id } = request.params;
 
-  app.post('/v1/factoring-packets/:id/response', async (request) => {
-    const s = await requireScope(request);
-    requireRole(request, 'owner', 'accountant');
-    const { id } = request.params as { id: string };
-
-    const parsed = FactoringResponseSchema.safeParse(request.body);
-    if (!parsed.success) badRequest(parsed.error.issues);
-
-    try {
-      return await recordFactoringResponse(s, id, parsed.data);
-    } catch (err) {
-      rethrow(err);
-    }
-  });
+      try {
+        return await recordFactoringResponse(s, id, request.body);
+      } catch (err) {
+        rethrow(err);
+      }
+    },
+  );
 }

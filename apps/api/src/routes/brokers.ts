@@ -18,8 +18,12 @@ import {
   updateBrokerDocket,
 } from '@haulq/db';
 import type { FastifyInstance } from 'fastify';
+import type { ZodTypeProvider } from 'fastify-type-provider-zod';
+import { z } from 'zod';
 import { FmcsaError, lookupCarrier } from '../integrations/fmcsa.ts';
 import { HttpError, requireRole, requireScope } from '../plugins/request-context.ts';
+
+const IdParamSchema = z.object({ id: z.string().uuid() });
 
 function rethrow(err: unknown): never {
   if (err instanceof BrokerError) {
@@ -29,48 +33,54 @@ function rethrow(err: unknown): never {
 }
 
 export async function brokerRoutes(app: FastifyInstance) {
-  app.patch('/v1/brokers/:id/detention-threshold', async (request) => {
-    const s = await requireScope(request);
-    requireRole(request, 'owner', 'dispatcher');
-    const { id } = request.params as { id: string };
+  const server = app.withTypeProvider<ZodTypeProvider>();
 
-    const parsed = UpdateBrokerDetentionSchema.safeParse(request.body);
-    if (!parsed.success) {
-      throw new HttpError(
-        400,
-        'invalid_request',
-        parsed.error.issues.map((i) => `${i.path.join('.') || 'body'}: ${i.message}`).join('; '),
-      );
-    }
+  server.patch(
+    '/v1/brokers/:id/detention-threshold',
+    {
+      schema: {
+        tags: ['Brokers'],
+        summary: "Set a broker's free detention time",
+        params: IdParamSchema,
+        body: UpdateBrokerDetentionSchema,
+      },
+    },
+    async (request) => {
+      const s = await requireScope(request);
+      requireRole(request, 'owner', 'dispatcher');
+      const { id } = request.params;
 
-    try {
-      return await updateBrokerDetentionThreshold(s, id, parsed.data.freeMinutes);
-    } catch (err) {
-      rethrow(err);
-    }
-  });
+      try {
+        return await updateBrokerDetentionThreshold(s, id, request.body.freeMinutes);
+      } catch (err) {
+        rethrow(err);
+      }
+    },
+  );
 
   /** Put a broker's MC/USDOT number on file — see `updateBrokerDocket`'s own comment. */
-  app.patch('/v1/brokers/:id/docket', async (request) => {
-    const s = await requireScope(request);
-    requireRole(request, 'owner', 'dispatcher');
-    const { id } = request.params as { id: string };
+  server.patch(
+    '/v1/brokers/:id/docket',
+    {
+      schema: {
+        tags: ['Brokers'],
+        summary: "Put a broker's MC/USDOT number on file",
+        params: IdParamSchema,
+        body: UpdateBrokerDocketSchema,
+      },
+    },
+    async (request) => {
+      const s = await requireScope(request);
+      requireRole(request, 'owner', 'dispatcher');
+      const { id } = request.params;
 
-    const parsed = UpdateBrokerDocketSchema.safeParse(request.body);
-    if (!parsed.success) {
-      throw new HttpError(
-        400,
-        'invalid_request',
-        parsed.error.issues.map((i) => `${i.path.join('.') || 'body'}: ${i.message}`).join('; '),
-      );
-    }
-
-    try {
-      return await updateBrokerDocket(s, id, parsed.data);
-    } catch (err) {
-      rethrow(err);
-    }
-  });
+      try {
+        return await updateBrokerDocket(s, id, request.body);
+      } catch (err) {
+        rethrow(err);
+      }
+    },
+  );
 
   /**
    * Check a broker against FMCSA and record the result.
@@ -80,73 +90,93 @@ export async function brokerRoutes(app: FastifyInstance) {
    * carrier meant, since `lookupCarrier` cannot pick a number that isn't
    * there.
    */
-  app.post('/v1/brokers/:id/verify', async (request, reply) => {
-    const s = await requireScope(request);
-    requireRole(request, 'owner', 'dispatcher');
-    const { id } = request.params as { id: string };
+  server.post(
+    '/v1/brokers/:id/verify',
+    {
+      schema: {
+        tags: ['Brokers'],
+        summary: 'Check a broker against FMCSA',
+        params: IdParamSchema,
+      },
+    },
+    async (request, reply) => {
+      const s = await requireScope(request);
+      requireRole(request, 'owner', 'dispatcher');
+      const { id } = request.params;
 
-    if (!app.env.FMCSA_WEBKEY) {
-      throw new HttpError(
-        503,
-        'verify_not_configured',
-        'Broker verification is not configured on this deployment.',
-      );
-    }
-
-    const broker = await getBroker(s, id);
-    if (!broker) throw new HttpError(404, 'not_found', 'That broker is not on this account.');
-
-    const query = broker.mcNumber ?? broker.usdotNumber;
-    if (!query) {
-      throw new HttpError(
-        422,
-        'no_docket_number',
-        `${broker.name} has no MC or USDOT number on file to check.`,
-      );
-    }
-
-    let result;
-    try {
-      result = app.env.FMCSA_BASE_URL
-        ? await lookupCarrier(query, app.env.FMCSA_WEBKEY, app.env.FMCSA_BASE_URL)
-        : await lookupCarrier(query, app.env.FMCSA_WEBKEY);
-    } catch (err) {
-      if (err instanceof FmcsaError) {
-        request.log.warn({ err: err.message, brokerId: id }, 'FMCSA lookup failed');
-        throw new HttpError(502, 'verify_upstream_failed', 'FMCSA did not answer. Try again shortly.');
+      if (!app.env.FMCSA_WEBKEY) {
+        throw new HttpError(
+          503,
+          'verify_not_configured',
+          'Broker verification is not configured on this deployment.',
+        );
       }
-      throw err;
-    }
 
-    const verification = await recordVerification(s, {
-      brokerId: id,
-      source: 'FMCSA QCMobile',
-      operatingStatus: result.operatingStatus,
-      legalName: result.legalName,
-      dbaName: result.dbaName,
-      raw: result.raw,
-    });
+      const broker = await getBroker(s, id);
+      if (!broker) throw new HttpError(404, 'not_found', 'That broker is not on this account.');
 
-    return reply.code(201).send({ verification, found: result.found });
-  });
+      const query = broker.mcNumber ?? broker.usdotNumber;
+      if (!query) {
+        throw new HttpError(
+          422,
+          'no_docket_number',
+          `${broker.name} has no MC or USDOT number on file to check.`,
+        );
+      }
+
+      let result;
+      try {
+        result = app.env.FMCSA_BASE_URL
+          ? await lookupCarrier(query, app.env.FMCSA_WEBKEY, app.env.FMCSA_BASE_URL)
+          : await lookupCarrier(query, app.env.FMCSA_WEBKEY);
+      } catch (err) {
+        if (err instanceof FmcsaError) {
+          request.log.warn({ err: err.message, brokerId: id }, 'FMCSA lookup failed');
+          throw new HttpError(502, 'verify_upstream_failed', 'FMCSA did not answer. Try again shortly.');
+        }
+        throw err;
+      }
+
+      const verification = await recordVerification(s, {
+        brokerId: id,
+        source: 'FMCSA QCMobile',
+        operatingStatus: result.operatingStatus,
+        legalName: result.legalName,
+        dbaName: result.dbaName,
+        raw: result.raw,
+      });
+
+      return reply.code(201).send({ verification, found: result.found });
+    },
+  );
 
   /**
    * Both the docket numbers on file and the latest check, in one response —
    * the screen that shows one always wants the other, and it is the same
    * broker row read either way.
    */
-  app.get('/v1/brokers/:id/verification', async (request) => {
-    const s = await requireScope(request);
-    const { id } = request.params as { id: string };
+  server.get(
+    '/v1/brokers/:id/verification',
+    {
+      schema: {
+        tags: ['Brokers'],
+        summary: "A broker's docket numbers and latest FMCSA check",
+        params: IdParamSchema,
+      },
+    },
+    async (request) => {
+      const s = await requireScope(request);
+      const { id } = request.params;
 
-    const broker = await getBroker(s, id);
-    if (!broker) throw new HttpError(404, 'not_found', 'That broker is not on this account.');
+      const broker = await getBroker(s, id);
+      if (!broker) throw new HttpError(404, 'not_found', 'That broker is not on this account.');
 
-    const verification = await getLatestVerification(s, id);
-    return {
-      mcNumber: broker.mcNumber,
-      usdotNumber: broker.usdotNumber,
-      verification: verification ?? null,
-    };
-  });
+      const verification = await getLatestVerification(s, id);
+      return {
+        mcNumber: broker.mcNumber,
+        usdotNumber: broker.usdotNumber,
+        verification: verification ?? null,
+      };
+    },
+  );
 }
