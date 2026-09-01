@@ -1,0 +1,30 @@
+# Local test Postgres — not for `pnpm dev`, which uses Render/Doppler.
+#
+# Port 5434, not 5432 or 5433: this machine already runs an unrelated
+# project's Postgres on 5433 (constructioncrm-postgres-1), and 5434 is the
+# port every test run and every doc on this machine has assumed since. Codify
+# it here instead of re-deriving it by hand each session — the ad-hoc
+# `docker run` this replaced was recreated from scratch more than once.
+#
+# Usage:
+#   docker compose -f docker-compose.test.yml up -d --wait
+#   export DATABASE_URL=postgres://haulq:haulq@localhost:5434/haulq
+#   pnpm db:migrate && pnpm test
+#   docker compose -f docker-compose.test.yml down -v
+
+services:
+  test-postgres:
+    image: postgres:16-alpine
+    ports:
+      - '5434:5432'
+    environment:
+      POSTGRES_USER: haulq
+      POSTGRES_PASSWORD: haulq
+      POSTGRES_DB: haulq
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U haulq']
+      interval: 2s
+      timeout: 3s
+      retries: 20
+    # No named volume, on purpose — this is a scratch database recreated
+    # fresh on every `up`, not one meant to hold state between runs.
