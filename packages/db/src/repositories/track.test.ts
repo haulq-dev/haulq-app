@@ -37,6 +37,7 @@ import {
   revokeCheckinLink,
   revokeVisibilityLink,
   TrackError,
+  undoStopCheckin,
 } from './track.ts';
 import { createTruck } from './trucks.ts';
 
@@ -256,6 +257,96 @@ suite('track repository', () => {
       await assert.rejects(
         () =>
           recordStopCheckin(db, {
+            token,
+            stopId: previewB.stops[0]!.id,
+            milestone: 'arrived',
+            correlationId: randomUUID(),
+          }),
+        (e: TrackError) => e.code === 'not_found',
+      );
+    });
+  });
+
+  describe('undoStopCheckin', () => {
+    it('clears the milestone and, for arrival, the arrival source too', async () => {
+      const load = await aDispatchedLoad();
+      const { token } = await issueCheckinLink(s, load.id);
+      const preview = await previewCheckin(db, token);
+      const stopId = preview.stops[0]!.id;
+      await recordStopCheckin(db, { token, stopId, milestone: 'arrived', correlationId: randomUUID() });
+
+      const { stop } = await undoStopCheckin(db, {
+        token,
+        stopId,
+        milestone: 'arrived',
+        correlationId: randomUUID(),
+      });
+
+      assert.equal(stop.arrivedAt, null);
+      assert.equal(stop.arrivalSource, null);
+    });
+
+    it('records load_stop.checkin_undone naming the milestone', async () => {
+      const load = await aDispatchedLoad();
+      const { token } = await issueCheckinLink(s, load.id);
+      const preview = await previewCheckin(db, token);
+      const stopId = preview.stops[0]!.id;
+      await recordStopCheckin(db, { token, stopId, milestone: 'arrived', correlationId: randomUUID() });
+
+      await undoStopCheckin(db, { token, stopId, milestone: 'arrived', correlationId: randomUUID() });
+
+      const events = await readEvents(s, load.id);
+      const undone = events.find((e) => e.verb === 'load_stop.checkin_undone');
+      assert.ok(undone);
+      assert.match(undone.explanation, /Undid the arrival report at stop 1/);
+    });
+
+    it('refuses to undo a milestone that was never reported', async () => {
+      const load = await aDispatchedLoad();
+      const { token } = await issueCheckinLink(s, load.id);
+      const preview = await previewCheckin(db, token);
+
+      await assert.rejects(
+        () =>
+          undoStopCheckin(db, {
+            token,
+            stopId: preview.stops[0]!.id,
+            milestone: 'arrived',
+            correlationId: randomUUID(),
+          }),
+        (e: TrackError) => e.code === 'not_set',
+      );
+    });
+
+    it('refuses to undo a milestone reported outside the undo window', async () => {
+      const load = await aDispatchedLoad();
+      const { token } = await issueCheckinLink(s, load.id);
+      const preview = await previewCheckin(db, token);
+      const stopId = preview.stops[0]!.id;
+      const twentyMinutesAgo = new Date(Date.now() - 20 * 60_000).toISOString();
+      await recordStopCheckin(db, {
+        token,
+        stopId,
+        milestone: 'arrived',
+        occurredAt: twentyMinutesAgo,
+        correlationId: randomUUID(),
+      });
+
+      await assert.rejects(
+        () => undoStopCheckin(db, { token, stopId, milestone: 'arrived', correlationId: randomUUID() }),
+        (e: TrackError) => e.code === 'undo_window_passed',
+      );
+    });
+
+    it('refuses a stop from a different load', async () => {
+      const loadA = await aDispatchedLoad();
+      const loadB = await aDispatchedLoad();
+      const { token } = await issueCheckinLink(s, loadA.id);
+      const previewB = await previewCheckin(db, (await issueCheckinLink(s, loadB.id)).token);
+
+      await assert.rejects(
+        () =>
+          undoStopCheckin(db, {
             token,
             stopId: previewB.stops[0]!.id,
             milestone: 'arrived',

@@ -397,6 +397,107 @@ export async function recordStopCheckin(
 }
 
 /**
+ * Long enough to fix a genuine mis-tap, short enough that it cannot rewrite
+ * a milestone a broker's tracking page or a dispatcher has already relied
+ * on. Enforced here, not just hidden client-side — the check-in link is the
+ * only authorization a driver holds, so the window has to be a real
+ * server-side rule, not a UI convention the app could be talked out of.
+ */
+const CHECKIN_UNDO_WINDOW_MS = 10 * 60_000;
+
+/**
+ * Undoes a driver's own mis-tap, within `CHECKIN_UNDO_WINDOW_MS` of tapping
+ * it. Not a general correction tool — `recordStopCheckin`'s own header
+ * explains why no ordering is enforced between milestones, and the same
+ * reasoning applies here: this clears a timestamp back to null so the
+ * driver can tap the right button, it does not let anyone dispute what
+ * actually happened once the window has passed. `load_stop.checkin_undone`
+ * is a real event, not a silent rollback — the timeline shows both the tap
+ * and the undo, same as it would for a person watching over the driver's
+ * shoulder.
+ */
+export async function undoStopCheckin(
+  db: Database,
+  args: { token: string; stopId: string; milestone: StopMilestone; correlationId: string },
+): Promise<{ stop: TrackedStop }> {
+  const found = await findCheckinLink(db, args.token);
+
+  const s: Scope = {
+    ctx: {
+      orgId: found.orgId,
+      actor: { type: 'integration', provider: 'driver_checkin_link' },
+      correlationId: args.correlationId,
+    },
+    db,
+  };
+
+  return withTransaction(s, async (tx) => {
+    const [stop] = await tx.db
+      .select()
+      .from(loadStops)
+      .where(and(eq(loadStops.id, args.stopId), eq(loadStops.loadId, found.loadId)));
+
+    if (!stop) {
+      throw new TrackError(
+        'not_found',
+        `stop ${args.stopId} not on load ${found.loadId}`,
+        'That stop is not on this load.',
+      );
+    }
+
+    const column = MILESTONE_COLUMN[args.milestone];
+    const at = stop[column] as Date | null;
+
+    if (!at) {
+      throw new TrackError(
+        'not_set',
+        `stop ${args.stopId} has no ${args.milestone} to undo`,
+        'That has not been reported yet, so there is nothing to undo.',
+      );
+    }
+
+    if (Date.now() - at.getTime() > CHECKIN_UNDO_WINDOW_MS) {
+      throw new TrackError(
+        'undo_window_passed',
+        `stop ${args.stopId}'s ${args.milestone} is older than the undo window`,
+        'That was reported too long ago to undo. Ask your dispatcher to correct it.',
+      );
+    }
+
+    const [load] = await tx.db
+      .select({ reference: loads.reference })
+      .from(loads)
+      .where(eq(loads.id, found.loadId));
+    if (!load) throw new Error('load referenced by checkin link is gone');
+
+    const [updated] = await tx.db
+      .update(loadStops)
+      .set({
+        [column]: null,
+        ...(args.milestone === 'arrived' ? { arrivalSource: null } : {}),
+        updatedAt: new Date(),
+      })
+      .where(eq(loadStops.id, stop.id))
+      .returning();
+    if (!updated) throw new Error('stop checkin undo returned nothing');
+
+    await recordEvent(tx, 'load_stop.checkin_undone', {
+      subjectId: found.loadId,
+      payload: {
+        reference: load.reference,
+        stopSeq: stop.seq,
+        stopType: stop.type,
+        city: stop.city,
+        state: stop.state,
+        milestone: args.milestone,
+      },
+    });
+
+    return { stop: updated };
+  });
+}
+
+/**
  * A driver's position ping.
  *
  * Telemetry, not an event — see `schema/track.ts`'s module note — so this

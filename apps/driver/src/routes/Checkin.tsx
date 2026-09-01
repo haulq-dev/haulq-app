@@ -119,9 +119,23 @@ function TokenEntry({ onSubmit }: { onSubmit: (token: string) => void }) {
   );
 }
 
+/**
+ * Client-side mirror of `undoStopCheckin`'s real, server-enforced window
+ * (`packages/db/src/repositories/track.ts`) — this copy only decides
+ * whether to show the Undo button at all; the server decides whether the
+ * tap actually succeeds. Kept in sync by hand since the driver app has no
+ * dependency on `@haulq/db`. A driver who leaves this screen open past the
+ * window still sees the button until the next refetch — a known, accepted
+ * gap, not a bug: the server refuses the request correctly either way.
+ */
+const CHECKIN_UNDO_WINDOW_MS = 10 * 60_000;
+
 function StopCard({ token, stop }: { token: string; stop: CheckinStop }) {
   const queryClient = useQueryClient();
   const [pending, setPending] = useState<StopMilestone | null>(null);
+  const [undoing, setUndoing] = useState<StopMilestone | null>(null);
+
+  const invalidate = () => void queryClient.invalidateQueries({ queryKey: ['checkin', token] });
 
   const tap = useMutation({
     mutationFn: (milestone: StopMilestone) => {
@@ -134,7 +148,22 @@ function StopCard({ token, stop }: { token: string; stop: CheckinStop }) {
     onSettled: () => setPending(null),
     onSuccess: () => {
       successFeedback();
-      void queryClient.invalidateQueries({ queryKey: ['checkin', token] });
+      invalidate();
+    },
+  });
+
+  const undo = useMutation({
+    mutationFn: (milestone: StopMilestone) => {
+      setUndoing(milestone);
+      return request(`/v1/checkin/${token}/stops/${stop.id}/undo`, {
+        method: 'POST',
+        body: { milestone },
+      });
+    },
+    onSettled: () => setUndoing(null),
+    onSuccess: () => {
+      tapFeedback();
+      invalidate();
     },
   });
 
@@ -155,13 +184,29 @@ function StopCard({ token, stop }: { token: string; stop: CheckinStop }) {
         {STOP_MILESTONES.map((milestone) => {
           const at = stop[MILESTONE_COLUMN[milestone]] as string | null;
           if (at) {
+            const canUndo = Date.now() - new Date(at).getTime() < CHECKIN_UNDO_WINDOW_MS;
             return (
-              <div key={milestone} className="hq-btn hq-btn-done" aria-disabled="true">
-                <CheckIcon />
-                <span className="text-left">
-                  {MILESTONE_LABEL[milestone]}
-                  <span className="block text-xs opacity-70">{when(at)}</span>
+              <div key={milestone} className="hq-btn hq-btn-done flex-col items-start" aria-disabled="true">
+                <span className="flex w-full items-center gap-2">
+                  <CheckIcon />
+                  <span className="text-left">
+                    {MILESTONE_LABEL[milestone]}
+                    <span className="block text-xs opacity-70">{when(at)}</span>
+                  </span>
                 </span>
+                {canUndo && (
+                  <button
+                    className="mt-1 text-xs font-medium underline opacity-80"
+                    disabled={undo.isPending}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      tapFeedback();
+                      undo.mutate(milestone);
+                    }}
+                  >
+                    {undoing === milestone && undo.isPending ? 'Undoing…' : 'Tapped by mistake? Undo'}
+                  </button>
+                )}
               </div>
             );
           }
@@ -180,7 +225,7 @@ function StopCard({ token, stop }: { token: string; stop: CheckinStop }) {
           );
         })}
       </div>
-      <ErrorNote error={tap.error} />
+      <ErrorNote error={tap.error ?? undo.error} />
     </li>
   );
 }

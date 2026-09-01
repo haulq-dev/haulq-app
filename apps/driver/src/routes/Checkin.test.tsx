@@ -169,4 +169,38 @@ describe('CheckinScreen — reporting a milestone', () => {
       }),
     );
   });
+
+  it('offers to undo a milestone reported moments ago, and posts to the undo route', async () => {
+    const justNow = new Date().toISOString();
+    vi.mocked(request).mockResolvedValue({
+      ...previewWithOneStop,
+      stops: [{ ...previewWithOneStop.stops[0]!, arrivedAt: justNow }],
+    });
+    const user = userEvent.setup();
+
+    renderScreen();
+    const undoButton = await screen.findByRole('button', { name: /Undo/ });
+
+    await user.click(undoButton);
+
+    await waitFor(() =>
+      expect(vi.mocked(request)).toHaveBeenCalledWith('/v1/checkin/A-TOKEN/stops/stop-1/undo', {
+        method: 'POST',
+        body: { milestone: 'arrived' },
+      }),
+    );
+  });
+
+  it('does not offer to undo a milestone reported outside the undo window', async () => {
+    const longAgo = new Date(Date.now() - 60 * 60_000).toISOString();
+    vi.mocked(request).mockResolvedValue({
+      ...previewWithOneStop,
+      stops: [{ ...previewWithOneStop.stops[0]!, arrivedAt: longAgo }],
+    });
+
+    renderScreen();
+    await screen.findByText('Arrived');
+
+    expect(screen.queryByRole('button', { name: /Undo/ })).not.toBeInTheDocument();
+  });
 });

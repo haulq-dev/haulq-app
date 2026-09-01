@@ -168,6 +168,50 @@ suite('track routes', () => {
     assert.equal(stop.arrivalSource, 'driver_app');
   });
 
+  it('undoes a mis-tapped stop check-in, and refuses a second undo with nothing left to undo', async () => {
+    const orgId = await newOrg('Track Undo Carrier');
+    const load = await aDispatchedLoad(orgId);
+
+    const issued = await app.inject({
+      method: 'POST',
+      url: `/v1/loads/${load.id}/checkin-links`,
+      headers: as(orgId),
+      payload: {},
+    });
+    const { token } = issued.json() as { token: string };
+    const pickupId = load.stops.find((s) => s.seq === 1)!.id;
+
+    await app.inject({
+      method: 'POST',
+      url: `/v1/checkin/${token}/stops/${pickupId}`,
+      payload: { milestone: 'arrived' },
+    });
+
+    const undo = await app.inject({
+      method: 'POST',
+      url: `/v1/checkin/${token}/stops/${pickupId}/undo`,
+      payload: { milestone: 'arrived' },
+    });
+    assert.equal(undo.statusCode, 200);
+
+    const reread = await app.inject({
+      method: 'GET',
+      url: `/v1/loads/${load.id}`,
+      headers: as(orgId),
+    });
+    const stop = reread.json().stops.find((s: { id: string }) => s.id === pickupId);
+    assert.equal(stop.arrivedAt, null);
+    assert.equal(stop.arrivalSource, null);
+
+    const secondUndo = await app.inject({
+      method: 'POST',
+      url: `/v1/checkin/${token}/stops/${pickupId}/undo`,
+      payload: { milestone: 'arrived' },
+    });
+    assert.equal(secondUndo.statusCode, 422);
+    assert.equal(secondUndo.json().code, 'not_set');
+  });
+
   it('records a position ping and revokes a checkin link', async () => {
     const orgId = await newOrg('Track Position Carrier');
     const load = await aDispatchedLoad(orgId);

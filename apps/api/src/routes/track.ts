@@ -32,6 +32,7 @@ import {
   revokeCheckinLink,
   revokeVisibilityLink,
   TrackError,
+  undoStopCheckin,
 } from '@haulq/db';
 import { randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
@@ -46,6 +47,8 @@ const STATUS: Record<string, number> = {
   revoked: 410,
   expired: 410,
   no_truck: 422,
+  not_set: 422,
+  undo_window_passed: 422,
 };
 
 function rethrow(err: unknown): never {
@@ -202,6 +205,37 @@ export async function trackRoutes(app: FastifyInstance) {
           stopId,
           milestone: request.body.milestone,
           occurredAt: request.body.occurredAt,
+          correlationId: randomUUID(),
+        });
+      } catch (err) {
+        rethrow(err);
+      }
+    },
+  );
+
+  /**
+   * Undoes a driver's own mis-tap — see `undoStopCheckin`'s own comment for
+   * the window it enforces and why that enforcement lives server-side.
+   */
+  server.post(
+    '/v1/checkin/:token/stops/:stopId/undo',
+    {
+      config: publicTrackRouteLimit,
+      schema: {
+        tags: ['Track'],
+        summary: 'Undo a mis-tapped stop milestone, within the undo window',
+        params: StopCheckinParamSchema,
+        body: RecordStopCheckinSchema.pick({ milestone: true }),
+      },
+    },
+    async (request) => {
+      const { token, stopId } = request.params;
+
+      try {
+        return await undoStopCheckin(app.db, {
+          token,
+          stopId,
+          milestone: request.body.milestone,
           correlationId: randomUUID(),
         });
       } catch (err) {

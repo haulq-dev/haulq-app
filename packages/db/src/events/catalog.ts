@@ -693,6 +693,27 @@ export const eventCatalog = {
     },
   }),
 
+  'load_stop.checkin_undone': define<{
+    reference: number;
+    stopSeq: number;
+    stopType: string;
+    city: string;
+    state: string;
+    milestone: 'arrived' | 'loading_started' | 'loading_ended' | 'departed';
+  }>({
+    subjectType: 'load',
+    describe: (p) => {
+      const place = formatPlace(p.city, p.state);
+      const verb: Record<typeof p.milestone, string> = {
+        arrived: 'arrival',
+        loading_started: 'loading start',
+        loading_ended: 'loading end',
+        departed: 'departure',
+      };
+      return `Undid the ${verb[p.milestone]} report at stop ${p.stopSeq} (${place}) on ${formatLoad(p.reference)}.`;
+    },
+  }),
+
   'track.checkin_link_issued': define<{ reference: number }>({
     subjectType: 'load',
     describe: (p) => `Issued a driver check-in link for ${formatLoad(p.reference)}.`,
