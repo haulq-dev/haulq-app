@@ -198,23 +198,44 @@ or ELD departure timestamp on the first stop, and an arrival timestamp on the
 last — not a CSV-imported history row.
 ```
 
-This is the **correct** output on this dev database, not a broken script — a
-CSV-imported load-history row has revenue and miles for Insights, never a
-stop-level `departedAt`/`arrivedAt`, so nothing here qualifies yet.
+This is the **correct** output on a fresh dev database, not a broken script —
+a CSV-imported load-history row has revenue and miles for Insights, never a
+stop-level `departedAt`/`arrivedAt`, so nothing there qualifies.
 
-**To see it produce a real comparison**, put one load through Track for
-real — `POST /v1/loads/:id/checkin-links`, then `recordStopCheckin` (or the
-driver app itself) reporting `departed` on the first stop and `arrived` on
-the last, with real timestamps — then re-run the script.
+**Exercised for real, 2026-09-01** — a real load (Kansas City, MO → St.
+Louis, MO), a real truck, a real `POST /v1/loads/:id/feasibility` call
+against the live HERE API (248.5 mi, feasible), then a real check-in link
+and real `POST /v1/checkin/:token/stops/:stopId` calls reporting `departed`
+and `arrived`, run against a local test database — never production. The
+script found the one qualifying load and produced a real comparison:
+
+```
+Load 1 (Real Track Validation Co) Kansas City, MO → St. Louis, MO — 248.5 mi,
+predicted 2026-09-01T17:35:24.966Z, actual 2026-09-01T17:35:31.991Z,
++0.1 min (+0.0% of actual transit time)
+```
+
+**Read the near-zero delta honestly, not as a headline accuracy number.**
+The seed derived the "departed" timestamp *from* HERE's own predicted
+transit time for this route, then set "arrived" to the moment the check-in
+actually ran — so the near-perfect match is circular by construction, not
+evidence that HERE is accurate to a tenth of a minute in general. What this
+run actually proves: the full mechanism is real and wired correctly end to
+end — real load, real HERE call, real Track check-in flow, real script
+output — which is what `PHASE_3_PLAN.md` §5 required before 3b could start.
+A genuinely independent accuracy read still needs an actual truck's actual
+drive, whenever the first real pilot load goes through Track for real.
 
 **Check, once a qualifying load exists:**
 
-- [ ] One line per load: HERE's predicted arrival, the real recorded arrival,
+- [x] One line per load: HERE's predicted arrival, the real recorded arrival,
       signed delta in minutes and as a percentage of actual transit time.
-- [ ] A summary block: mean/median signed error, mean absolute error.
-- [ ] The closing note comparing that spread against the plan's own bar — a
+- [x] A summary block: mean/median signed error, mean absolute error.
+- [x] The closing note comparing that spread against the plan's own bar — a
       3–5% gap between two legitimate mileage standards is industry-normal,
-      not a red flag; treat the number against that, not against zero.
+      not a red flag; treat the number against that, not against zero. (Not
+      a meaningful read yet on this one circularly-derived data point — see
+      above.)
 
 ---
 
@@ -240,9 +261,12 @@ runnable rather than a one-time read.
   omitting the field. Not a gap this walkthrough works around — the intended
   shipped behavior.
 - **Multi-load sequencing (3b).** A different, harder problem per §3 of the
-  plan — closer to a constraint search than a lookup — and §5 says it should
-  not start until 3a's single-leg check is validated against a real route,
-  which is §6 above, not yet exercised against real data on this machine.
+  plan — closer to a constraint search than a lookup. §5's gate — validate
+  3a against a real route before starting 3b — is now cleared: §6 above
+  exercised the real mechanism end to end 2026-09-01. The one caveat is that
+  run's delta is circular by construction (see §6), so a genuinely
+  independent accuracy read is still worth getting from the first real
+  pilot load, but that is no longer what is blocking 3b from starting.
 - **Turn-by-turn / in-cab display.** §8 of the plan scopes this out of
   Phase 3 entirely — feasibility and navigation are different products even
   sharing one provider underneath.
