@@ -26,6 +26,7 @@
  */
 
 import { useQuery } from '@tanstack/react-query';
+import { Link } from '@tanstack/react-router';
 import { useState } from 'react';
 import { request } from '../lib/api.ts';
 import { Card, Empty, ErrorNote, Num } from '../components/ui.tsx';
@@ -63,12 +64,34 @@ interface PaymentPerformance {
   periodDays: number;
 }
 
+interface DeliveredNotInvoiced {
+  loadId: string;
+  reference: number;
+  brokerName: string | null;
+  daysSinceDelivered: number;
+}
+
+interface OverdueInvoice {
+  invoiceId: string;
+  reference: number;
+  loadReference: number;
+  brokerName: string | null;
+  totalCents: number;
+  daysOverdue: number;
+}
+
+interface ActionQueue {
+  deliveredNotInvoiced: DeliveredNotInvoiced[];
+  overdueInvoices: OverdueInvoice[];
+}
+
 interface InsightsResponse {
   summary: Summary;
   byBroker: BreakdownRow[];
   byLane: BreakdownRow[];
   byTruck: BreakdownRow[];
   payment: PaymentPerformance;
+  actionQueue: ActionQueue;
 }
 
 const WINDOWS = [30, 90, 180, 365] as const;
@@ -214,6 +237,50 @@ function Breakdown({
 }
 
 /**
+ * What needs doing right now, not how things have gone — the rest of this
+ * screen answers the second question, this answers the first. Not windowed
+ * by the day filter above: a load delivered 45 days ago with no invoice is
+ * still actionable even while looking at the 30-day rollup.
+ */
+function ActionQueueCard({ queue }: { queue: ActionQueue }) {
+  const nothingOutstanding =
+    queue.deliveredNotInvoiced.length === 0 && queue.overdueInvoices.length === 0;
+
+  if (nothingOutstanding) return null;
+
+  return (
+    <Card title="Needs attention">
+      <ul className="space-y-2.5">
+        {queue.deliveredNotInvoiced.map((row) => (
+          <li key={row.loadId} className="flex items-center justify-between gap-3 text-sm">
+            <span>
+              Load {row.reference}
+              {row.brokerName ? ` (${row.brokerName})` : ''} delivered{' '}
+              {row.daysSinceDelivered} days ago, still not invoiced.
+            </span>
+            <Link to="/loads" className="hq-btn hq-btn-ghost shrink-0 text-xs">
+              Open Loads
+            </Link>
+          </li>
+        ))}
+        {queue.overdueInvoices.map((row) => (
+          <li key={row.invoiceId} className="flex items-center justify-between gap-3 text-sm">
+            <span>
+              Invoice {row.reference} for load {row.loadReference}
+              {row.brokerName ? ` (${row.brokerName})` : ''} is {money(row.totalCents)},{' '}
+              {row.daysOverdue} days past due.
+            </span>
+            <Link to="/pay" className="hq-btn hq-btn-ghost shrink-0 text-xs">
+              Open Pay
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </Card>
+  );
+}
+
+/**
  * Payment speed and exceptions — the piece of Insights that was blocked on
  * Pay: there is nothing to measure until an invoice has a paid date.
  *
@@ -293,6 +360,8 @@ export function InsightsScreen() {
 
       {data.isError && <ErrorNote error={data.error} />}
       {data.isLoading && <p className="text-mute">Working it out…</p>}
+
+      {data.data?.actionQueue && <ActionQueueCard queue={data.data.actionQueue} />}
 
       {s && s.loadCount === 0 && (
         <Card>

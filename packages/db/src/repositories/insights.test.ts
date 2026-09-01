@@ -29,6 +29,7 @@ import type { Scope } from '../context.ts';
 import { createTestOrg, createTestUser, destroyTestOrg, destroyTestUser, setLoadActualsForTest, testScope } from '../testing.ts';
 import { createLoad, updateLoadStatus } from './loads.ts';
 import {
+  actionQueue,
   insightsSummary,
   loadMargin,
   paymentPerformance,
@@ -488,6 +489,113 @@ suite('insights', () => {
       assert.equal(perf.factoringRejectedCount, 1);
       // Never paid, so it does not also show up as a late payment.
       assert.equal(perf.paidInvoiceCount, 0);
+    });
+  });
+
+  describe('actionQueue', () => {
+    it('is empty for an org with nothing outstanding', async () => {
+      const s = await freshOrg('Nothing Outstanding Co');
+      const queue = await actionQueue(s);
+      assert.deepEqual(queue.deliveredNotInvoiced, []);
+      assert.deepEqual(queue.overdueInvoices, []);
+    });
+
+    it('does not flag a load delivered inside the grace window', async () => {
+      const s = await freshOrg('Fresh Delivery Co');
+      await delivered(s);
+
+      const queue = await actionQueue(s);
+      assert.deepEqual(queue.deliveredNotInvoiced, []);
+    });
+
+    it('flags a load delivered past the grace window with no invoice', async () => {
+      const s = await freshOrg('Forgotten Invoice Co');
+      const load = await createLoad(s, { source: 'csv_import', brokerName: 'Prairie Freight', stops: wichitaToDenver });
+      const tenDaysAgo = new Date(Date.now() - 10 * 86_400_000).toISOString();
+      await updateLoadStatus(s, load.id, { status: 'delivered', occurredAt: tenDaysAgo });
+
+      const queue = await actionQueue(s);
+      assert.equal(queue.deliveredNotInvoiced.length, 1);
+      assert.equal(queue.deliveredNotInvoiced[0]!.loadId, load.id);
+      assert.equal(queue.deliveredNotInvoiced[0]!.brokerName, 'Prairie Freight');
+      assert.ok(queue.deliveredNotInvoiced[0]!.daysSinceDelivered >= 10);
+    });
+
+    it('does not flag a load once it has an invoice, even a draft one', async () => {
+      const s = await freshOrg('Draft Invoice Co');
+      const load = await createLoad(s, { source: 'csv_import', brokerName: 'Prairie Freight', stops: wichitaToDenver });
+      const tenDaysAgo = new Date(Date.now() - 10 * 86_400_000).toISOString();
+      await updateLoadStatus(s, load.id, { status: 'delivered', occurredAt: tenDaysAgo });
+      await generateInvoice(s, {
+        loadId: load.id,
+        lineItems: [{ code: 'linehaul', description: 'A', amountCents: 10000 }],
+      });
+
+      const queue = await actionQueue(s);
+      assert.deepEqual(queue.deliveredNotInvoiced, []);
+    });
+
+    it('does not flag a sent invoice that is not yet due', async () => {
+      const s = await freshOrg('Not Due Yet Co');
+      const load = await delivered(s);
+      const futureDue = new Date(Date.now() + 5 * 86_400_000).toISOString();
+      const invoice = await generateInvoice(s, {
+        loadId: load.id,
+        lineItems: [{ code: 'linehaul', description: 'A', amountCents: 10000 }],
+        dueAt: futureDue,
+      });
+      await sendInvoice(s, invoice.id);
+
+      const queue = await actionQueue(s);
+      assert.deepEqual(queue.overdueInvoices, []);
+    });
+
+    it('flags a sent invoice past its due date, naming the broker and the load', async () => {
+      const s = await freshOrg('Overdue Invoice Co');
+      const load = await delivered(s);
+      const pastDue = new Date(Date.now() - 12 * 86_400_000).toISOString();
+      const invoice = await generateInvoice(s, {
+        loadId: load.id,
+        lineItems: [{ code: 'linehaul', description: 'A', amountCents: 15000 }],
+        dueAt: pastDue,
+      });
+      await sendInvoice(s, invoice.id);
+
+      const queue = await actionQueue(s);
+      assert.equal(queue.overdueInvoices.length, 1);
+      const row = queue.overdueInvoices[0]!;
+      assert.equal(row.invoiceId, invoice.id);
+      assert.equal(row.loadReference, load.reference);
+      assert.equal(row.brokerName, 'Prairie Freight');
+      assert.equal(row.totalCents, 15000);
+      assert.ok(row.daysOverdue >= 12);
+    });
+
+    it('does not flag an overdue invoice once it is paid', async () => {
+      const s = await freshOrg('Paid Late Co');
+      const load = await delivered(s);
+      const pastDue = new Date(Date.now() - 12 * 86_400_000).toISOString();
+      const invoice = await generateInvoice(s, {
+        loadId: load.id,
+        lineItems: [{ code: 'linehaul', description: 'A', amountCents: 10000 }],
+        dueAt: pastDue,
+      });
+      await sendInvoice(s, invoice.id);
+      await recordPayment(s, { invoiceId: invoice.id, amountCents: 10000, source: 'broker_direct' });
+
+      const queue = await actionQueue(s);
+      assert.deepEqual(queue.overdueInvoices, []);
+    });
+
+    it('is invisible from another org', async () => {
+      const s = await freshOrg('Queue Owner Co');
+      const other = await freshOrg('Queue Stranger Co');
+      const load = await createLoad(s, { source: 'csv_import', brokerName: 'Prairie Freight', stops: wichitaToDenver });
+      const tenDaysAgo = new Date(Date.now() - 10 * 86_400_000).toISOString();
+      await updateLoadStatus(s, load.id, { status: 'delivered', occurredAt: tenDaysAgo });
+
+      const queue = await actionQueue(other);
+      assert.deepEqual(queue.deliveredNotInvoiced, []);
     });
   });
 });

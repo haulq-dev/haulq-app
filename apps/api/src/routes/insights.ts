@@ -10,6 +10,7 @@
  */
 
 import {
+  actionQueue,
   insightsSummary,
   paymentPerformance,
   revenueByBroker,
@@ -41,15 +42,16 @@ export async function insightsRoutes(app: FastifyInstance) {
       const s = await requireScope(request);
       const { days } = request.query;
 
-      const [summary, byBroker, byLane, byTruck, payment] = await Promise.all([
+      const [summary, byBroker, byLane, byTruck, payment, queue] = await Promise.all([
         insightsSummary(s, { days }),
         revenueByBroker(s, { days }),
         revenueByLane(s, { days }),
         revenueByTruck(s, { days }),
         paymentPerformance(s, { days }),
+        actionQueue(s),
       ]);
 
-      return { summary, byBroker, byLane, byTruck, payment };
+      return { summary, byBroker, byLane, byTruck, payment, actionQueue: queue };
     },
   );
 }

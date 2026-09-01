@@ -30,6 +30,7 @@
 
 import { and, eq, isNull, sql } from 'drizzle-orm';
 import type { Scope } from '../context.ts';
+import { brokers } from '../schema/brokers.ts';
 import { loads } from '../schema/loads.ts';
 import { factoringPackets, invoices } from '../schema/pay.ts';
 import { carrierProfiles } from '../schema/tenancy.ts';
@@ -140,6 +141,124 @@ export async function insightsSummary(
     costPerMileCents: facts.costPerMileCents ?? null,
     factsReconciledAt: profile?.reconciledAt?.toISOString() ?? null,
     periodDays: days,
+  };
+}
+
+/**
+ * Long enough that a load delivered yesterday isn't flagged before anyone's
+ * had a real chance to invoice it — Docs/Pay's own pipeline can take a day
+ * or two to land the paperwork — short enough that a genuinely forgotten
+ * load doesn't sit unflagged for weeks.
+ */
+const STALE_DELIVERED_DAYS = 7;
+
+export interface DeliveredNotInvoiced {
+  loadId: string;
+  reference: number;
+  brokerName: string | null;
+  deliveredAt: string;
+  daysSinceDelivered: number;
+}
+
+export interface OverdueInvoice {
+  invoiceId: string;
+  reference: number;
+  loadId: string;
+  loadReference: number;
+  brokerName: string | null;
+  totalCents: number;
+  dueAt: string;
+  daysOverdue: number;
+}
+
+export interface ActionQueue {
+  deliveredNotInvoiced: DeliveredNotInvoiced[];
+  overdueInvoices: OverdueInvoice[];
+}
+
+/**
+ * Insights read-only, turned into two lists worth acting on rather than
+ * just looking at — everything else in this file answers "how did we do,"
+ * this answers "what needs doing right now." Not windowed by `days`, unlike
+ * the rest of this file: a load delivered 45 days ago with no invoice is
+ * still actionable even if someone is looking at the 30-day rollup.
+ *
+ * `receivablesAging` (`repositories/pay.ts`) already buckets overdue
+ * invoices by age for the Pay screen; this reuses the same "sent and past
+ * `dueAt`" definition but returns the actual rows, since a bucketed count
+ * is a statistic and a list of invoices is something to click into.
+ */
+export async function actionQueue(s: Scope): Promise<ActionQueue> {
+  const deliveredRows = await s.db
+    .select({
+      loadId: loads.id,
+      reference: loads.reference,
+      brokerName: brokers.name,
+      deliveredAt: loads.deliveredAt,
+    })
+    .from(loads)
+    .leftJoin(brokers, eq(loads.brokerId, brokers.id))
+    .where(
+      and(
+        eq(loads.orgId, s.ctx.orgId),
+        isNull(loads.deletedAt),
+        sql`${loads.status} <> 'cancelled'`,
+        sql`${loads.deliveredAt} is not null`,
+        sql`${loads.deliveredAt} < now() - ${`${STALE_DELIVERED_DAYS} days`}::interval`,
+        // Checked against `invoices` directly, not `loads.status`, because a
+        // draft invoice sitting unsent does not move the load's status off
+        // `delivered` — this needs to stop flagging the moment paperwork
+        // exists, not only once it has been sent. Matches the same
+        // "at most one non-void invoice per load" rule `invoices_load_key`
+        // (the partial unique index) already enforces.
+        sql`not exists (select 1 from invoices i where i.load_id = loads.id and i.status <> 'void')`,
+      ),
+    )
+    .orderBy(loads.deliveredAt);
+
+  const overdueRows = await s.db
+    .select({
+      invoiceId: invoices.id,
+      reference: invoices.reference,
+      loadId: loads.id,
+      loadReference: loads.reference,
+      brokerName: brokers.name,
+      totalCents: invoices.totalAmount,
+      dueAt: invoices.dueAt,
+    })
+    .from(invoices)
+    .innerJoin(loads, eq(invoices.loadId, loads.id))
+    .leftJoin(brokers, eq(loads.brokerId, brokers.id))
+    .where(
+      and(
+        eq(invoices.orgId, s.ctx.orgId),
+        eq(invoices.status, 'sent'),
+        sql`${invoices.dueAt} is not null and ${invoices.dueAt} < now()`,
+      ),
+    )
+    .orderBy(invoices.dueAt);
+
+  const now = Date.now();
+  const days = (from: Date) => Math.floor((now - from.getTime()) / 86_400_000);
+
+  return {
+    deliveredNotInvoiced: deliveredRows.map((r) => ({
+      loadId: r.loadId,
+      reference: r.reference,
+      brokerName: r.brokerName,
+      deliveredAt: r.deliveredAt!.toISOString(),
+      daysSinceDelivered: days(r.deliveredAt!),
+    })),
+    overdueInvoices: overdueRows.map((r) => ({
+      invoiceId: r.invoiceId,
+      reference: r.reference,
+      loadId: r.loadId,
+      loadReference: r.loadReference,
+      brokerName: r.brokerName,
+      totalCents: Number(r.totalCents),
+      dueAt: r.dueAt!.toISOString(),
+      daysOverdue: days(r.dueAt!),
+    })),
   };
 }
 
