@@ -40,13 +40,15 @@ import { startMotiveSyncRunner } from './integrations/motive-sync-runner.ts';
 import { startVerifyRecheckRunner } from './verify/recheck-runner.ts';
 import { buildOutboxGroups } from './outbox/handlers.ts';
 import { startOutboxRunner } from './outbox/runner.ts';
-import { buildDocumentReader, buildMailer, buildModelReader, buildRoutingProvider, buildStorage } from './runtime.ts';
+import { buildDocumentReader, buildGeocoder, buildMailer, buildModelReader, buildRoutingProvider, buildStorage } from './runtime.ts';
 import type { ModelDocumentReader } from './documents/model-reader.ts';
 import type { DocumentReader } from './documents/reader.ts';
+import type { Geocoder } from './integrations/here-geocode.ts';
 import type { RoutingProvider } from './integrations/routing-provider.ts';
 import { requestContextPlugin } from './plugins/request-context.ts';
 import { brokerRoutes } from './routes/brokers.ts';
 import { documentRoutes } from './routes/documents.ts';
+import { geocodeRoutes } from './routes/geocode.ts';
 import { feasibilityRoutes } from './routes/feasibility.ts';
 import { integrationRoutes } from './routes/integrations.ts';
 import { driverRoutes } from './routes/drivers.ts';
@@ -69,6 +71,8 @@ declare module 'fastify' {
     storage: ObjectStore;
     /** Undefined until `HERE_API_KEY` is set — see `runtime.ts`'s `buildRoutingProvider`. */
     routingProvider: RoutingProvider | undefined;
+    /** Same gate as `routingProvider` — see `runtime.ts`'s `buildGeocoder`. */
+    geocoder: Geocoder | undefined;
   }
 }
 
@@ -116,6 +120,14 @@ export interface BuildOptions {
    * `HERE_API_KEY` is configured, and no provider at all when it is not.
    */
   routingProvider?: RoutingProvider | undefined;
+
+  /**
+   * Override the geocoder. Same reasoning as `routingProvider` above — tests
+   * inject a fake so the geocode route can be exercised with no HERE
+   * account. Left unset, the server picks HERE when `HERE_API_KEY` is
+   * configured, and no geocoder at all when it is not.
+   */
+  geocoder?: Geocoder | undefined;
 }
 
 /**
@@ -179,6 +191,7 @@ export async function buildServer(
   const reader = options.reader ?? buildDocumentReader(env, app.log);
   const modelReader = options.modelReader ?? buildModelReader(env, app.log);
   app.decorate('routingProvider', options.routingProvider ?? buildRoutingProvider(env, app.log));
+  app.decorate('geocoder', options.geocoder ?? buildGeocoder(env, app.log));
 
   startOutboxRunner(app, {
     groups: buildOutboxGroups({
@@ -341,6 +354,7 @@ export async function buildServer(
   await app.register(brokerRoutes);
   await app.register(trackRoutes);
   await app.register(feasibilityRoutes);
+  await app.register(geocodeRoutes);
   await app.register(integrationRoutes);
   await app.register(payRoutes);
   await app.register(insightsRoutes);

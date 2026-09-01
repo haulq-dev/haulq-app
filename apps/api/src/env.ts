@@ -202,6 +202,12 @@ const EnvSchema = z.object({
   HERE_API_KEY: z.string().optional(),
   /** Override for tests only — production never sets this. */
   HERE_BASE_URL: z.string().url().optional(),
+  /**
+   * Same account, same `HERE_API_KEY` — HERE Geocoding is a different
+   * endpoint under the same project, not a separate credential. Override
+   * for tests only, same as `HERE_BASE_URL`.
+   */
+  HERE_GEOCODE_BASE_URL: z.string().url().optional(),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

@@ -29,6 +29,7 @@ import { LocalDocumentReader, type DocumentReader } from './documents/reader.ts'
 import { LogMailer, PostmarkMailer, type Mailer } from './email/postmark.ts';
 import type { Env } from './env.ts';
 import { HereRoutingProvider } from './integrations/here.ts';
+import { HereGeocoder } from './integrations/here-geocode.ts';
 import type { RoutingProvider } from './integrations/routing-provider.ts';
 
 /**
@@ -171,4 +172,20 @@ export function buildRoutingProvider(env: Env, log: RuntimeLog): RoutingProvider
   return env.HERE_BASE_URL
     ? new HereRoutingProvider({ apiKey: env.HERE_API_KEY }, env.HERE_BASE_URL)
     : new HereRoutingProvider({ apiKey: env.HERE_API_KEY });
+}
+
+/** Same account as `buildRoutingProvider` above — a different HERE endpoint, not a separate credential. */
+export function buildGeocoder(env: Env, log: RuntimeLog): HereGeocoder | undefined {
+  if (!env.HERE_API_KEY) {
+    log.info(
+      { geocoder: false },
+      'HERE is not configured — address lookup is unavailable. Set HERE_API_KEY to enable it.',
+    );
+    return undefined;
+  }
+
+  log.info({ geocoder: 'here' }, 'geocoder ready');
+  return env.HERE_GEOCODE_BASE_URL
+    ? new HereGeocoder({ apiKey: env.HERE_API_KEY }, env.HERE_GEOCODE_BASE_URL)
+    : new HereGeocoder({ apiKey: env.HERE_API_KEY });
 }

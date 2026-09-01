@@ -37,6 +37,8 @@ interface Stop {
   city: string;
   state: string;
   facilityName: string | null;
+  addressLine1: string | null;
+  postalCode: string | null;
   lat: number | null;
   lng: number | null;
   windowStart: string | null;
@@ -224,6 +226,83 @@ function AssignControl({ load, trucks }: { load: Load; trucks: Truck[] }) {
   );
 }
 
+interface GeocodeCandidate {
+  label: string;
+  lat: number;
+  lng: number;
+  score: number;
+}
+
+/**
+ * A typed address turned into coordinates, confirmed by hand before it fills
+ * anything in — see `apps/api/src/routes/geocode.ts`'s module note for why
+ * this never auto-fills a match without the dispatcher picking it. Used by
+ * both `AddLoad` (a fresh stop) and `EditLoadStops` (an existing stop's
+ * already-stored address).
+ */
+function CoordinateLookup({
+  address,
+  onPick,
+}: {
+  address: { addressLine1?: string; city: string; state: string; postalCode?: string };
+  onPick: (candidate: GeocodeCandidate) => void;
+}) {
+  const [candidates, setCandidates] = useState<GeocodeCandidate[] | null>(null);
+
+  const lookup = useMutation({
+    mutationFn: () =>
+      request<{ candidates: GeocodeCandidate[] }>(
+        `/v1/geocode?${new URLSearchParams({
+          ...(address.addressLine1 ? { addressLine1: address.addressLine1 } : {}),
+          city: address.city,
+          state: address.state,
+          ...(address.postalCode ? { postalCode: address.postalCode } : {}),
+        })}`,
+      ),
+    onSuccess: (res) => setCandidates(res.candidates),
+  });
+
+  const canLookup = address.city.trim() !== '' && address.state.trim().length === 2;
+
+  return (
+    <div className="mt-1.5">
+      <button
+        type="button"
+        className="text-xs text-brand underline disabled:cursor-not-allowed disabled:text-mute disabled:no-underline"
+        disabled={!canLookup || lookup.isPending}
+        onClick={() => {
+          setCandidates(null);
+          lookup.mutate();
+        }}
+      >
+        {lookup.isPending ? 'Looking up…' : 'Look up coordinates'}
+      </button>
+      <ErrorNote error={lookup.error} />
+      {candidates && candidates.length === 0 && (
+        <p className="mt-1 text-xs text-mute">No match found for that address.</p>
+      )}
+      {candidates && candidates.length > 0 && (
+        <ul className="mt-1 space-y-1">
+          {candidates.map((c, i) => (
+            <li key={i}>
+              <button
+                type="button"
+                className="text-left text-xs text-slate hover:text-ink hover:underline"
+                onClick={() => {
+                  onPick(c);
+                  setCandidates(null);
+                }}
+              >
+                {c.label}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 function AddLoad({ trucks, onDone }: { trucks: Truck[]; onDone: () => void }) {
   const [brokerName, setBroker] = useState('');
   const [rate, setRate] = useState('');
@@ -234,8 +313,8 @@ function AddLoad({ trucks, onDone }: { trucks: Truck[]; onDone: () => void }) {
   const [hazmat, setHazmat] = useState(false);
   const [status, setStatus] = useState<LoadStatus>('prospect');
   const [truckId, setTruckId] = useState('');
-  const [pickup, setPickup] = useState({ city: '', state: '', lat: '', lng: '' });
-  const [delivery, setDelivery] = useState({ city: '', state: '', lat: '', lng: '', windowEnd: '' });
+  const [pickup, setPickup] = useState({ addressLine1: '', postalCode: '', city: '', state: '', lat: '', lng: '' });
+  const [delivery, setDelivery] = useState({ addressLine1: '', postalCode: '', city: '', state: '', lat: '', lng: '', windowEnd: '' });
 
   const queryClient = useQueryClient();
   const create = useMutation({
@@ -259,12 +338,16 @@ function AddLoad({ trucks, onDone }: { trucks: Truck[]; onDone: () => void }) {
               type: 'pickup',
               city: pickup.city,
               state: pickup.state,
+              ...(pickup.addressLine1 ? { addressLine1: pickup.addressLine1 } : {}),
+              ...(pickup.postalCode ? { postalCode: pickup.postalCode } : {}),
               ...(pickup.lat && pickup.lng ? { lat: Number(pickup.lat), lng: Number(pickup.lng) } : {}),
             },
             {
               type: 'delivery',
               city: delivery.city,
               state: delivery.state,
+              ...(delivery.addressLine1 ? { addressLine1: delivery.addressLine1 } : {}),
+              ...(delivery.postalCode ? { postalCode: delivery.postalCode } : {}),
               ...(delivery.lat && delivery.lng
                 ? { lat: Number(delivery.lat), lng: Number(delivery.lng) }
                 : {}),
@@ -304,17 +387,40 @@ function AddLoad({ trucks, onDone }: { trucks: Truck[]; onDone: () => void }) {
       </div>
 
       <div className="mt-5 grid gap-5 sm:grid-cols-4">
+        <Field label="Pickup street address" hint="Optional — lets HaulQ look up coordinates instead of typing them in.">
+          <input className="hq-input" value={pickup.addressLine1} onChange={(e) => setPickup({ ...pickup, addressLine1: e.target.value })} />
+        </Field>
+        <Field label="Pickup postal code">
+          <input className="hq-input" value={pickup.postalCode} onChange={(e) => setPickup({ ...pickup, postalCode: e.target.value })} />
+        </Field>
+        <Field label="Delivery street address">
+          <input className="hq-input" value={delivery.addressLine1} onChange={(e) => setDelivery({ ...delivery, addressLine1: e.target.value })} />
+        </Field>
+        <Field label="Delivery postal code">
+          <input className="hq-input" value={delivery.postalCode} onChange={(e) => setDelivery({ ...delivery, postalCode: e.target.value })} />
+        </Field>
+      </div>
+
+      <div className="mt-5 grid gap-5 sm:grid-cols-4">
         <Field label="Pickup coordinates" hint="Optional — lets HaulQ Routes check feasibility on this load.">
           <div className="flex gap-2">
             <input className="hq-input" data-numeric="true" inputMode="decimal" placeholder="lat" value={pickup.lat} onChange={(e) => setPickup({ ...pickup, lat: e.target.value })} />
             <input className="hq-input" data-numeric="true" inputMode="decimal" placeholder="lng" value={pickup.lng} onChange={(e) => setPickup({ ...pickup, lng: e.target.value })} />
           </div>
+          <CoordinateLookup
+            address={pickup}
+            onPick={(c) => setPickup({ ...pickup, lat: String(c.lat), lng: String(c.lng) })}
+          />
         </Field>
         <Field label="Delivery coordinates" hint="Both stops need one for a feasibility check to run at all.">
           <div className="flex gap-2">
             <input className="hq-input" data-numeric="true" inputMode="decimal" placeholder="lat" value={delivery.lat} onChange={(e) => setDelivery({ ...delivery, lat: e.target.value })} />
             <input className="hq-input" data-numeric="true" inputMode="decimal" placeholder="lng" value={delivery.lng} onChange={(e) => setDelivery({ ...delivery, lng: e.target.value })} />
           </div>
+          <CoordinateLookup
+            address={delivery}
+            onPick={(c) => setDelivery({ ...delivery, lat: String(c.lat), lng: String(c.lng) })}
+          />
         </Field>
         <Field label="Delivery appointment ends" hint="A route arriving after this is infeasible, named as such.">
           <input
@@ -802,6 +908,22 @@ function EditLoadStops({ load }: { load: Load }) {
                     value={v.lng}
                     onChange={(e) => setField(stop.id, 'lng', e.target.value)}
                   />
+                  {stop.city && stop.state.length === 2 && (
+                    <CoordinateLookup
+                      address={{
+                        ...(stop.addressLine1 ? { addressLine1: stop.addressLine1 } : {}),
+                        city: stop.city,
+                        state: stop.state,
+                        ...(stop.postalCode ? { postalCode: stop.postalCode } : {}),
+                      }}
+                      onPick={(c) =>
+                        setValues((prev) => ({
+                          ...prev,
+                          [stop.id]: { ...prev[stop.id]!, lat: String(c.lat), lng: String(c.lng) },
+                        }))
+                      }
+                    />
+                  )}
                 </Field>
                 <Field label="Window opens">
                   <input

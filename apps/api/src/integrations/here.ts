@@ -123,7 +123,8 @@ function truckParams(truck: TruckProfile): URLSearchParams {
   return params;
 }
 
-async function hereFetch(url: URL): Promise<unknown> {
+/** Exported for `here-geocode.ts` — a different HERE endpoint, same fetch/error shape. */
+export async function hereFetch(url: URL): Promise<unknown> {
   let response: Response;
   try {
     response = await fetch(url, { headers: { accept: 'application/json' } });
