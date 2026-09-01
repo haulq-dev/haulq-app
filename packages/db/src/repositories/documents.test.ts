@@ -32,6 +32,7 @@ import {
 import { createLoad } from './loads.ts';
 import {
   attachToLoad,
+  brokerDocumentHistory,
   createDocument,
   documentCounts,
   DocumentError,
@@ -504,6 +505,97 @@ suite('documents repository', () => {
           }),
         (e: DocumentError) => e.code === 'quarantined',
       );
+    });
+  });
+
+  describe('brokerDocumentHistory', () => {
+    /**
+     * A fresh, uniquely-named broker per test — not `aLoad`'s shared
+     * "Prairie Freight". This function reads the *most recent* documents,
+     * so a broker shared across tests would make "recent" depend on
+     * execution order, the same hazard `track.test.ts` already documents
+     * for its own shared fixtures.
+     */
+    async function aLoadForFreshBroker() {
+      return createLoad(s, {
+        brokerName: `History Test Broker ${randomUUID().slice(0, 8)}`,
+        stops: [
+          { type: 'pickup', city: 'Wichita', state: 'KS' },
+          { type: 'delivery', city: 'Denver', state: 'CO' },
+        ],
+      });
+    }
+
+    async function anAutomaticallyExtractedDocument(loadId: string) {
+      const { document } = await upload();
+      await attachToLoad(s, document.id, loadId);
+      await recordExtraction(s, document.id, {
+        extracted: { rateAmount: { value: 240000, raw: '$2,400.00', label: 'rate' } },
+        extractorVersion: 'deterministic-v1',
+      });
+    }
+
+    async function aManuallyCorrectedDocument(loadId: string) {
+      const { document } = await upload();
+      await attachToLoad(s, document.id, loadId);
+      await recordManualFields(s, document.id, {
+        fields: { rateAmount: { value: 240000, raw: '$2,400.00', label: 'manual-entry' } },
+      });
+    }
+
+    it('is zero and zero for a broker with nothing processed yet', async () => {
+      const load = await aLoadForFreshBroker();
+      const history = await brokerDocumentHistory(s, load.brokerId!);
+      assert.equal(history.consideredCount, 0);
+      assert.equal(history.manualCount, 0);
+    });
+
+    it('counts an automatically-extracted document without flagging it', async () => {
+      const load = await aLoadForFreshBroker();
+      await anAutomaticallyExtractedDocument(load.id);
+
+      const history = await brokerDocumentHistory(s, load.brokerId!);
+      assert.equal(history.consideredCount, 1);
+      assert.equal(history.manualCount, 0);
+    });
+
+    it('counts a manually-corrected document as needing a person', async () => {
+      const load = await aLoadForFreshBroker();
+      await aManuallyCorrectedDocument(load.id);
+
+      const history = await brokerDocumentHistory(s, load.brokerId!);
+      assert.equal(history.consideredCount, 1);
+      assert.equal(history.manualCount, 1);
+    });
+
+    it('mixes both across a broker\'s recent documents', async () => {
+      const load = await aLoadForFreshBroker();
+      await anAutomaticallyExtractedDocument(load.id);
+      await aManuallyCorrectedDocument(load.id);
+      await aManuallyCorrectedDocument(load.id);
+
+      const history = await brokerDocumentHistory(s, load.brokerId!);
+      assert.equal(history.consideredCount, 3);
+      assert.equal(history.manualCount, 2);
+    });
+
+    it('only looks at the most recent documents, bounded by limit', async () => {
+      const load = await aLoadForFreshBroker();
+      for (let i = 0; i < 3; i++) await aManuallyCorrectedDocument(load.id);
+      for (let i = 0; i < 3; i++) await anAutomaticallyExtractedDocument(load.id);
+
+      const history = await brokerDocumentHistory(s, load.brokerId!, 3);
+      assert.equal(history.consideredCount, 3);
+      // The three most recent are the automatic ones.
+      assert.equal(history.manualCount, 0);
+    });
+
+    it('is invisible from another tenant', async () => {
+      const load = await aLoadForFreshBroker();
+      await aManuallyCorrectedDocument(load.id);
+
+      const history = await brokerDocumentHistory(other, load.brokerId!);
+      assert.equal(history.consideredCount, 0);
     });
   });
 

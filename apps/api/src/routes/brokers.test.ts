@@ -350,4 +350,30 @@ suite('broker routes', () => {
       assert.equal(res.statusCode, 403);
     });
   });
+
+  describe('GET /v1/brokers/:id/document-history', () => {
+    it('is zero for a broker with nothing processed yet', async () => {
+      const orgId = await newOrg('Document History Carrier');
+      const brokerId = await aBroker(orgId);
+
+      const res = await app.inject({
+        method: 'GET',
+        url: `/v1/brokers/${brokerId}/document-history`,
+        headers: as(orgId),
+      });
+      assert.equal(res.statusCode, 200);
+      assert.deepEqual(res.json(), { consideredCount: 0, manualCount: 0 });
+    });
+
+    it('answers an unknown broker with 404', async () => {
+      const orgId = await newOrg('Document History 404 Carrier');
+
+      const res = await app.inject({
+        method: 'GET',
+        url: '/v1/brokers/00000000-0000-0000-0000-000000000000/document-history',
+        headers: as(orgId),
+      });
+      assert.equal(res.statusCode, 404);
+    });
+  });
 });

@@ -1098,6 +1098,37 @@ function VerifyBroker({ brokerId, brokerName }: { brokerId: string; brokerName: 
   );
 }
 
+interface BrokerDocumentHistory {
+  consideredCount: number;
+  manualCount: number;
+}
+
+/**
+ * Purely informational — a heads-up for whoever is about to upload this
+ * broker's next document, not a signal anything in the pipeline acts on.
+ * See `brokerDocumentHistory`'s own comment (`@haulq/db`) for why nothing
+ * here changes automated behavior: it would mean skipping a read that
+ * might have succeeded, on the strength of a pattern rather than a fact
+ * about the specific document in hand.
+ */
+function BrokerDocumentHistoryNote({ brokerId }: { brokerId: string }) {
+  const history = useQuery({
+    queryKey: ['broker-document-history', brokerId],
+    queryFn: () => request<BrokerDocumentHistory>(`/v1/brokers/${brokerId}/document-history`),
+  });
+
+  if (!history.data || history.data.consideredCount === 0) return null;
+  const { consideredCount, manualCount } = history.data;
+  if (manualCount === 0) return null;
+
+  return (
+    <p className="px-1 text-xs text-mute">
+      This broker's paperwork has needed manual correction {manualCount} of the last{' '}
+      {consideredCount} time{consideredCount === 1 ? '' : 's'}.
+    </p>
+  );
+}
+
 export function LoadsScreen() {
   const [adding, setAdding] = useState(false);
   const [filter, setFilter] = useState<LoadStatus | ''>('');
@@ -1341,6 +1372,10 @@ export function LoadsScreen() {
                   brokerId={selected.brokerId}
                   brokerName={selected.brokerName}
                   freeMinutes={selected.brokerDetentionFreeMinutes}
+                />
+                <BrokerDocumentHistoryNote
+                  key={`doc-history-${selected.brokerId}`}
+                  brokerId={selected.brokerId}
                 />
               </>
             );

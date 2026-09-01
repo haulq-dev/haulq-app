@@ -296,6 +296,42 @@ export async function listPriorSenderAddresses(
   return rows.map((r) => r.receivedFrom).filter((v): v is string => v !== null);
 }
 
+export interface BrokerDocumentHistory {
+  /** How many of this broker's most recent processed documents this looks at. */
+  consideredCount: number;
+  /** Of those, how many ended up needing a person — `extractorVersion === 'manual-entry'`. */
+  manualCount: number;
+}
+
+/**
+ * Whether this broker's paperwork tends to need a person, read from history
+ * rather than tracked — no streak counter to keep in sync, no state that can
+ * drift from what `documents` itself already says. Purely informational: a
+ * dispatcher deciding whether to expect a clean read this time, not a signal
+ * anything in the pipeline acts on. `processDocument` still tries the free
+ * text layer and the deterministic rules on every document regardless — this
+ * is not a reason to skip a read that might succeed, only a reason not to be
+ * surprised when it doesn't.
+ */
+export async function brokerDocumentHistory(
+  s: Scope,
+  brokerId: string,
+  limit = 5,
+): Promise<BrokerDocumentHistory> {
+  const rows = await s.db
+    .select({ extractorVersion: documents.extractorVersion })
+    .from(documents)
+    .innerJoin(loads, eq(documents.loadId, loads.id))
+    .where(and(inOrg(s), eq(loads.brokerId, brokerId), isNotNull(documents.extractedAt)))
+    .orderBy(desc(documents.extractedAt))
+    .limit(limit);
+
+  return {
+    consideredCount: rows.length,
+    manualCount: rows.filter((r) => r.extractorVersion === 'manual-entry').length,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Writing
 // ---------------------------------------------------------------------------

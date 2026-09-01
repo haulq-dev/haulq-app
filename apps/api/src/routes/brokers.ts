@@ -11,6 +11,7 @@
 import { UpdateBrokerDetentionSchema, UpdateBrokerDocketSchema } from '@haulq/contracts';
 import {
   BrokerError,
+  brokerDocumentHistory,
   getBroker,
   getLatestVerification,
   recordVerification,
@@ -189,6 +190,31 @@ export async function brokerRoutes(app: FastifyInstance) {
               ).toISOString()
             : null,
       };
+    },
+  );
+
+  /**
+   * Whether this broker's paperwork tends to need a person. Informational
+   * only — see `brokerDocumentHistory`'s own comment for why nothing in the
+   * Docs pipeline acts on this automatically.
+   */
+  server.get(
+    '/v1/brokers/:id/document-history',
+    {
+      schema: {
+        tags: ['Brokers'],
+        summary: "Whether this broker's recent documents needed manual correction",
+        params: IdParamSchema,
+      },
+    },
+    async (request) => {
+      const s = await requireScope(request);
+      const { id } = request.params;
+
+      const broker = await getBroker(s, id);
+      if (!broker) throw new HttpError(404, 'not_found', 'That broker is not on this account.');
+
+      return brokerDocumentHistory(s, id);
     },
   );
 }
