@@ -16,6 +16,7 @@ import {
   applyMapping,
   commitImport,
   CursorError,
+  findRememberedMapping,
   getBatch,
   ImportError,
   importedHistorySummary,
@@ -105,10 +106,24 @@ export async function importRoutes(app: FastifyInstance) {
           text,
         });
 
+        // A prior confirmed mapping for this exact header set beats a fresh
+        // guess from column names alone — see `findRememberedMapping`'s own
+        // comment. Still just a proposal: the operator confirms it through
+        // the same `applyMapping` step either way, nothing skips that.
+        const remembered = await findRememberedMapping(s, result.headers);
+        const suggestedMapping = remembered
+          ? result.headers.map((header) => ({
+              header,
+              field: remembered[header] ?? null,
+              confidence: 1,
+            }))
+          : guessMapping(result.headers);
+
         return reply.code(201).send({
           batch: result.batch,
           headers: result.headers,
-          suggestedMapping: guessMapping(result.headers),
+          suggestedMapping,
+          rememberedMapping: remembered !== null,
           sampleRows: result.sampleRows,
         });
       } catch (err) {

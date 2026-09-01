@@ -39,7 +39,7 @@ import {
   type CoercedRow,
   type ParsedLoadRow,
 } from '@haulq/contracts';
-import { and, asc, eq, gt, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, or, sql } from 'drizzle-orm';
 import type { Scope } from '../context.ts';
 import { recordEvent } from '../events/record.ts';
 import { decodeCursor, toCursorPage, type CursorPage } from '../pagination.ts';
@@ -132,6 +132,43 @@ export async function startImport(
       sampleRows: parsed.rows.slice(0, 5).map((r) => r.cells),
     };
   });
+}
+
+/**
+ * A prior confirmed mapping for this exact set of headers, if this org has
+ * one — `schema/imports.ts`'s own comment on `columnMapping` names the
+ * reason: next month's file from the same carrier's TMS or broker export
+ * has the same headers.
+ *
+ * "Same" means the exact same header set, not a superset or a fuzzy match —
+ * a mapping is keyed by header text, so anything looser risks handing back a
+ * mapping built for a differently-shaped file that happens to share a few
+ * column names. Only batches with a non-empty `columnMapping` qualify,
+ * which is already every batch that reached `applyMapping` — a batch still
+ * sitting at `{}` was never confirmed by a person.
+ */
+export async function findRememberedMapping(
+  s: Scope,
+  headers: string[],
+): Promise<ColumnMapping | null> {
+  if (headers.length === 0) return null;
+  const headerSet = new Set(headers);
+
+  const rows = await s.db
+    .select({ columnMapping: importBatches.columnMapping })
+    .from(importBatches)
+    .where(and(eq(importBatches.orgId, s.ctx.orgId), sql`${importBatches.columnMapping} <> '{}'::jsonb`))
+    .orderBy(desc(importBatches.createdAt))
+    .limit(20);
+
+  for (const row of rows) {
+    const mapping = row.columnMapping as ColumnMapping;
+    const keys = Object.keys(mapping);
+    if (keys.length === headerSet.size && keys.every((k) => headerSet.has(k))) {
+      return mapping;
+    }
+  }
+  return null;
 }
 
 async function stageRows(

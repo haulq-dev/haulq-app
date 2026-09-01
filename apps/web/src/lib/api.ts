@@ -283,6 +283,8 @@ export interface UploadResponse {
   batch: ImportBatch;
   headers: string[];
   suggestedMapping: MappingGuess[];
+  /** True when `suggestedMapping` came from a prior confirmed import with this exact header set, not a fresh guess. */
+  rememberedMapping: boolean;
   sampleRows: Record<string, string>[];
 }
 

@@ -191,6 +191,59 @@ suite('csv import', () => {
       });
       assert.equal(res.statusCode, 400);
     });
+
+    it('says nothing is remembered for a header set never confirmed before', async () => {
+      const orgId = await newOrg('Nothing Remembered Co');
+      const res = await upload(orgId, MESSY_CSV);
+      assert.equal(res.json().rememberedMapping, false);
+    });
+
+    it('remembers a confirmed mapping for the same header set next time, skipping the guess', async () => {
+      const orgId = await newOrg('Remembers Mapping Co');
+      // A guess would map "Rate" to something plausible on its own; confirm a
+      // deliberately different field so the second upload can only match by
+      // being the *remembered* mapping, not by re-guessing the same answer.
+      const { batchId } = await importAll(orgId, MESSY_CSV);
+      const first = await app.inject({
+        method: 'GET',
+        url: `/v1/imports/${batchId}`,
+        headers: as(orgId),
+      });
+      const confirmedMapping = first.json().batch.columnMapping as Record<string, string | null>;
+
+      const sameHeadersDifferentRows = [
+        'Load #,Broker,Pickup City,Pickup State,Delivery City,Delivery State,Pickup Date,Delivery Date,Rate,Miles',
+        '2001,Acme Logistics,Tulsa,OK,Dallas,TX,2026-04-01,2026-04-02,"$1,900.00",290',
+      ].join('\n');
+
+      const second = await upload(orgId, sameHeadersDifferentRows, 'history-2.csv');
+      assert.equal(second.json().rememberedMapping, true);
+
+      const mapping = Object.fromEntries(
+        (second.json().suggestedMapping as Array<{ header: string; field: string | null }>).map(
+          (g) => [g.header, g.field],
+        ),
+      );
+      assert.deepEqual(mapping, confirmedMapping);
+    });
+
+    it('does not remember a mapping for a differently-shaped file', async () => {
+      const orgId = await newOrg('Different Shape Co');
+      await importAll(orgId, MESSY_CSV);
+
+      const differentHeaders = ['Reference,Carrier,Amount', '9001,Acme,1000'].join('\n');
+      const res = await upload(orgId, differentHeaders, 'other.csv');
+      assert.equal(res.json().rememberedMapping, false);
+    });
+
+    it('does not remember another org\'s mapping', async () => {
+      const orgId = await newOrg('Mapping Owner Co');
+      const otherOrgId = await newOrg('Mapping Stranger Co');
+      await importAll(orgId, MESSY_CSV);
+
+      const res = await upload(otherOrgId, MESSY_CSV, 'history-3.csv');
+      assert.equal(res.json().rememberedMapping, false);
+    });
   });
 
   // --- validation ----------------------------------------------------------

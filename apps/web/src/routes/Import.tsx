@@ -132,9 +132,19 @@ function MappingStep({
   return (
     <Card title={`Match the columns in ${upload.batch.filename}`}>
       <p className="mb-5 max-w-prose text-sm text-slate">
-        HaulQ has guessed these from your headers. Check them against the sample
-        values — the guesses are usually right, and a wrong one is invisible
-        afterwards.
+        {upload.rememberedMapping ? (
+          <>
+            These columns match a file you've imported before, so HaulQ carried over
+            the mapping you confirmed last time. Worth a check anyway before it's
+            confirmed again.
+          </>
+        ) : (
+          <>
+            HaulQ has guessed these from your headers. Check them against the sample
+            values — the guesses are usually right, and a wrong one is invisible
+            afterwards.
+          </>
+        )}
       </p>
 
       <div className="overflow-x-auto">
