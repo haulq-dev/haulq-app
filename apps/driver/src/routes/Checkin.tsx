@@ -80,7 +80,7 @@ function CheckIcon() {
 
 /** Extracts a token from a pasted link or a bare code — a driver copying a
  *  text message rarely strips the URL down to just the token. */
-function tokenFromInput(raw: string): string {
+export function tokenFromInput(raw: string): string {
   const trimmed = raw.trim();
   try {
     const url = new URL(trimmed);
