@@ -27,7 +27,7 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { request } from '../lib/api.ts';
 import { Card, Empty, ErrorNote, Num } from '../components/ui.tsx';
 
@@ -242,40 +242,89 @@ function Breakdown({
  * by the day filter above: a load delivered 45 days ago with no invoice is
  * still actionable even while looking at the 30-day rollup.
  */
-function ActionQueueCard({ queue }: { queue: ActionQueue }) {
-  const nothingOutstanding =
-    queue.deliveredNotInvoiced.length === 0 && queue.overdueInvoices.length === 0;
+/** How many rows show before "Show N more" — enough to matter, not enough to
+ *  bury the stat tiles below it on an account with a long history. */
+const ACTION_QUEUE_VISIBLE = 5;
 
-  if (nothingOutstanding) return null;
+interface ActionQueueItem {
+  key: string;
+  /** Days late, either way — what "worst first" sorts on. */
+  urgency: number;
+  node: ReactNode;
+}
+
+function ActionQueueCard({ queue }: { queue: ActionQueue }) {
+  const [expanded, setExpanded] = useState(false);
+
+  const items: ActionQueueItem[] = [
+    ...queue.deliveredNotInvoiced.map((row) => ({
+      key: `load-${row.loadId}`,
+      urgency: row.daysSinceDelivered,
+      node: (
+        <>
+          <span>
+            Load {row.reference}
+            {row.brokerName ? ` (${row.brokerName})` : ''} delivered {row.daysSinceDelivered}{' '}
+            days ago, still not invoiced.
+          </span>
+          <Link to="/loads" className="hq-btn hq-btn-ghost shrink-0 text-xs">
+            Open Loads
+          </Link>
+        </>
+      ),
+    })),
+    ...queue.overdueInvoices.map((row) => ({
+      key: `inv-${row.invoiceId}`,
+      urgency: row.daysOverdue,
+      node: (
+        <>
+          <span>
+            Invoice {row.reference} for load {row.loadReference}
+            {row.brokerName ? ` (${row.brokerName})` : ''} is {money(row.totalCents)},{' '}
+            {row.daysOverdue} days past due.
+          </span>
+          <Link to="/pay" className="hq-btn hq-btn-ghost shrink-0 text-xs">
+            Open Pay
+          </Link>
+        </>
+      ),
+    })),
+  ].sort((a, b) => b.urgency - a.urgency);
+
+  if (items.length === 0) return null;
+
+  const visible = expanded ? items : items.slice(0, ACTION_QUEUE_VISIBLE);
+  const hiddenCount = items.length - visible.length;
 
   return (
-    <Card title="Needs attention">
+    <Card
+      title="Needs attention"
+      action={<span className="text-sm text-mute">{items.length}</span>}
+    >
       <ul className="space-y-2.5">
-        {queue.deliveredNotInvoiced.map((row) => (
-          <li key={row.loadId} className="flex items-center justify-between gap-3 text-sm">
-            <span>
-              Load {row.reference}
-              {row.brokerName ? ` (${row.brokerName})` : ''} delivered{' '}
-              {row.daysSinceDelivered} days ago, still not invoiced.
-            </span>
-            <Link to="/loads" className="hq-btn hq-btn-ghost shrink-0 text-xs">
-              Open Loads
-            </Link>
-          </li>
-        ))}
-        {queue.overdueInvoices.map((row) => (
-          <li key={row.invoiceId} className="flex items-center justify-between gap-3 text-sm">
-            <span>
-              Invoice {row.reference} for load {row.loadReference}
-              {row.brokerName ? ` (${row.brokerName})` : ''} is {money(row.totalCents)},{' '}
-              {row.daysOverdue} days past due.
-            </span>
-            <Link to="/pay" className="hq-btn hq-btn-ghost shrink-0 text-xs">
-              Open Pay
-            </Link>
+        {visible.map((item) => (
+          <li key={item.key} className="flex items-center justify-between gap-3 text-sm">
+            {item.node}
           </li>
         ))}
       </ul>
+      {hiddenCount > 0 ? (
+        <button
+          className="hq-btn hq-btn-ghost mt-3 w-full text-xs"
+          onClick={() => setExpanded(true)}
+        >
+          Show {hiddenCount} more
+        </button>
+      ) : (
+        items.length > ACTION_QUEUE_VISIBLE && (
+          <button
+            className="hq-btn hq-btn-ghost mt-3 w-full text-xs"
+            onClick={() => setExpanded(false)}
+          >
+            Show fewer
+          </button>
+        )
+      )}
     </Card>
   );
 }

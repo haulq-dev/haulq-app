@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { request } from '../lib/api.ts';
 import { InsightsScreen } from './Insights.tsx';
@@ -139,5 +140,57 @@ describe('InsightsScreen — action queue', () => {
     await waitFor(() => {
       expect(screen.getAllByRole('link')).toHaveLength(2);
     });
+  });
+
+  it('caps a long queue at 5 rows and offers to show the rest, worst first', async () => {
+    const deliveredNotInvoiced = Array.from({ length: 12 }, (_, i) => ({
+      loadId: `load-${i}`,
+      reference: i,
+      brokerName: null,
+      // Reverse order on purpose: item 0 is the least urgent, so the
+      // component — not fixture order — has to be what sorts worst-first.
+      daysSinceDelivered: i + 1,
+    }));
+    vi.mocked(request).mockResolvedValue(
+      aResponse({ actionQueue: { deliveredNotInvoiced, overdueInvoices: [] } }),
+    );
+    const user = userEvent.setup();
+
+    renderScreen();
+    await screen.findByText('Needs attention');
+
+    // The count badge names the true total, not just what's visible.
+    expect(screen.getByText('12')).toBeInTheDocument();
+    expect(screen.getAllByRole('listitem')).toHaveLength(5);
+    expect(screen.getByText(/delivered 12 days ago/)).toBeInTheDocument();
+    expect(screen.queryByText(/delivered 1 days ago/)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Show 7 more' })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Show 7 more' }));
+
+    expect(screen.getAllByRole('listitem')).toHaveLength(12);
+    expect(screen.getByText(/delivered 1 days ago/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Show fewer' })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Show fewer' }));
+
+    expect(screen.getAllByRole('listitem')).toHaveLength(5);
+  });
+
+  it('does not show an expand toggle when everything already fits', async () => {
+    vi.mocked(request).mockResolvedValue(
+      aResponse({
+        actionQueue: {
+          deliveredNotInvoiced: [
+            { loadId: 'load-1', reference: 1, brokerName: null, daysSinceDelivered: 8 },
+          ],
+          overdueInvoices: [],
+        },
+      }),
+    );
+    renderScreen();
+
+    await screen.findByText('Needs attention');
+    expect(screen.queryByRole('button', { name: /Show/ })).not.toBeInTheDocument();
   });
 });
