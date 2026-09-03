@@ -57,6 +57,13 @@
       "when": 1787779831733,
       "tag": "0007_tan_changeling",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1788389991525,
+      "tag": "0008_cooing_dragon_man",
+      "breakpoints": true
     }
   ]
 }

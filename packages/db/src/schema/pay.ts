@@ -144,6 +144,9 @@ export const invoices = pgTable(
     index('invoices_org_status_idx').on(t.orgId, t.status),
     index('invoices_org_due_idx').on(t.orgId, t.dueAt),
     index('invoices_source_document_idx').on(t.sourceDocumentId),
+    // `listInvoices`' default (no status filter) sort pages on
+    // `(createdAt, id)` — same reasoning as `loads_org_created_idx`.
+    index('invoices_org_created_idx').on(t.orgId, t.createdAt, t.id),
   ],
 );
 
@@ -229,6 +232,8 @@ export const factoringPackets = pgTable(
     index('factoring_packets_org_status_idx').on(t.orgId, t.status),
     index('factoring_packets_invoice_idx').on(t.invoiceId),
     index('factoring_packets_factoring_company_idx').on(t.factoringCompanyId),
+    // `listFactoringPackets`' default sort pages on `(createdAt, id)`.
+    index('factoring_packets_org_created_idx').on(t.orgId, t.createdAt, t.id),
   ],
 );
 

@@ -192,7 +192,10 @@ export const loads = pgTable(
      */
     unique('loads_org_source_key').on(t.orgId, t.sourceBoard, t.sourceLoadId),
     index('loads_org_status_idx').on(t.orgId, t.status),
-    index('loads_org_created_idx').on(t.orgId, t.createdAt),
+    // Widened to include `id` — `listLoads`' cursor pages on
+    // `(createdAt, id)`, and the tiebreaker has to be in the index for the
+    // keyset WHERE to use it instead of a sequential scan past one page.
+    index('loads_org_created_idx').on(t.orgId, t.createdAt, t.id),
     index('loads_org_truck_idx').on(t.orgId, t.truckId),
     index('loads_broker_idx').on(t.brokerId),
     index('loads_purge_idx').on(t.purgeAfter),

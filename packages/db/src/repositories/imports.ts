@@ -376,8 +376,18 @@ export async function commitImport(s: Scope, batchId: string): Promise<CommitRes
     const brokerCache = await loadBrokerCache(tx);
     const truckCache = await loadTruckCache(tx);
     let brokersCreated = 0;
-    let committed = 0;
 
+    // Broker find-or-create has to stay row-by-row, in order: a later row
+    // naming the same broker a different way (see `brokerMatchKey`) needs to
+    // see the row just before it already created the cache entry, or two
+    // spellings of one broker become two rows. `loads`/`loadStops` have no
+    // such cross-row dependency, so those two batch below.
+    const enriched: Array<{
+      rowId: string;
+      parsed: ParsedLoadRow;
+      brokerId: string | null;
+      truckId: string | null;
+    }> = [];
     for (const row of staged) {
       const parsed = (row.parsed ?? {}) as ParsedLoadRow;
 
@@ -402,49 +412,77 @@ export async function commitImport(s: Scope, batchId: string): Promise<CommitRes
         ? (truckCache.get(parsed.truckLabel.trim().toLowerCase()) ?? null)
         : null;
 
-      const [load] = await tx.db
+      enriched.push({ rowId: row.id, parsed, brokerId, truckId });
+    }
+
+    // Chunked for the same reason `stageRows` chunks its insert: a 90-day
+    // import is a few thousand rows, and one INSERT with that many parameter
+    // bindings exceeds what the driver will send.
+    //
+    // `loads_assign_reference_trg` (0100_load_reference.sql) is a `for each
+    // row` trigger, so it still assigns correct sequential per-org reference
+    // numbers inside a multi-row INSERT — and Postgres preserves input order
+    // in a multi-row `INSERT ... RETURNING`, so `loadIds[i]` below is always
+    // the id for `enriched[i]`.
+    const loadIds: string[] = [];
+    for (let i = 0; i < enriched.length; i += 500) {
+      const chunk = enriched.slice(i, i + 500);
+      const inserted = await tx.db
         .insert(loads)
-        .values({
-          orgId: tx.ctx.orgId,
-          source: 'csv_import',
-          // Imported history is delivered by definition. The status machine
-          // exempts csv_import from needing a truck, because a carrier's old
-          // system frequently did not record one — see 0300_load_status.sql.
-          status: 'delivered',
-          ...(parsed.reference !== undefined ? { reference: parsed.reference } : {}),
-          brokerId,
-          truckId,
-          ...(parsed.brokerLoadNumber ? { brokerLoadNumber: parsed.brokerLoadNumber } : {}),
-          ...(parsed.commodity ? { commodity: parsed.commodity } : {}),
-          ...(parsed.weightLbs !== undefined ? { weightLbs: parsed.weightLbs } : {}),
-          ...(parsed.notes ? { comments: parsed.notes } : {}),
-          ...(parsed.rateAmount !== undefined
-            ? { rateAmount: parsed.rateAmount, rateCurrency: 'USD' }
-            : {}),
-          // Imported miles are what actually happened, not a prediction. They
-          // go in the actual_ columns; leaving expected_ null is correct and
-          // keeps the closed loop honest — HaulQ never predicted these.
-          ...(parsed.loadedMiles !== undefined
-            ? { actualLoadedMiles: parsed.loadedMiles }
-            : {}),
-          ...(parsed.deadheadMiles !== undefined
-            ? { actualDeadheadMiles: parsed.deadheadMiles }
-            : {}),
-          ...(parsed.rateAmount !== undefined
-            ? { actualRevenueAmount: parsed.rateAmount, actualRevenueCurrency: 'USD' }
-            : {}),
-          bookedAt: parsed.pickupDate ? new Date(parsed.pickupDate) : new Date(),
-          deliveredAt: parsed.deliveryDate ? new Date(parsed.deliveryDate) : new Date(),
-        })
+        .values(
+          chunk.map(({ parsed, brokerId, truckId }) => ({
+            orgId: tx.ctx.orgId,
+            source: 'csv_import' as const,
+            // Imported history is delivered by definition. The status machine
+            // exempts csv_import from needing a truck, because a carrier's old
+            // system frequently did not record one — see 0300_load_status.sql.
+            status: 'delivered' as const,
+            ...(parsed.reference !== undefined ? { reference: parsed.reference } : {}),
+            brokerId,
+            truckId,
+            ...(parsed.brokerLoadNumber ? { brokerLoadNumber: parsed.brokerLoadNumber } : {}),
+            ...(parsed.commodity ? { commodity: parsed.commodity } : {}),
+            ...(parsed.weightLbs !== undefined ? { weightLbs: parsed.weightLbs } : {}),
+            ...(parsed.notes ? { comments: parsed.notes } : {}),
+            ...(parsed.rateAmount !== undefined
+              ? { rateAmount: parsed.rateAmount, rateCurrency: 'USD' }
+              : {}),
+            // Imported miles are what actually happened, not a prediction. They
+            // go in the actual_ columns; leaving expected_ null is correct and
+            // keeps the closed loop honest — HaulQ never predicted these.
+            ...(parsed.loadedMiles !== undefined
+              ? { actualLoadedMiles: parsed.loadedMiles }
+              : {}),
+            ...(parsed.deadheadMiles !== undefined
+              ? { actualDeadheadMiles: parsed.deadheadMiles }
+              : {}),
+            ...(parsed.rateAmount !== undefined
+              ? { actualRevenueAmount: parsed.rateAmount, actualRevenueCurrency: 'USD' }
+              : {}),
+            bookedAt: parsed.pickupDate ? new Date(parsed.pickupDate) : new Date(),
+            deliveredAt: parsed.deliveryDate ? new Date(parsed.deliveryDate) : new Date(),
+          })),
+        )
         .returning({ id: loads.id });
 
-      if (!load) throw new Error('load insert returned nothing');
+      if (inserted.length !== chunk.length) {
+        throw new Error('loads insert returned the wrong number of rows');
+      }
+      loadIds.push(...inserted.map((l) => l.id));
+    }
 
-      const stops: Array<typeof loadStops.$inferInsert> = [];
+    // Seq is relative to each load's own stops (1, then 2 if both exist), not
+    // to this batch — computed per row into a small local array before it
+    // joins the one array that actually gets inserted.
+    const stops: Array<typeof loadStops.$inferInsert> = [];
+    for (let i = 0; i < enriched.length; i++) {
+      const { parsed } = enriched[i]!;
+      const loadId = loadIds[i]!;
+      const rowStops: Array<typeof loadStops.$inferInsert> = [];
       if (parsed.originCity) {
-        stops.push({
+        rowStops.push({
           orgId: tx.ctx.orgId,
-          loadId: load.id,
+          loadId,
           seq: 1,
           type: 'pickup',
           city: parsed.originCity,
@@ -453,25 +491,33 @@ export async function commitImport(s: Scope, batchId: string): Promise<CommitRes
         });
       }
       if (parsed.destCity) {
-        stops.push({
+        rowStops.push({
           orgId: tx.ctx.orgId,
-          loadId: load.id,
-          seq: stops.length + 1,
+          loadId,
+          seq: rowStops.length + 1,
           type: 'delivery',
           city: parsed.destCity,
           state: parsed.destState ?? '',
           ...(parsed.deliveryDate ? { windowStart: new Date(parsed.deliveryDate) } : {}),
         });
       }
-      if (stops.length) await tx.db.insert(loadStops).values(stops);
+      stops.push(...rowStops);
+    }
+    for (let i = 0; i < stops.length; i += 500) {
+      await tx.db.insert(loadStops).values(stops.slice(i, i + 500));
+    }
 
+    // Single-column, by primary key — cheap enough on its own that batching
+    // it would need a raw `UPDATE ... FROM (VALUES ...)` for little gain, so
+    // this stays one row at a time.
+    for (let i = 0; i < enriched.length; i++) {
       await tx.db
         .update(importRows)
-        .set({ status: 'committed', loadId: load.id })
-        .where(eq(importRows.id, row.id));
-
-      committed++;
+        .set({ status: 'committed', loadId: loadIds[i]! })
+        .where(eq(importRows.id, enriched[i]!.rowId));
     }
+
+    const committed = enriched.length;
 
     const skipped = batch.invalidRows;
 

@@ -122,9 +122,14 @@ export const documents = pgTable(
     index('documents_load_idx').on(t.loadId),
     /** Dedupe. One org, one file, one row — regardless of intake path. */
     uniqueIndex('documents_org_sha_key').on(t.orgId, t.sha256),
+    // Widened to include `id` — `listDocuments`' "Needs a load" view pages
+    // on `(receivedAt, id)`, same reasoning as `loads_org_created_idx`.
     index('documents_unattached_idx')
-      .on(t.orgId, t.receivedAt)
+      .on(t.orgId, t.receivedAt, t.id)
       .where(sql`load_id is null`),
+    // The partial index above only covers unattached rows — this covers the
+    // "All documents" view, which this WHERE excludes by design.
+    index('documents_org_received_idx').on(t.orgId, t.receivedAt, t.id),
   ],
 );
 
