@@ -193,6 +193,76 @@ function SuggestionRow({ suggestion }: { suggestion: MotiveMatchSuggestion }) {
   );
 }
 
+/**
+ * A Motive vehicle no existing truck was suggested for — either the fleet
+ * genuinely has a truck Motive knows about that HaulQ does not yet, or its
+ * label just does not resemble anything in `motive-match.ts`'s comparison.
+ * Either way, one click creates the truck and matches it in the same step,
+ * rather than making someone copy the vehicle number into "Add a truck" by
+ * hand and then find it again in the picker below.
+ */
+function CreateFromMotiveRow({ vehicle }: { vehicle: MotiveVehicle }) {
+  const queryClient = useQueryClient();
+  const create = useMutation({
+    mutationFn: async () => {
+      const truck = await request<Truck>('/v1/trucks', {
+        body: { label: vehicle.number, equipment: 'STRAIGHT_BOX', capabilities: {} },
+      });
+      await request(`/v1/trucks/${truck.id}/motive-vehicle`, {
+        method: 'PATCH',
+        body: { motiveVehicleId: vehicle.id },
+      });
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries();
+    },
+  });
+
+  return (
+    <li className="flex flex-wrap items-center justify-between gap-2 border border-line p-2.5">
+      <span>
+        Motive {vehicle.number}
+        {vehicle.vin ? <span className="ml-2 text-sm text-mute">VIN ···{vehicle.vin.slice(-6)}</span> : null}
+      </span>
+      <div className="flex items-center gap-2">
+        <button
+          className="hq-btn hq-btn-ghost px-3 py-1 text-xs"
+          disabled={create.isPending}
+          onClick={() => create.mutate()}
+        >
+          {create.isPending ? 'Creating…' : 'Create truck'}
+        </button>
+        <ErrorNote error={create.error} />
+      </div>
+    </li>
+  );
+}
+
+/**
+ * Every Motive vehicle nothing in HaulQ claims yet: not a truck's current
+ * match, and not already offered as a suggestion above (that one already
+ * has its own one-click path). Left off entirely once empty rather than
+ * shown with a "nothing here" placeholder — this card is only useful while
+ * it has rows.
+ */
+function UnmatchedMotiveVehicles({ vehicles }: { vehicles: MotiveVehicle[] }) {
+  if (vehicles.length === 0) return null;
+
+  return (
+    <Card title="Motive vehicles with no HaulQ truck">
+      <p className="mb-3 max-w-prose text-sm text-slate">
+        These are on the Motive account but nothing here matches them yet.
+        Create a truck for one to start tracking it.
+      </p>
+      <ul className="space-y-2">
+        {vehicles.map((v) => (
+          <CreateFromMotiveRow key={v.id} vehicle={v} />
+        ))}
+      </ul>
+    </Card>
+  );
+}
+
 interface TruckFormValues {
   label: string;
   equipment: string;
@@ -533,6 +603,11 @@ export function TrucksScreen() {
     motive.isError && motive.error instanceof ApiRequestError && motive.error.code === 'not_connected';
   const vehicles = motive.data?.vehicles ?? null;
 
+  const matchedVehicleIds = new Set(truckItems.map((t) => t.motiveVehicleId).filter((id) => id !== null));
+  const suggestedVehicleIds = new Set(motive.data?.suggestions.map((s) => s.motiveVehicleId) ?? []);
+  const unmatchedVehicles =
+    vehicles?.filter((v) => !matchedVehicleIds.has(v.id) && !suggestedVehicleIds.has(v.id)) ?? [];
+
   return (
     <div className="space-y-6">
       <div className="flex items-end justify-between gap-4">
@@ -554,6 +629,7 @@ export function TrucksScreen() {
         })()}
 
       {motive.data && <MotiveMatchSuggestions suggestions={motive.data.suggestions} />}
+      {motive.data && <UnmatchedMotiveVehicles vehicles={unmatchedVehicles} />}
       {motive.isError && !motiveNotConnected && <ErrorNote error={motive.error} />}
 
       <Card>
