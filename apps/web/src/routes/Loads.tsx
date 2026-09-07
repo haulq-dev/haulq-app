@@ -240,14 +240,36 @@ interface GeocodeCandidate {
  * both `AddLoad` (a fresh stop) and `EditLoadStops` (an existing stop's
  * already-stored address).
  */
-function CoordinateLookup({
+/**
+ * A HERE match this confident gets accepted without asking — silence is the
+ * point for the common case (a well-known city/state resolves to exactly one
+ * real place). Below this, or with a second candidate too close to call, a
+ * dispatcher decides instead of the app guessing: a wrong silent match here
+ * becomes a wrong feasibility verdict later with nothing pointing at why,
+ * same reasoning `here-geocode.ts`'s own module note already gives for
+ * requiring a confirmed pick in the first place — this just narrows *when*
+ * confirmation is asked for, not whether a bad match can ever be trusted.
+ */
+const AUTO_ACCEPT_SCORE = 0.7;
+/** How much a top match has to clear the runner-up by, on top of the score bar above, before two real places stop reading as ambiguous. */
+const AUTO_ACCEPT_MARGIN = 0.15;
+/** Typing pause before an automatic lookup fires, so it runs once after a dispatcher stops, not once per keystroke. */
+const AUTO_LOOKUP_DEBOUNCE_MS = 700;
+
+export function CoordinateLookup({
   address,
+  hasCoordinates,
   onPick,
 }: {
   address: { addressLine1?: string; city: string; state: string; postalCode?: string };
+  /** True once lat/lng are set, however they got set — auto-resolved, picked, or typed by hand. Lookups stop firing on their own once this is true, so a manual entry is never silently overwritten. */
+  hasCoordinates: boolean;
   onPick: (candidate: GeocodeCandidate) => void;
 }) {
   const [candidates, setCandidates] = useState<GeocodeCandidate[] | null>(null);
+  const [resolvedLabel, setResolvedLabel] = useState<string | null>(null);
+
+  const canLookup = address.city.trim() !== '' && address.state.trim().length === 2;
 
   const lookup = useMutation({
     mutationFn: () =>
@@ -259,45 +281,95 @@ function CoordinateLookup({
           ...(address.postalCode ? { postalCode: address.postalCode } : {}),
         })}`,
       ),
-    onSuccess: (res) => setCandidates(res.candidates),
+    onSuccess: (res) => {
+      const [top, runnerUp] = res.candidates;
+      const clearWinner =
+        top &&
+        top.score >= AUTO_ACCEPT_SCORE &&
+        (!runnerUp || top.score - runnerUp.score >= AUTO_ACCEPT_MARGIN);
+
+      if (clearWinner) {
+        setResolvedLabel(top.label);
+        setCandidates(null);
+        onPick(top);
+      } else {
+        setResolvedLabel(null);
+        setCandidates(res.candidates);
+      }
+    },
   });
 
-  const canLookup = address.city.trim() !== '' && address.state.trim().length === 2;
+  // Runs once, quietly, the moment a stop has enough address to try — the
+  // common case needs no click at all. Skipped entirely once coordinates
+  // exist, so it never fires again over a manual edit or an earlier pick;
+  // clearing a stop's coordinates (or changing the address before any were
+  // set) is what lets it try again.
+  useEffect(() => {
+    if (!canLookup || hasCoordinates || lookup.isPending) return;
+    const id = setTimeout(() => lookup.mutate(), AUTO_LOOKUP_DEBOUNCE_MS);
+    return () => clearTimeout(id);
+    // Re-runs on every address field, not just city/state — a street address
+    // or postal code typed after the debounce already fired is exactly the
+    // case a dispatcher would expect to sharpen the match.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [address.addressLine1, address.city, address.state, address.postalCode, hasCoordinates]);
 
   return (
     <div className="mt-1.5">
-      <button
-        type="button"
-        className="text-xs text-brand underline disabled:cursor-not-allowed disabled:text-mute disabled:no-underline"
-        disabled={!canLookup || lookup.isPending}
-        onClick={() => {
-          setCandidates(null);
-          lookup.mutate();
-        }}
-      >
-        {lookup.isPending ? 'Looking up…' : 'Look up coordinates'}
-      </button>
+      {resolvedLabel && !candidates && (
+        <p className="text-xs text-mute">
+          Matched to <span className="text-slate">{resolvedLabel}</span>.{' '}
+          <button
+            type="button"
+            className="text-brand underline disabled:cursor-not-allowed disabled:text-mute disabled:no-underline"
+            disabled={!canLookup || lookup.isPending}
+            onClick={() => {
+              setResolvedLabel(null);
+              lookup.mutate();
+            }}
+          >
+            Not the right spot? Look up again
+          </button>
+        </p>
+      )}
+      {!resolvedLabel && (
+        <button
+          type="button"
+          className="text-xs text-brand underline disabled:cursor-not-allowed disabled:text-mute disabled:no-underline"
+          disabled={!canLookup || lookup.isPending}
+          onClick={() => {
+            setCandidates(null);
+            lookup.mutate();
+          }}
+        >
+          {lookup.isPending ? 'Looking up…' : 'Look up coordinates'}
+        </button>
+      )}
       <ErrorNote error={lookup.error} />
       {candidates && candidates.length === 0 && (
         <p className="mt-1 text-xs text-mute">No match found for that address.</p>
       )}
       {candidates && candidates.length > 0 && (
-        <ul className="mt-1 space-y-1">
-          {candidates.map((c, i) => (
-            <li key={i}>
-              <button
-                type="button"
-                className="text-left text-xs text-slate hover:text-ink hover:underline"
-                onClick={() => {
-                  onPick(c);
-                  setCandidates(null);
-                }}
-              >
-                {c.label}
-              </button>
-            </li>
-          ))}
-        </ul>
+        <div className="mt-1">
+          <p className="text-xs text-mute">Which one did you mean?</p>
+          <ul className="mt-1 space-y-1">
+            {candidates.map((c, i) => (
+              <li key={i}>
+                <button
+                  type="button"
+                  className="text-left text-xs text-slate hover:text-ink hover:underline"
+                  onClick={() => {
+                    setResolvedLabel(c.label);
+                    onPick(c);
+                    setCandidates(null);
+                  }}
+                >
+                  {c.label}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
     </div>
   );
@@ -409,6 +481,7 @@ function AddLoad({ trucks, onDone }: { trucks: Truck[]; onDone: () => void }) {
           </div>
           <CoordinateLookup
             address={pickup}
+            hasCoordinates={Boolean(pickup.lat && pickup.lng)}
             onPick={(c) => setPickup({ ...pickup, lat: String(c.lat), lng: String(c.lng) })}
           />
         </Field>
@@ -419,6 +492,7 @@ function AddLoad({ trucks, onDone }: { trucks: Truck[]; onDone: () => void }) {
           </div>
           <CoordinateLookup
             address={delivery}
+            hasCoordinates={Boolean(delivery.lat && delivery.lng)}
             onPick={(c) => setDelivery({ ...delivery, lat: String(c.lat), lng: String(c.lng) })}
           />
         </Field>
@@ -916,6 +990,7 @@ function EditLoadStops({ load }: { load: Load }) {
                         state: stop.state,
                         ...(stop.postalCode ? { postalCode: stop.postalCode } : {}),
                       }}
+                      hasCoordinates={Boolean(v.lat && v.lng)}
                       onPick={(c) =>
                         setValues((prev) => ({
                           ...prev,
