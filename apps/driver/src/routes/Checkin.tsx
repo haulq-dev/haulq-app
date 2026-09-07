@@ -315,6 +315,9 @@ function CheckinView({ token, onBack }: { token: string; onBack: () => void }) {
         <Pill tone={STATUS_TONE[data.status] ?? 'neutral'}>{data.status.replace('_', ' ')}</Pill>
       </div>
       {data.truckLabel && <p className="-mt-2 text-sm text-mute">{data.truckLabel}</p>}
+      <button className="text-sm text-brand underline" onClick={onBack}>
+        Not your load? Change code
+      </button>
 
       {data.stops.length === 0 ? (
         <div className="hq-card p-4">
