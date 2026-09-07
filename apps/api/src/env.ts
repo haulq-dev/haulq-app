@@ -208,6 +208,12 @@ const EnvSchema = z.object({
    * for tests only, same as `HERE_BASE_URL`.
    */
   HERE_GEOCODE_BASE_URL: z.string().url().optional(),
+  /**
+   * Reverse geocoding — `revgeocode.search.hereapi.com`, a third HERE
+   * endpoint under the same account. Override for tests only, same as
+   * `HERE_GEOCODE_BASE_URL`.
+   */
+  HERE_REVGEOCODE_BASE_URL: z.string().url().optional(),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

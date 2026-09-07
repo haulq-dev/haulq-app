@@ -257,13 +257,32 @@ export async function trackRoutes(app: FastifyInstance) {
     },
     async (request, reply) => {
       const { token } = request.params;
+      const { lat, lng } = request.body;
+
+      /**
+       * Best-effort, and deliberately not inside the same try/catch as the
+       * write below. A driver's position landing is the requirement; a
+       * friendly city name on it is enrichment. Losing the second must
+       * never lose the first — see `recordTruckPosition`'s own doc on why
+       * an omitted (not attempted) lookup differs from one that resolved
+       * to nothing.
+       */
+      let resolved: { city: string | null; state: string | null } | undefined;
+      if (app.reverseGeocoder) {
+        try {
+          resolved = await app.reverseGeocoder.reverseGeocode(lat, lng);
+        } catch (err) {
+          request.log.warn({ err }, 'reverse geocode failed for a check-in position ping');
+        }
+      }
 
       try {
         await recordCheckinPosition(app.db, {
           token,
-          lat: request.body.lat,
-          lng: request.body.lng,
+          lat,
+          lng,
           recordedAt: request.body.recordedAt,
+          ...(resolved ? { city: resolved.city, state: resolved.state } : {}),
         });
         return reply.code(204).send();
       } catch (err) {

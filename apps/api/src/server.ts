@@ -43,7 +43,7 @@ import { startOutboxRunner } from './outbox/runner.ts';
 import { buildDocumentReader, buildGeocoder, buildMailer, buildModelReader, buildRoutingProvider, buildStorage } from './runtime.ts';
 import type { ModelDocumentReader } from './documents/model-reader.ts';
 import type { DocumentReader } from './documents/reader.ts';
-import type { Geocoder } from './integrations/here-geocode.ts';
+import type { Geocoder, ReverseGeocoder } from './integrations/here-geocode.ts';
 import type { RoutingProvider } from './integrations/routing-provider.ts';
 import { requestContextPlugin } from './plugins/request-context.ts';
 import { brokerRoutes } from './routes/brokers.ts';
@@ -73,6 +73,8 @@ declare module 'fastify' {
     routingProvider: RoutingProvider | undefined;
     /** Same gate as `routingProvider` — see `runtime.ts`'s `buildGeocoder`. */
     geocoder: Geocoder | undefined;
+    /** Same underlying HERE account as `geocoder`, decorated separately — see `here-geocode.ts`'s module note. */
+    reverseGeocoder: ReverseGeocoder | undefined;
   }
 }
 
@@ -128,6 +130,14 @@ export interface BuildOptions {
    * configured, and no geocoder at all when it is not.
    */
   geocoder?: Geocoder | undefined;
+
+  /**
+   * Override the reverse geocoder used to resolve a truck's city/state from
+   * a check-in position ping. Same reasoning as `geocoder` above. Left
+   * unset, defaults to whatever `geocoder` resolved to — in production
+   * that's the same `HereGeocoder` instance, since it answers both.
+   */
+  reverseGeocoder?: ReverseGeocoder | undefined;
 }
 
 /**
@@ -191,7 +201,11 @@ export async function buildServer(
   const reader = options.reader ?? buildDocumentReader(env, app.log);
   const modelReader = options.modelReader ?? buildModelReader(env, app.log);
   app.decorate('routingProvider', options.routingProvider ?? buildRoutingProvider(env, app.log));
-  app.decorate('geocoder', options.geocoder ?? buildGeocoder(env, app.log));
+  // One call, two decorations — see `runtime.ts`'s `buildGeocoder` note on
+  // why this must not call it twice.
+  const hereGeocoder = buildGeocoder(env, app.log);
+  app.decorate('geocoder', options.geocoder ?? hereGeocoder);
+  app.decorate('reverseGeocoder', options.reverseGeocoder ?? hereGeocoder);
 
   startOutboxRunner(app, {
     groups: buildOutboxGroups({

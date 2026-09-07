@@ -185,7 +185,14 @@ export function buildGeocoder(env: Env, log: RuntimeLog): HereGeocoder | undefin
   }
 
   log.info({ geocoder: 'here' }, 'geocoder ready');
-  return env.HERE_GEOCODE_BASE_URL
-    ? new HereGeocoder({ apiKey: env.HERE_API_KEY }, env.HERE_GEOCODE_BASE_URL)
-    : new HereGeocoder({ apiKey: env.HERE_API_KEY });
+  // Same instance answers both `Geocoder` and `ReverseGeocoder` — see
+  // `here-geocode.ts`'s module note for why those are separate interfaces
+  // despite one class implementing both. `server.ts` decorates `geocoder`
+  // and `reverseGeocoder` from this single call, not two, so this only
+  // logs "geocoder ready" once.
+  return new HereGeocoder(
+    { apiKey: env.HERE_API_KEY },
+    env.HERE_GEOCODE_BASE_URL,
+    env.HERE_REVGEOCODE_BASE_URL,
+  );
 }

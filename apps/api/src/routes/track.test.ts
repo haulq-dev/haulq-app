@@ -242,6 +242,84 @@ suite('track routes', () => {
     assert.equal(afterRevoke.statusCode, 410);
   });
 
+  it('resolves and persists city/state from a reverse geocoder when one is configured', async () => {
+    const orgId = await newOrg('Track Reverse Geocode Carrier');
+    const load = await aDispatchedLoad(orgId);
+
+    const issued = await app.inject({
+      method: 'POST',
+      url: `/v1/loads/${load.id}/checkin-links`,
+      headers: as(orgId),
+      payload: {},
+    });
+    const { token } = issued.json() as { token: string };
+
+    // A second server instance, same database, with a reverse geocoder the
+    // shared `app` above deliberately has none of — proves the route calls
+    // it and passes the result through, without restructuring every other
+    // test in this file around a HERE dependency they don't need.
+    const geocoded = await buildServer(loadEnv({ ...process.env, NODE_ENV: 'test', DATABASE_URL: url! }), {
+      reverseGeocoder: {
+        reverseGeocode: async () => ({ city: 'Kansas City', state: 'MO' }),
+      },
+    });
+    try {
+      const ping = await geocoded.inject({
+        method: 'POST',
+        url: `/v1/checkin/${token}/position`,
+        payload: { lat: 39.0997, lng: -94.5786 },
+      });
+      assert.equal(ping.statusCode, 204);
+    } finally {
+      await geocoded.close();
+    }
+
+    const visibility = await app.inject({
+      method: 'POST',
+      url: `/v1/loads/${load.id}/visibility-links`,
+      headers: as(orgId),
+      payload: {},
+    });
+    const { token: trackToken } = visibility.json() as { token: string };
+    const tracking = await app.inject({ method: 'GET', url: `/v1/track/${trackToken}` });
+
+    assert.equal(tracking.json().truck.currentCity, 'Kansas City');
+    assert.equal(tracking.json().truck.currentState, 'MO');
+  });
+
+  it('records the position even when the reverse geocoder itself fails', async () => {
+    const orgId = await newOrg('Track Reverse Geocode Failure Carrier');
+    const load = await aDispatchedLoad(orgId);
+
+    const issued = await app.inject({
+      method: 'POST',
+      url: `/v1/loads/${load.id}/checkin-links`,
+      headers: as(orgId),
+      payload: {},
+    });
+    const { token } = issued.json() as { token: string };
+
+    const geocoded = await buildServer(loadEnv({ ...process.env, NODE_ENV: 'test', DATABASE_URL: url! }), {
+      reverseGeocoder: {
+        reverseGeocode: async () => {
+          throw new Error('HERE is down');
+        },
+      },
+    });
+    try {
+      const ping = await geocoded.inject({
+        method: 'POST',
+        url: `/v1/checkin/${token}/position`,
+        payload: { lat: 39.0997, lng: -94.5786 },
+      });
+      // The position write itself must not fail just because the
+      // enrichment call did.
+      assert.equal(ping.statusCode, 204);
+    } finally {
+      await geocoded.close();
+    }
+  });
+
   it('serves a broker tracking page with no auth headers', async () => {
     const orgId = await newOrg('Track Visibility Carrier');
     const load = await aDispatchedLoad(orgId);

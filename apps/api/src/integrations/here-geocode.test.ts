@@ -108,3 +108,67 @@ describe('HereGeocoder.geocode', () => {
     );
   });
 });
+
+const REVGEOCODE_RESULT = {
+  items: [
+    {
+      address: {
+        label: '1600 Genessee St, Kansas City, MO 64102, United States',
+        city: 'Kansas City',
+        stateCode: 'MO',
+        state: 'Missouri',
+      },
+      position: { lat: 39.0997, lng: -94.5786 },
+    },
+  ],
+};
+
+describe('HereGeocoder.reverseGeocode', () => {
+  it('maps a HERE item to city and two-letter state', async () => {
+    script.body = REVGEOCODE_RESULT;
+    const geocoder = new HereGeocoder({ apiKey: 'test-key' }, undefined, base);
+    const result = await geocoder.reverseGeocode(39.0997, -94.5786);
+
+    assert.deepEqual(result, { city: 'Kansas City', state: 'MO' });
+  });
+
+  it('falls back to the full state name when stateCode is missing', async () => {
+    script.body = {
+      items: [{ address: { city: 'Kansas City', state: 'Missouri' }, position: REVGEOCODE_RESULT.items[0]!.position }],
+    };
+    const geocoder = new HereGeocoder({ apiKey: 'test-key' }, undefined, base);
+    const result = await geocoder.reverseGeocode(39.0997, -94.5786);
+
+    assert.deepEqual(result, { city: 'Kansas City', state: 'Missouri' });
+  });
+
+  it('sends the coordinates as "at", a limit of 1 and the api key', async () => {
+    script.body = REVGEOCODE_RESULT;
+    const geocoder = new HereGeocoder({ apiKey: 'test-key' }, undefined, base);
+    await geocoder.reverseGeocode(39.0997, -94.5786);
+
+    const url = new URL(requests[0]!, base);
+    assert.equal(url.searchParams.get('at'), '39.0997,-94.5786');
+    assert.equal(url.searchParams.get('limit'), '1');
+    assert.equal(url.searchParams.get('apiKey'), 'test-key');
+  });
+
+  it('returns nulls rather than throwing when HERE has no name for the coordinates', async () => {
+    script.body = { items: [] };
+    const geocoder = new HereGeocoder({ apiKey: 'test-key' }, undefined, base);
+    assert.deepEqual(await geocoder.reverseGeocode(0, 0), { city: null, state: null });
+  });
+
+  it('throws HereApiError on a transport failure', async () => {
+    script.status = 503;
+    const geocoder = new HereGeocoder({ apiKey: 'test-key' }, undefined, base);
+    await assert.rejects(
+      () => geocoder.reverseGeocode(39.0997, -94.5786),
+      (err: unknown) => {
+        assert.ok(err instanceof HereApiError);
+        assert.equal(err.status, 503);
+        return true;
+      },
+    );
+  });
+});

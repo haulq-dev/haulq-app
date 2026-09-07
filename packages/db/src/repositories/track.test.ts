@@ -371,8 +371,50 @@ suite('track repository', () => {
 
       const tracking = await previewTracking(db, (await issueVisibilityLink(s, load.id)).token);
       assert.ok(tracking.truck);
-      assert.equal(tracking.truck!.currentCity, null); // city/state are not derived from lat/lng here
+      // No city/state passed in — this repository never calls HERE itself
+      // (see `routes/track.ts`, which resolves them before calling this),
+      // so omitting them here must leave the truck's city/state untouched
+      // rather than blanking a previously-known one.
+      assert.equal(tracking.truck!.currentCity, null);
       assert.ok(tracking.truck!.positionAt);
+    });
+
+    it('persists city/state when the caller resolved them', async () => {
+      const load = await aDispatchedLoad();
+      const { token } = await issueCheckinLink(s, load.id);
+
+      await recordCheckinPosition(db, {
+        token,
+        lat: 39.0997,
+        lng: -94.5786,
+        city: 'Kansas City',
+        state: 'MO',
+      });
+
+      const tracking = await previewTracking(db, (await issueVisibilityLink(s, load.id)).token);
+      assert.equal(tracking.truck!.currentCity, 'Kansas City');
+      assert.equal(tracking.truck!.currentState, 'MO');
+    });
+
+    it('does not blank a known city/state when a later ping omits them', async () => {
+      const load = await aDispatchedLoad();
+      const { token } = await issueCheckinLink(s, load.id);
+
+      await recordCheckinPosition(db, {
+        token,
+        lat: 39.0997,
+        lng: -94.5786,
+        city: 'Kansas City',
+        state: 'MO',
+      });
+      // Simulates a second ping where the reverse-geocode call itself
+      // failed — the route omits city/state entirely rather than sending
+      // null, and this repository must honor that distinction.
+      await recordCheckinPosition(db, { token, lat: 39.1, lng: -94.6 });
+
+      const tracking = await previewTracking(db, (await issueVisibilityLink(s, load.id)).token);
+      assert.equal(tracking.truck!.currentCity, 'Kansas City');
+      assert.equal(tracking.truck!.currentState, 'MO');
     });
 
     it('refuses a position ping for a load with no truck', async () => {

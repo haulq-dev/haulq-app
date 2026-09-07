@@ -525,6 +525,16 @@ export async function recordTruckPosition(
     recordedAt: Date;
     source: PositionSource;
     raw?: unknown;
+    /**
+     * Reverse-geocoded city/state for this ping, resolved by the caller
+     * (this file does not call HERE — see `routes/track.ts`, which does the
+     * lookup before calling this). Omit entirely, rather than passing
+     * `null`, when no lookup was attempted (not configured, or the call
+     * failed) — the truck's last known city/state stays whatever it was
+     * rather than getting blanked out by one failed reverse-geocode call.
+     */
+    city?: string | null;
+    state?: string | null;
   },
 ): Promise<void> {
   await db.transaction(async (tx) => {
@@ -546,6 +556,12 @@ export async function recordTruckPosition(
         positionAt: args.recordedAt,
         positionSource: args.source,
         updatedAt: new Date(),
+        // `'city' in args`, not `args.city !== undefined` — a caller that
+        // resolved a lookup to genuinely nothing (rural coordinates HERE
+        // can't name) still needs to clear a stale city, and that intent
+        // has to be distinguishable from "didn't try."
+        ...('city' in args ? { currentCity: args.city ?? null } : {}),
+        ...('state' in args ? { currentState: args.state ?? null } : {}),
       })
       .where(eq(trucks.id, args.truckId));
   });
@@ -558,6 +574,9 @@ export async function recordCheckinPosition(
     lat: number;
     lng: number;
     recordedAt?: string | undefined;
+    /** See `recordTruckPosition`'s own doc on this pair — omit both when no reverse-geocode lookup was attempted. */
+    city?: string | null;
+    state?: string | null;
   },
 ): Promise<void> {
   const found = await findCheckinLink(db, args.token);
@@ -582,6 +601,8 @@ export async function recordCheckinPosition(
     lng: args.lng,
     recordedAt: args.recordedAt ? new Date(args.recordedAt) : new Date(),
     source: 'driver_app',
+    ...('city' in args ? { city: args.city } : {}),
+    ...('state' in args ? { state: args.state } : {}),
   });
 }
 
