@@ -241,17 +241,18 @@ interface GeocodeCandidate {
  * already-stored address).
  */
 /**
- * A HERE match this confident gets accepted without asking — silence is the
- * point for the common case (a well-known city/state resolves to exactly one
- * real place). Below this, or with a second candidate too close to call, a
- * dispatcher decides instead of the app guessing: a wrong silent match here
- * becomes a wrong feasibility verdict later with nothing pointing at why,
- * same reasoning `here-geocode.ts`'s own module note already gives for
- * requiring a confirmed pick in the first place — this just narrows *when*
- * confirmation is asked for, not whether a bad match can ever be trusted.
+ * Above this, a HERE match reads as a real place nobody needs to double-check.
+ * Below it — or with a second candidate too close to call — the coordinates
+ * still fill in immediately (silence stays the point; a dispatcher should
+ * never have to click just to get a first answer), but the other candidates
+ * stay visible underneath as a correction a dispatcher can act on if the
+ * guess is wrong. Nothing here is ever silently trusted forever: a bad guess
+ * is always sitting right there to fix, which is what actually protects
+ * against the wrong-feasibility-verdict failure `here-geocode.ts`'s own
+ * module note describes — not withholding a first answer.
  */
 const AUTO_ACCEPT_SCORE = 0.7;
-/** How much a top match has to clear the runner-up by, on top of the score bar above, before two real places stop reading as ambiguous. */
+/** How much a top match has to clear the runner-up by, on top of the score bar above, before its alternates stop being worth showing at all. */
 const AUTO_ACCEPT_MARGIN = 0.15;
 /** Typing pause before an automatic lookup fires, so it runs once after a dispatcher stops, not once per keystroke. */
 const AUTO_LOOKUP_DEBOUNCE_MS = 700;
@@ -266,8 +267,13 @@ export function CoordinateLookup({
   hasCoordinates: boolean;
   onPick: (candidate: GeocodeCandidate) => void;
 }) {
-  const [candidates, setCandidates] = useState<GeocodeCandidate[] | null>(null);
+  // The alternates to a pick already applied — not "candidates awaiting a
+  // decision." Coordinates are filled in the moment a lookup resolves,
+  // confident or not; this is only ever a correction list sitting underneath
+  // that already-filled answer, never a gate in front of it.
+  const [alternates, setAlternates] = useState<GeocodeCandidate[]>([]);
   const [resolvedLabel, setResolvedLabel] = useState<string | null>(null);
+  const [noMatch, setNoMatch] = useState(false);
 
   const canLookup = address.city.trim() !== '' && address.state.trim().length === 2;
 
@@ -283,24 +289,25 @@ export function CoordinateLookup({
       ),
     onSuccess: (res) => {
       const [top, runnerUp] = res.candidates;
-      const clearWinner =
-        top &&
-        top.score >= AUTO_ACCEPT_SCORE &&
-        (!runnerUp || top.score - runnerUp.score >= AUTO_ACCEPT_MARGIN);
-
-      if (clearWinner) {
-        setResolvedLabel(top.label);
-        setCandidates(null);
-        onPick(top);
-      } else {
+      if (!top) {
+        setNoMatch(true);
         setResolvedLabel(null);
-        setCandidates(res.candidates);
+        setAlternates([]);
+        return;
       }
+
+      const clearWinner =
+        top.score >= AUTO_ACCEPT_SCORE && (!runnerUp || top.score - runnerUp.score >= AUTO_ACCEPT_MARGIN);
+
+      setNoMatch(false);
+      setResolvedLabel(top.label);
+      setAlternates(clearWinner ? [] : res.candidates.filter((c) => c !== top));
+      onPick(top);
     },
   });
 
   // Runs once, quietly, the moment a stop has enough address to try — the
-  // common case needs no click at all. Skipped entirely once coordinates
+  // coordinates fill in with no click at all. Skipped entirely once they
   // exist, so it never fires again over a manual edit or an earlier pick;
   // clearing a stop's coordinates (or changing the address before any were
   // set) is what lets it try again.
@@ -314,21 +321,29 @@ export function CoordinateLookup({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [address.addressLine1, address.city, address.state, address.postalCode, hasCoordinates]);
 
+  const pick = (c: GeocodeCandidate) => {
+    setResolvedLabel(c.label);
+    setAlternates((prev) => prev.filter((a) => a !== c));
+    onPick(c);
+  };
+
   return (
     <div className="mt-1.5">
-      {resolvedLabel && !candidates && (
+      {resolvedLabel && (
         <p className="text-xs text-mute">
-          Matched to <span className="text-slate">{resolvedLabel}</span>.{' '}
+          Coordinates filled in automatically, matched to{' '}
+          <span className="text-slate">{resolvedLabel}</span>.{' '}
           <button
             type="button"
             className="text-brand underline disabled:cursor-not-allowed disabled:text-mute disabled:no-underline"
             disabled={!canLookup || lookup.isPending}
             onClick={() => {
               setResolvedLabel(null);
+              setAlternates([]);
               lookup.mutate();
             }}
           >
-            Not the right spot? Look up again
+            Not the right spot? Search again
           </button>
         </p>
       )}
@@ -338,33 +353,35 @@ export function CoordinateLookup({
           className="text-xs text-brand underline disabled:cursor-not-allowed disabled:text-mute disabled:no-underline"
           disabled={!canLookup || lookup.isPending}
           onClick={() => {
-            setCandidates(null);
+            setNoMatch(false);
             lookup.mutate();
           }}
         >
-          {lookup.isPending ? 'Looking up…' : 'Look up coordinates'}
+          {lookup.isPending ? 'Filling in coordinates…' : 'Fill in coordinates from this address'}
         </button>
       )}
       <ErrorNote error={lookup.error} />
-      {candidates && candidates.length === 0 && (
-        <p className="mt-1 text-xs text-mute">No match found for that address.</p>
+      {noMatch && (
+        <p className="mt-1 text-xs text-mute">
+          No address matched that — coordinates were not filled in. Enter them directly below, or adjust
+          the address above and this will try again.
+        </p>
       )}
-      {candidates && candidates.length > 0 && (
-        <div className="mt-1">
-          <p className="text-xs text-mute">Which one did you mean?</p>
+      {alternates.length > 0 && (
+        <div className="mt-1.5 border-l-2 border-line pl-2">
+          <p className="text-xs text-mute">
+            That match wasn't a clear best guess — if it's wrong, click the correct address below to
+            replace the coordinates with it:
+          </p>
           <ul className="mt-1 space-y-1">
-            {candidates.map((c, i) => (
+            {alternates.map((c, i) => (
               <li key={i}>
                 <button
                   type="button"
-                  className="text-left text-xs text-slate hover:text-ink hover:underline"
-                  onClick={() => {
-                    setResolvedLabel(c.label);
-                    onPick(c);
-                    setCandidates(null);
-                  }}
+                  className="text-left text-xs text-slate underline decoration-dotted hover:text-ink hover:decoration-solid"
+                  onClick={() => pick(c)}
                 >
-                  {c.label}
+                  Use {c.label} instead
                 </button>
               </li>
             ))}
@@ -459,7 +476,7 @@ function AddLoad({ trucks, onDone }: { trucks: Truck[]; onDone: () => void }) {
       </div>
 
       <div className="mt-5 grid gap-5 sm:grid-cols-4">
-        <Field label="Pickup street address" hint="Optional — lets HaulQ look up coordinates instead of typing them in.">
+        <Field label="Pickup street address" hint="Optional — sharpens the automatic coordinate lookup below, in case the city alone is ambiguous.">
           <input className="hq-input" value={pickup.addressLine1} onChange={(e) => setPickup({ ...pickup, addressLine1: e.target.value })} />
         </Field>
         <Field label="Pickup postal code">
@@ -474,7 +491,7 @@ function AddLoad({ trucks, onDone }: { trucks: Truck[]; onDone: () => void }) {
       </div>
 
       <div className="mt-5 grid gap-5 sm:grid-cols-4">
-        <Field label="Pickup coordinates" hint="Optional — lets HaulQ Routes check feasibility on this load.">
+        <Field label="Pickup coordinates" hint="Fills in on its own from the city and state above — lets HaulQ Routes check feasibility on this load.">
           <div className="flex gap-2">
             <input className="hq-input" data-numeric="true" inputMode="decimal" placeholder="lat" value={pickup.lat} onChange={(e) => setPickup({ ...pickup, lat: e.target.value })} />
             <input className="hq-input" data-numeric="true" inputMode="decimal" placeholder="lng" value={pickup.lng} onChange={(e) => setPickup({ ...pickup, lng: e.target.value })} />
@@ -485,7 +502,7 @@ function AddLoad({ trucks, onDone }: { trucks: Truck[]; onDone: () => void }) {
             onPick={(c) => setPickup({ ...pickup, lat: String(c.lat), lng: String(c.lng) })}
           />
         </Field>
-        <Field label="Delivery coordinates" hint="Both stops need one for a feasibility check to run at all.">
+        <Field label="Delivery coordinates" hint="Fills in on its own too. Both stops need one for a feasibility check to run at all.">
           <div className="flex gap-2">
             <input className="hq-input" data-numeric="true" inputMode="decimal" placeholder="lat" value={delivery.lat} onChange={(e) => setDelivery({ ...delivery, lat: e.target.value })} />
             <input className="hq-input" data-numeric="true" inputMode="decimal" placeholder="lng" value={delivery.lng} onChange={(e) => setDelivery({ ...delivery, lng: e.target.value })} />
@@ -952,8 +969,9 @@ function EditLoadStops({ load }: { load: Load }) {
     <Card title={`Load ${load.reference} — stops`}>
       <p className="mb-3 text-sm text-slate">
         Coordinates and the appointment window are what a feasibility check
-        reads. Both coordinate fields are needed together, or leave both
-        blank.
+        reads. A stop with a city and state fills its coordinates in on its
+        own below — nothing to click. Both coordinate fields are needed
+        together, or leave both blank.
       </p>
       <div className="space-y-4">
         {sorted.map((stop) => {

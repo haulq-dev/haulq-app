@@ -1,6 +1,7 @@
 /**
- * CoordinateLookup's matching logic — when a HERE result is confident
- * enough to accept without asking, and when a dispatcher has to pick.
+ * CoordinateLookup's matching logic — coordinates fill in the moment a
+ * lookup resolves, confident or not; alternates are a correction sitting
+ * underneath an already-filled answer, never a gate in front of it.
  *
  * Automatic firing itself (the debounced effect) is exercised in exactly
  * one test, with fake timers — everything else drives the same
@@ -24,6 +25,7 @@ vi.mock('../lib/api.ts', async () => {
 });
 
 const wichita = { city: 'Wichita', state: 'KS' };
+const LOOKUP_BUTTON = { name: 'Fill in coordinates from this address' };
 
 function renderLookup(props: Partial<Parameters<typeof CoordinateLookup>[0]> = {}) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -41,14 +43,14 @@ describe('CoordinateLookup — confidence branching', () => {
     vi.mocked(request).mockReset();
   });
 
-  it('auto-accepts a single clear match and calls onPick with it', async () => {
+  it('fills in a single clear match and shows no alternates', async () => {
     vi.mocked(request).mockResolvedValue({
       candidates: [{ label: 'Wichita, KS, United States', lat: 37.6872, lng: -97.3301, score: 0.95 }],
     });
     const { onPick } = renderLookup();
     const user = userEvent.setup();
 
-    await user.click(await screen.findByRole('button', { name: 'Look up coordinates' }));
+    await user.click(await screen.findByRole('button', LOOKUP_BUTTON));
 
     await waitFor(() => expect(onPick).toHaveBeenCalledWith({
       label: 'Wichita, KS, United States',
@@ -57,11 +59,12 @@ describe('CoordinateLookup — confidence branching', () => {
       score: 0.95,
     }));
     expect(await screen.findByText('Wichita, KS, United States')).toBeInTheDocument();
-    // No picker for a match this confident — nothing left for a dispatcher to choose.
-    expect(screen.queryByText('Which one did you mean?')).not.toBeInTheDocument();
+    expect(screen.getByText(/Coordinates filled in automatically/)).toBeInTheDocument();
+    // Nothing to compare a single confident match against.
+    expect(screen.queryByText(/if it's wrong/)).not.toBeInTheDocument();
   });
 
-  it('asks the dispatcher when two candidates are too close to call', async () => {
+  it('fills in the top guess immediately even when a second candidate is close, and offers it as a fix', async () => {
     vi.mocked(request).mockResolvedValue({
       candidates: [
         { label: 'Wichita, KS 67202, United States', lat: 37.6872, lng: -97.3301, score: 0.8 },
@@ -71,55 +74,67 @@ describe('CoordinateLookup — confidence branching', () => {
     const { onPick } = renderLookup();
     const user = userEvent.setup();
 
-    await user.click(screen.getByRole('button', { name: 'Look up coordinates' }));
+    await user.click(screen.getByRole('button', LOOKUP_BUTTON));
 
-    await screen.findByText('Which one did you mean?');
-    expect(screen.getByText('Wichita, KS 67202, United States')).toBeInTheDocument();
-    expect(screen.getByText('Wichita, KS 67203, United States')).toBeInTheDocument();
-    expect(onPick).not.toHaveBeenCalled();
+    // Filled in immediately with the top guess, no click required.
+    await waitFor(() => expect(onPick).toHaveBeenCalledWith(
+      expect.objectContaining({ label: 'Wichita, KS 67202, United States' }),
+    ));
+    await screen.findByText(/Coordinates filled in automatically/);
 
-    await user.click(screen.getByText('Wichita, KS 67203, United States'));
+    // The runner-up is offered as a correction, not the one already applied.
+    expect(screen.getByText(/if it's wrong/)).toBeInTheDocument();
+    expect(screen.queryByText('Use Wichita, KS 67202, United States instead')).not.toBeInTheDocument();
+    const alternate = screen.getByText('Use Wichita, KS 67203, United States instead');
+
+    onPick.mockClear();
+    await user.click(alternate);
     expect(onPick).toHaveBeenCalledWith(
       expect.objectContaining({ label: 'Wichita, KS 67203, United States' }),
     );
   });
 
-  it('asks the dispatcher when the only match is below the confidence bar', async () => {
+  it('fills in a weak single match with no alternates to offer instead', async () => {
     vi.mocked(request).mockResolvedValue({
       candidates: [{ label: 'A weak match', lat: 1, lng: 2, score: 0.4 }],
     });
     const { onPick } = renderLookup();
     const user = userEvent.setup();
 
-    await user.click(screen.getByRole('button', { name: 'Look up coordinates' }));
+    await user.click(screen.getByRole('button', LOOKUP_BUTTON));
 
-    await screen.findByText('Which one did you mean?');
+    await waitFor(() => expect(onPick).toHaveBeenCalledWith(
+      expect.objectContaining({ label: 'A weak match' }),
+    ));
+    // Still filled in — there is no alternative to weigh it against — but
+    // the escape hatch to search again is what a dispatcher actually needs here.
+    expect(screen.queryByText(/if it's wrong/)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Not the right spot? Search again' })).toBeInTheDocument();
+  });
+
+  it('leaves coordinates for manual entry when HERE has no match at all', async () => {
+    vi.mocked(request).mockResolvedValue({ candidates: [] });
+    const { onPick } = renderLookup();
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole('button', LOOKUP_BUTTON));
+
+    expect(await screen.findByText(/No address matched that/)).toBeInTheDocument();
     expect(onPick).not.toHaveBeenCalled();
   });
 
-  it('shows nothing found rather than a picker with no options', async () => {
-    vi.mocked(request).mockResolvedValue({ candidates: [] });
-    renderLookup();
-    const user = userEvent.setup();
-
-    await user.click(screen.getByRole('button', { name: 'Look up coordinates' }));
-
-    expect(await screen.findByText('No match found for that address.')).toBeInTheDocument();
-    expect(screen.queryByText('Which one did you mean?')).not.toBeInTheDocument();
-  });
-
-  it('offers a re-lookup after an automatic match, for a dispatcher who disagrees with it', async () => {
+  it('searching again re-runs the lookup', async () => {
     vi.mocked(request).mockResolvedValue({
       candidates: [{ label: 'Wichita, KS, United States', lat: 37.6872, lng: -97.3301, score: 0.95 }],
     });
     renderLookup();
     const user = userEvent.setup();
 
-    await user.click(screen.getByRole('button', { name: 'Look up coordinates' }));
+    await user.click(screen.getByRole('button', LOOKUP_BUTTON));
     await screen.findByText('Wichita, KS, United States');
 
     vi.mocked(request).mockClear();
-    await user.click(screen.getByRole('button', { name: 'Not the right spot? Look up again' }));
+    await user.click(screen.getByRole('button', { name: 'Not the right spot? Search again' }));
 
     await waitFor(() => expect(request).toHaveBeenCalledTimes(1));
   });
