@@ -741,46 +741,33 @@ export interface TrackingView {
 }
 
 /**
- * What a broker sees. Read-only, unauthenticated. Detention and ETA both
- * answer open questions from plan section 7 — per-broker free time, and the
- * dispatcher core's haversine approximation reused rather than waiting on
- * Phase 3's routing-provider decision.
+ * What a dispatcher sees inside the app — everything a broker sees, plus the
+ * truck's precise coordinates. The broker view deliberately narrows to
+ * city/state only (see `previewTracking`); that boundary exists for an
+ * unauthenticated link handed to an outside party, and does not apply to a
+ * carrier's own team looking at their own truck.
  */
-export async function previewTracking(db: Database, token: string): Promise<TrackingView> {
-  const hash = hashToken(token);
+export interface InternalTrackingView extends TrackingView {
+  truck: (TrackingView['truck'] & { currentLat: number | null; currentLng: number | null }) | null;
+}
 
-  const [row] = await db
-    .select({ link: loadVisibilityLinks, orgName: orgs.name })
-    .from(loadVisibilityLinks)
-    .innerJoin(orgs, eq(orgs.id, loadVisibilityLinks.orgId))
-    .where(eq(loadVisibilityLinks.tokenHash, hash));
-
-  if (!row) {
-    throw new TrackError(
-      'invalid_token',
-      'no visibility link for token',
-      'That tracking link is not valid.',
-    );
-  }
-
-  const stored = Buffer.from(row.link.tokenHash, 'hex');
-  const offered = Buffer.from(hash, 'hex');
-  if (stored.length !== offered.length || !timingSafeEqual(stored, offered)) {
-    throw new TrackError('invalid_token', 'token hash mismatch', 'That tracking link is not valid.');
-  }
-
-  if (row.link.revokedAt) {
-    throw new TrackError('revoked', 'visibility link revoked', 'This tracking link was withdrawn.');
-  }
-  if (row.link.expiresAt && row.link.expiresAt.getTime() < Date.now()) {
-    throw new TrackError('expired', 'visibility link expired', 'This tracking link has expired.');
-  }
-
+/**
+ * The query both `previewTracking` (a broker, via a visibility-link token)
+ * and `getLoadTracking` (a dispatcher, via their session) run — org-scoped
+ * either way, just arriving at the `orgId` differently. Kept here so
+ * detention math and the ETA estimate have exactly one implementation.
+ */
+async function trackingViewForLoad(
+  db: Database,
+  orgId: string,
+  loadId: string,
+): Promise<InternalTrackingView> {
   const [load] = await db
     .select({
       reference: loads.reference,
       status: loads.status,
       equipment: loads.equipment,
+      orgName: orgs.name,
       truckLabel: trucks.label,
       currentCity: trucks.currentCity,
       currentState: trucks.currentState,
@@ -790,9 +777,10 @@ export async function previewTracking(db: Database, token: string): Promise<Trac
       detentionFreeMinutes: brokers.detentionFreeMinutes,
     })
     .from(loads)
+    .innerJoin(orgs, eq(orgs.id, loads.orgId))
     .leftJoin(trucks, eq(trucks.id, loads.truckId))
     .leftJoin(brokers, eq(brokers.id, loads.brokerId))
-    .where(eq(loads.id, row.link.loadId));
+    .where(and(eq(loads.id, loadId), eq(loads.orgId, orgId)));
 
   if (!load) throw new TrackError('not_found', 'load gone', 'That load no longer exists.');
 
@@ -813,7 +801,7 @@ export async function previewTracking(db: Database, token: string): Promise<Trac
       departedAt: loadStops.departedAt,
     })
     .from(loadStops)
-    .where(eq(loadStops.loadId, row.link.loadId))
+    .where(eq(loadStops.loadId, loadId))
     .orderBy(loadStops.seq);
 
   const freeMinutes = load.detentionFreeMinutes ?? DEFAULT_DETENTION_FREE_MINUTES;
@@ -860,7 +848,7 @@ export async function previewTracking(db: Database, token: string): Promise<Trac
       : null;
 
   return {
-    orgName: row.orgName,
+    orgName: load.orgName,
     loadReference: load.reference,
     status: load.status,
     equipment: load.equipment,
@@ -869,12 +857,77 @@ export async function previewTracking(db: Database, token: string): Promise<Trac
           label: load.truckLabel,
           currentCity: load.currentCity,
           currentState: load.currentState,
+          currentLat: load.currentLat,
+          currentLng: load.currentLng,
           positionAt: load.positionAt,
         }
       : null,
     stops,
     eta,
   };
+}
+
+/**
+ * What a broker sees. Read-only, unauthenticated. Detention and ETA both
+ * answer open questions from plan section 7 — per-broker free time, and the
+ * dispatcher core's haversine approximation reused rather than waiting on
+ * Phase 3's routing-provider decision.
+ */
+export async function previewTracking(db: Database, token: string): Promise<TrackingView> {
+  const hash = hashToken(token);
+
+  const [row] = await db
+    .select({ link: loadVisibilityLinks })
+    .from(loadVisibilityLinks)
+    .where(eq(loadVisibilityLinks.tokenHash, hash));
+
+  if (!row) {
+    throw new TrackError(
+      'invalid_token',
+      'no visibility link for token',
+      'That tracking link is not valid.',
+    );
+  }
+
+  const stored = Buffer.from(row.link.tokenHash, 'hex');
+  const offered = Buffer.from(hash, 'hex');
+  if (stored.length !== offered.length || !timingSafeEqual(stored, offered)) {
+    throw new TrackError('invalid_token', 'token hash mismatch', 'That tracking link is not valid.');
+  }
+
+  if (row.link.revokedAt) {
+    throw new TrackError('revoked', 'visibility link revoked', 'This tracking link was withdrawn.');
+  }
+  if (row.link.expiresAt && row.link.expiresAt.getTime() < Date.now()) {
+    throw new TrackError('expired', 'visibility link expired', 'This tracking link has expired.');
+  }
+
+  const view = await trackingViewForLoad(db, row.link.orgId, row.link.loadId);
+
+  // Narrowed to the broker-safe shape — precise coordinates never leave this
+  // function, only the city/state a broker needs to know roughly where a
+  // load is.
+  return {
+    ...view,
+    truck: view.truck
+      ? {
+          label: view.truck.label,
+          currentCity: view.truck.currentCity,
+          currentState: view.truck.currentState,
+          positionAt: view.truck.positionAt,
+        }
+      : null,
+  };
+}
+
+/**
+ * What a dispatcher sees inside the app for their own load — same data a
+ * broker's tracking link shows, plus the truck's precise coordinates. Not
+ * gated on a visibility link ever having been issued: an internal view
+ * should not depend on whether the load was ever shared externally.
+ */
+export async function getLoadTracking(s: Scope, loadId: string): Promise<InternalTrackingView> {
+  return trackingViewForLoad(s.db, s.ctx.orgId, loadId);
 }
 
 /** The most recent pings for a truck, newest first. For a breadcrumb trail, not the fast "where is it now" read — that stays `trucks.current*`. */

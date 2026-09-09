@@ -39,10 +39,12 @@ import {
   createLoad,
   CursorError,
   getLoad,
+  getLoadTracking,
   listLoads,
   loadCounts,
   LoadError,
   loadMargin,
+  TrackError,
   updateLoadStatus,
   updateLoadStop,
   type LoadStatus,
@@ -91,6 +93,10 @@ function rethrow(err: unknown): never {
 
   if (err instanceof CursorError) {
     throw new HttpError(400, err.code, err.explanation);
+  }
+
+  if (err instanceof TrackError) {
+    throw new HttpError(err.code === 'not_found' ? 404 : 400, err.code, err.explanation);
   }
 
   const pg = err as PgError;
@@ -196,6 +202,26 @@ export async function loadRoutes(app: FastifyInstance) {
       const margin = await loadMargin(s, id);
       if (!margin) throw new HttpError(404, 'not_found', 'That load no longer exists.');
       return margin;
+    },
+  );
+
+  /**
+   * A dispatcher's own view of driver-reported progress — the same data a
+   * broker's tracking link shows, plus the truck's precise coordinates. Not
+   * gated on a visibility link ever having been issued; see
+   * `getLoadTracking`'s own comment.
+   */
+  server.get(
+    '/v1/loads/:id/tracking',
+    { schema: { tags: ['Loads'], summary: "A load's driver-reported progress", params: IdParamSchema } },
+    async (request) => {
+      const s = await requireScope(request);
+      const { id } = request.params;
+      try {
+        return await getLoadTracking(s, id);
+      } catch (err) {
+        rethrow(err);
+      }
     },
   );
 
