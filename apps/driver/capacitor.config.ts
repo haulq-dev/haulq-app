@@ -32,15 +32,18 @@ const config: CapacitorConfig = {
   // Without this, the WebView's default navigation policy blocks it from
   // loading or talking to any origin outside its own (`capacitor://localhost`)
   // — including Clerk's own Frontend API domain, which its session/cookie
-  // handling needs to reach even for a plain email-code sign-in, not just
-  // OAuth. Sign-in appeared to "work" (a code arrived, the code was
-  // accepted) but silently bounced back to the sign-in screen instead of
-  // landing on a real session — this is why. The wildcard is Clerk's own
-  // convention (every instance gets a `<slug>.clerk.accounts.dev` Frontend
-  // API domain, or a custom one under `clerk.<yourdomain>` if that's ever
-  // configured) — decode the `pk_...` key's payload to find a given
-  // instance's domain if this ever needs updating for a different Clerk
-  // project.
+  // handling needs to reach for even a plain email-code sign-in, and which
+  // it also loads its own JS bundle from directly (not from this app's own
+  // bundle) — so a domain missing here doesn't just break session sync, it
+  // can mean Clerk never loads at all.
+  //
+  // Both entries are needed, not either/or: `clerk.haulq.ai` is this app's
+  // actual production Frontend API domain (decode the `pk_live_...` key's
+  // payload — see auth.ts's `keyProblem` for that trick — to confirm for
+  // any future project); `*.clerk.accounts.dev` is the dev-instance-style
+  // domain (`<slug>.clerk.accounts.dev`) every Clerk project also gets, and
+  // stays allowlisted so a `pk_test_...` key still works for local
+  // debugging without editing this file back and forth.
   //
   // This does NOT fix Google/social sign-in — that's a separate, harder
   // restriction. Google's OAuth policy refuses embedded WebViews outright
@@ -49,7 +52,7 @@ const config: CapacitorConfig = {
   // Safari/Custom Tabs view) satisfies it, which nothing in this app does
   // yet. Email-code sign-in doesn't hit that restriction at all.
   server: {
-    allowNavigation: ['*.clerk.accounts.dev', '*.clerk.com'],
+    allowNavigation: ['clerk.haulq.ai', '*.clerk.accounts.dev', '*.clerk.com'],
   },
 };
 
