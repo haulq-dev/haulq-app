@@ -32,9 +32,12 @@ workflows:
       # sees a group's variables if it's imported here — adding
       # CERTIFICATE_PRIVATE_KEY in the dashboard alone did nothing until
       # this existed. "Certificate" is the group name it was actually
-      # added under.
+      # added under. "SECRETS" is the catch-all for everything since that
+      # isn't itself a signing credential — VITE_CLERK_PUBLISHABLE_KEY
+      # today, whatever else needs a build-time value next.
       groups:
         - Certificate
+        - SECRETS
       vars:
         # Not 'ai.haulq.driver' — Apple wouldn't take that when the account
         # actually tried to register it, only 'ai.haulq.app'. Matches
@@ -58,14 +61,14 @@ workflows:
         VITE_API_URL: "https://api.haulq.ai"
         # Clerk's publishable key — safe to be public (it ships inside the
         # client bundle by design, unlike CERTIFICATE_PRIVATE_KEY above),
-        # but still not typed directly into this file: add it as a Codemagic
-        # environment variable (dashboard → this workflow, or a group)
-        # named exactly this, and it's picked up automatically. Same Clerk
-        # project/key apps/web already uses — see AuthGate.tsx's own note on
-        # why this app has no separate dev-mode fallback. Left unset, the
-        # build still succeeds; AuthGate.tsx shows a clear "no sign-in
-        # configured" screen instead of the silent-401 failure VITE_API_URL's
-        # own comment above describes for a missing build-time var.
+        # but still not typed directly into this file: add it to the
+        # SECRETS group in the Codemagic dashboard, named exactly this, and
+        # it's picked up automatically. Same Clerk project/key apps/web
+        # already uses — see AuthGate.tsx's own note on why this app has no
+        # separate dev-mode fallback. Left unset, the build still succeeds;
+        # AuthGate.tsx shows a clear "no sign-in configured" screen instead
+        # of the silent-401 failure VITE_API_URL's own comment above
+        # describes for a missing build-time var.
         VITE_CLERK_PUBLISHABLE_KEY: $VITE_CLERK_PUBLISHABLE_KEY
       node: 22.18.0
       xcode: latest
