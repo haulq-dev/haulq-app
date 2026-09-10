@@ -32,6 +32,25 @@ function isPublicPath(pathname: string): boolean {
   return PUBLIC_PREFIXES.some((p) => pathname.startsWith(p));
 }
 
+/**
+ * Hides Clerk's social sign-in buttons (Google, today) from this app's
+ * `<SignIn/>` only — social connections are configured instance-wide in
+ * the Clerk dashboard, shared with `apps/web`, so there's no per-app
+ * toggle to disable Google there without also breaking it for web. This
+ * hides the button instead of disabling the strategy: Google's OAuth
+ * policy refuses to complete sign-in from any embedded WebView regardless
+ * (see `capacitor.config.ts`'s note), so the button was previously a dead
+ * end — a spinner, then nothing. `dividerRow` goes with it so there's no
+ * orphaned "or" divider sitting above the email field with nothing above it.
+ */
+const APPEARANCE = {
+  elements: {
+    socialButtonsBlockButton: { display: 'none' },
+    socialButtonsIconButton: { display: 'none' },
+    dividerRow: { display: 'none' },
+  },
+} as const;
+
 const SignedInContext = createContext(false);
 
 /** True once someone is signed in and their token is ready to attach to requests. */
@@ -132,7 +151,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
   const publicPath = isPublicPath(window.location.pathname);
 
   return (
-    <ClerkProvider publishableKey={CLERK_PUBLISHABLE_KEY} afterSignOutUrl="/">
+    <ClerkProvider publishableKey={CLERK_PUBLISHABLE_KEY} afterSignOutUrl="/" appearance={APPEARANCE}>
       <SignedOut>
         {/* A public path renders the router itself, not instead of it, so
             the route component can offer sign-in once it has shown what the
