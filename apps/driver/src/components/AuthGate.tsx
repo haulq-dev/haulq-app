@@ -11,11 +11,26 @@
  * that screen before anyone needs it.
  */
 
-import { ClerkProvider, SignedIn, SignedOut, SignIn, useAuth, useClerk } from '@clerk/clerk-react';
+import {
+  ClerkFailed,
+  ClerkLoaded,
+  ClerkLoading,
+  ClerkProvider,
+  SignedIn,
+  SignedOut,
+  SignIn,
+  useAuth,
+  useClerk,
+} from '@clerk/clerk-react';
 import { useQuery } from '@tanstack/react-query';
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import { readSession, request, type Session } from '../lib/api.ts';
-import { CLERK_PUBLISHABLE_KEY, keyProblem, registerTokenGetter } from '../lib/auth.ts';
+import {
+  CLERK_PUBLISHABLE_KEY,
+  clerkFrontendApiHost,
+  keyProblem,
+  registerTokenGetter,
+} from '../lib/auth.ts';
 import { Logo } from './Logo.tsx';
 
 /**
@@ -142,6 +157,59 @@ function MisconfiguredScreen({ problem }: { problem: string }) {
   );
 }
 
+/**
+ * The gap `ErrorBoundary`/`main.tsx`'s global handlers cannot see: neither
+ * `<SignedIn>` nor `<SignedOut>` renders anything until Clerk's SDK finishes
+ * initializing, and a slow or hung load is not an error — nothing throws,
+ * nothing rejects, there is just nothing on screen. This was very likely
+ * the actual shape of a white screen that survived those two safety nets.
+ * `<ClerkLoading>`/`<ClerkFailed>` are Clerk's own components for exactly
+ * this window; a stuck-detection timer sits on top because "still loading"
+ * forever, with nothing to act on, is barely better than blank.
+ */
+function LoadingScreen() {
+  const [stuck, setStuck] = useState(false);
+  useEffect(() => {
+    const id = setTimeout(() => setStuck(true), 6000);
+    return () => clearTimeout(id);
+  }, []);
+
+  return (
+    <div className="mx-auto max-w-md px-6 py-16 text-center">
+      <p className="text-mute">Loading…</p>
+      {stuck && (
+        <div className="mt-4 space-y-3 text-left">
+          <p className="text-sm text-slate">
+            Still trying to reach sign-in ({clerkFrontendApiHost() ?? 'unknown host'}) after 6
+            seconds. This usually means a network or configuration problem, not something that
+            resolves on its own.
+          </p>
+          <button className="hq-btn hq-btn-ghost" onClick={() => window.location.reload()}>
+            Reload
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function FailedScreen() {
+  return (
+    <div className="mx-auto max-w-md px-6 py-16">
+      <h1 className="mb-2 text-xl text-bad">Sign-in failed to load</h1>
+      <p className="text-sm text-slate">
+        Could not reach {clerkFrontendApiHost() ?? 'the sign-in service'}. Check the device's
+        network connection, or this may mean that domain isn't allowlisted in the app's
+        navigation config (capacitor.config.ts's allowNavigation) or isn't set up correctly in
+        the Clerk dashboard yet.
+      </p>
+      <button className="hq-btn hq-btn-ghost mt-4" onClick={() => window.location.reload()}>
+        Reload
+      </button>
+    </div>
+  );
+}
+
 export function AuthGate({ children }: { children: ReactNode }) {
   const [tokenReady, setTokenReady] = useState(false);
 
@@ -152,26 +220,34 @@ export function AuthGate({ children }: { children: ReactNode }) {
 
   return (
     <ClerkProvider publishableKey={CLERK_PUBLISHABLE_KEY} afterSignOutUrl="/" appearance={APPEARANCE}>
-      <SignedOut>
-        {/* A public path renders the router itself, not instead of it, so
-            the route component can offer sign-in once it has shown what the
-            visitor is being invited to — same as web's own note here. */}
-        {publicPath ? (
-          <SignedInContext.Provider value={false}>{children}</SignedInContext.Provider>
-        ) : (
-          <SignInScreen />
-        )}
-      </SignedOut>
-      <SignedIn>
-        <TokenBridge onReady={() => setTokenReady(true)} />
-        {/* Nothing renders until the token getter is registered, or the
-            first burst of queries fires unauthenticated and 401s. */}
-        {tokenReady ? (
-          <SignedInContext.Provider value={true}>{children}</SignedInContext.Provider>
-        ) : (
-          <p className="p-8 text-mute">Signing you in…</p>
-        )}
-      </SignedIn>
+      <ClerkLoading>
+        <LoadingScreen />
+      </ClerkLoading>
+      <ClerkFailed>
+        <FailedScreen />
+      </ClerkFailed>
+      <ClerkLoaded>
+        <SignedOut>
+          {/* A public path renders the router itself, not instead of it, so
+              the route component can offer sign-in once it has shown what the
+              visitor is being invited to — same as web's own note here. */}
+          {publicPath ? (
+            <SignedInContext.Provider value={false}>{children}</SignedInContext.Provider>
+          ) : (
+            <SignInScreen />
+          )}
+        </SignedOut>
+        <SignedIn>
+          <TokenBridge onReady={() => setTokenReady(true)} />
+          {/* Nothing renders until the token getter is registered, or the
+              first burst of queries fires unauthenticated and 401s. */}
+          {tokenReady ? (
+            <SignedInContext.Provider value={true}>{children}</SignedInContext.Provider>
+          ) : (
+            <p className="p-8 text-mute">Signing you in…</p>
+          )}
+        </SignedIn>
+      </ClerkLoaded>
     </ClerkProvider>
   );
 }

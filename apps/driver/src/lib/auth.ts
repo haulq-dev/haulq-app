@@ -52,6 +52,29 @@ export function keyProblem(): string | null {
   return null;
 }
 
+/**
+ * The Frontend API host a `pk_...` key actually points at — decoded from
+ * the key's own base64 payload (Clerk's own convention; every publishable
+ * key is `pk_{test|live}_` followed by the base64 of the host plus a `$`
+ * sentinel). Used only for diagnostics — showing which host the app is
+ * stuck trying to reach is a lot more actionable than "still loading,"
+ * especially with no attached debugger to look this up by hand.
+ */
+export function clerkFrontendApiHost(): string | null {
+  const key = CLERK_PUBLISHABLE_KEY;
+  const payload = key.startsWith('pk_test_')
+    ? key.slice('pk_test_'.length)
+    : key.startsWith('pk_live_')
+      ? key.slice('pk_live_'.length)
+      : null;
+  if (!payload) return null;
+  try {
+    return atob(payload).replace(/\$$/, '');
+  } catch {
+    return null;
+  }
+}
+
 type TokenGetter = () => Promise<string | null>;
 
 let getToken: TokenGetter | null = null;
