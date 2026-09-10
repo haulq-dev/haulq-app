@@ -27,7 +27,7 @@ const config: CapacitorConfig = {
   // two `PRODUCT_BUNDLE_IDENTIFIER` lines and `android/app/build.gradle`'s
   // `namespace`/`applicationId` need the same edit, not just this file.
   appId: 'ai.haulq.app',
-  appName: 'HaulQ Driver',
+  appName: 'HaulQ',
   webDir: 'dist',
 };
 

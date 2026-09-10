@@ -95,7 +95,7 @@ function TokenEntry({ onSubmit }: { onSubmit: (token: string) => void }) {
   const [value, setValue] = useState('');
   return (
     <div className="mx-auto max-w-md px-6 py-16">
-      <h1 className="mb-2 text-3xl">HaulQ Driver</h1>
+      <h1 className="mb-2 text-3xl">HaulQ</h1>
       <p className="mb-6 text-slate">
         Paste the check-in link your dispatcher sent, or type the code — case
         and dashes don't matter.

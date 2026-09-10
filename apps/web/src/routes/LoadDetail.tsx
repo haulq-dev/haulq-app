@@ -268,7 +268,7 @@ function CheckinLink({
             </p>
           )}
           <p className="text-sm text-slate">
-            Text or read this to the driver. They open the HaulQ Driver app
+            Text or read this to the driver. They open the HaulQ app
             and paste it in — shown only once, copy it now.
           </p>
           <div className="flex flex-wrap items-center gap-2">
