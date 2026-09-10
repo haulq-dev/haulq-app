@@ -1,18 +1,41 @@
 /**
  * App shell.
  *
- * One screen — `CheckinScreen` handles its own two states (paste a link, or
- * a token already in the path) internally, so there is no router here at
- * all. A router is a guess about how many screens this app will eventually
- * have; today it has one.
+ * Two branches, decided once at mount from `isCheckinRoute()`, not a router:
+ *
+ *  - **A check-in link or a stored token** — `CheckinScreen`, unchanged,
+ *    exactly as it worked when this was the whole app. Deliberately kept
+ *    reachable with no sign-in at all, for a driver not yet linked to an
+ *    account (see that file's own module note).
+ *  - **Everything else** — `AuthGate`, a driver's own signed-in account.
+ *    Real screens (their assigned loads, a stop's milestones) are still
+ *    being built on top of this foundation; `LandingStub` below is a
+ *    placeholder for exactly that gap, not a finished screen.
+ *
+ * `@tanstack/react-router` is a dependency already, ready for when that
+ * signed-in side grows past one screen — not wired in yet, same reasoning
+ * this file used to give for having no router at all: a router is a guess
+ * about how many screens there will be, and right now there is one on each
+ * side of this branch.
  */
 
 import { App as CapacitorApp } from '@capacitor/app';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
-import { CheckinScreen } from './routes/Checkin.tsx';
+import { AuthGate, SignOutLink } from './components/AuthGate.tsx';
+import { CheckinScreen, isCheckinRoute } from './routes/Checkin.tsx';
 import './styles.css';
+
+/** Stands in for the real signed-in screens (assigned loads, milestones) until those land. */
+function LandingStub() {
+  return (
+    <div className="mx-auto max-w-md space-y-4 px-6 py-16 text-center">
+      <p className="text-slate">You&apos;re signed in. Your loads will show up here.</p>
+      <SignOutLink />
+    </div>
+  );
+}
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -52,7 +75,13 @@ if (!root) throw new Error('#root missing from index.html');
 createRoot(root).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
-      <CheckinScreen />
+      {isCheckinRoute() ? (
+        <CheckinScreen />
+      ) : (
+        <AuthGate>
+          <LandingStub />
+        </AuthGate>
+      )}
     </QueryClientProvider>
   </StrictMode>,
 );

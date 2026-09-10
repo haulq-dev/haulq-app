@@ -1,16 +1,60 @@
 /**
  * The API client.
  *
- * Simpler than `apps/web`'s: nothing here signs in. The check-in token in
- * the URL is the whole authorization — see `repositories/track.ts`'s module
- * note on why a driver holding this link writes as an `integration` actor
- * rather than a `user`. There is no session to attach and no tenant header
- * to send; the token alone is what every one of these requests carries.
+ * Two authorization shapes coexist in this file, for two different kinds of
+ * driver:
+ *
+ *  - **A check-in token in the URL** — the original flow, still fully
+ *    supported (`Checkin.tsx`). No session to attach and no tenant header
+ *    to send; the token alone is what those specific requests carry, and
+ *    `request()` sends nothing extra on top of it.
+ *  - **A signed-in account** — `Session`/`authHeaders()` below, the same
+ *    shape `apps/web`'s client uses (`Authorization: Bearer <token>` plus
+ *    `X-HaulQ-Org-Id`), attached automatically once `AuthGate.tsx` has
+ *    signed someone in. Harmless to send on a token-authenticated request
+ *    too — those routes read only the token and ignore anything else.
  */
 
 import type { ApiError } from '@haulq/contracts';
+import { currentToken } from './auth.ts';
 
 const BASE = import.meta.env['VITE_API_URL'] ?? '/api';
+
+export interface Session {
+  userId: string;
+  /** `?: string | undefined`, not `?: string` — `exactOptionalPropertyTypes` is on, and clearing the org means assigning `undefined`, not deleting the key. */
+  orgId?: string | undefined;
+  orgName?: string | undefined;
+}
+
+const SESSION_KEY = 'haulq.driver.session';
+
+export function readSession(): Session | null {
+  try {
+    const raw = localStorage.getItem(SESSION_KEY);
+    return raw ? (JSON.parse(raw) as Session) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function writeSession(session: Session | null): void {
+  try {
+    if (session) localStorage.setItem(SESSION_KEY, JSON.stringify(session));
+    else localStorage.removeItem(SESSION_KEY);
+  } catch {
+    // Private mode or storage disabled — the session still works for this
+    // run, it just will not survive a real app kill. Same trade `Checkin.tsx`
+    // already accepts for its own stored token.
+  }
+  window.dispatchEvent(new Event('haulq:session'));
+}
+
+async function authHeaders(session: Session | null): Promise<Record<string, string>> {
+  const org = session?.orgId ? { 'X-HaulQ-Org-Id': session.orgId } : {};
+  const token = await currentToken();
+  return { ...org, ...(token ? { Authorization: `Bearer ${token}` } : {}) };
+}
 
 export class ApiRequestError extends Error {
   readonly status: number;
@@ -33,7 +77,8 @@ export interface RequestOptions {
 }
 
 export async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
-  const headers: Record<string, string> = {};
+  const session = readSession();
+  const headers: Record<string, string> = { ...(await authHeaders(session)) };
   let body: BodyInit | undefined;
 
   if (options.body !== undefined) {
@@ -53,7 +98,16 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
   const parsed = text ? (JSON.parse(text) as unknown) : undefined;
 
   if (!response.ok) {
-    throw new ApiRequestError(response.status, (parsed ?? {}) as Partial<ApiError>);
+    const errorBody = (parsed ?? {}) as Partial<ApiError>;
+
+    // Same self-heal web's client does: an org that no longer resolves for
+    // this login drops just the org, not the whole session, so the next
+    // render can recover rather than 401ing forever.
+    if (errorBody.code === 'unauthenticated' && session?.orgId) {
+      writeSession({ userId: session.userId });
+    }
+
+    throw new ApiRequestError(response.status, errorBody);
   }
 
   return parsed as T;

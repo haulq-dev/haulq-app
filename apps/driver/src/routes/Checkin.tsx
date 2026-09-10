@@ -362,6 +362,17 @@ function storedToken(): string | null {
   }
 }
 
+/**
+ * Whether `main.tsx` should mount this screen rather than the signed-in
+ * flow — an explicit `/checkin` path (typed, or a deep link's target), or a
+ * token already stored from a previous visit. The stored-token half is what
+ * keeps an already-onboarded device landing on its check-in view after this
+ * file stopped being the entire app; see `main.tsx`'s own note.
+ */
+export function isCheckinRoute(): boolean {
+  return window.location.pathname.startsWith('/checkin') || storedToken() !== null;
+}
+
 export function CheckinScreen() {
   const [token, setToken] = useState<string | null>(() => tokenFromPath() ?? storedToken());
 
