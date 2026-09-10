@@ -15,7 +15,7 @@ import { ClerkProvider, SignedIn, SignedOut, SignIn, useAuth, useClerk } from '@
 import { useQuery } from '@tanstack/react-query';
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import { readSession, request, type Session } from '../lib/api.ts';
-import { CLERK_PUBLISHABLE_KEY, registerTokenGetter, usingClerk } from '../lib/auth.ts';
+import { CLERK_PUBLISHABLE_KEY, keyProblem, registerTokenGetter } from '../lib/auth.ts';
 import { Logo } from './Logo.tsx';
 
 /**
@@ -106,20 +106,19 @@ export function SignOutLink() {
 }
 
 /**
- * A build with no `VITE_CLERK_PUBLISHABLE_KEY` — a broken build, not a
- * supported mode. Unlike `apps/web`, this app has one deploy target and no
- * dev-header fallback to fall back to, so the failure is stated plainly
- * rather than silently 401ing behind a working-looking sign-in screen.
+ * A build with no usable `VITE_CLERK_PUBLISHABLE_KEY` — a broken build, not
+ * a supported mode. Unlike `apps/web`, this app has one deploy target and
+ * no dev-header fallback to fall back to, so the failure is stated plainly
+ * — and specifically, via `keyProblem()` — rather than either silently
+ * 401ing behind a working-looking screen, or reaching `ClerkProvider` at
+ * all and letting it fail with a generic "Publishable key not valid" that
+ * doesn't say which of several very different problems this actually is.
  */
-function NotConfiguredScreen() {
+function MisconfiguredScreen({ problem }: { problem: string }) {
   return (
     <div className="mx-auto max-w-md px-6 py-16">
-      <h1 className="mb-2 text-2xl">This build has no sign-in configured</h1>
-      <p className="text-slate">
-        It was built without <code className="num">VITE_CLERK_PUBLISHABLE_KEY</code>. Set it in
-        the build workflow and rebuild — Vite inlines it at build time, so nothing short of a
-        rebuild will pick it up.
-      </p>
+      <h1 className="mb-2 text-2xl">This build has no working sign-in</h1>
+      <p className="text-slate">{problem}</p>
     </div>
   );
 }
@@ -127,7 +126,8 @@ function NotConfiguredScreen() {
 export function AuthGate({ children }: { children: ReactNode }) {
   const [tokenReady, setTokenReady] = useState(false);
 
-  if (!usingClerk) return <NotConfiguredScreen />;
+  const problem = keyProblem();
+  if (problem) return <MisconfiguredScreen problem={problem} />;
 
   const publicPath = isPublicPath(window.location.pathname);
 

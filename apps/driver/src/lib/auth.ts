@@ -24,6 +24,34 @@ export const CLERK_PUBLISHABLE_KEY =
 
 export const usingClerk = CLERK_PUBLISHABLE_KEY.length > 0;
 
+/**
+ * What's actually wrong with the key, in terms specific enough to act on —
+ * the alternative is Clerk's own "Publishable key not valid", which is
+ * correct but doesn't say *which* of several very different problems this
+ * is: unset, a CI variable substitution that silently didn't resolve, or
+ * the secret key pasted where the publishable one belongs. Safe to surface
+ * the raw value: a publishable key is meant to be public, and this
+ * diagnostic exists specifically so a malformed one is visible, not
+ * findable only by decoding a generic failure from a device with no
+ * attached debugger. `null` means the key at least has the right shape —
+ * still no guarantee Clerk's servers accept it, just that this file isn't
+ * the reason they wouldn't.
+ */
+export function keyProblem(): string | null {
+  const key = CLERK_PUBLISHABLE_KEY;
+  if (!key) return 'VITE_CLERK_PUBLISHABLE_KEY is empty.';
+  if (key.startsWith('$')) {
+    return `Received the literal string "${key}" — a build variable reference that never got substituted. Check that VITE_CLERK_PUBLISHABLE_KEY is in a group actually listed under this workflow's environment.groups in codemagic.yaml.`;
+  }
+  if (key.startsWith('sk_')) {
+    return 'Received a Clerk *secret* key (sk_...). This needs the publishable key (pk_test_... or pk_live_...) from the Clerk dashboard\'s API Keys page instead — the secret key must never ship in a client build.';
+  }
+  if (!key.startsWith('pk_test_') && !key.startsWith('pk_live_')) {
+    return `Received "${key}", which doesn't look like a Clerk publishable key (expected it to start with pk_test_ or pk_live_).`;
+  }
+  return null;
+}
+
 type TokenGetter = () => Promise<string | null>;
 
 let getToken: TokenGetter | null = null;
