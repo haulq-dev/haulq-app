@@ -53,6 +53,18 @@ const config: CapacitorConfig = {
   // yet. Email-code sign-in doesn't hit that restriction at all.
   server: {
     allowNavigation: ['clerk.haulq.ai', '*.clerk.accounts.dev', '*.clerk.com'],
+    // Android defaults to `https://localhost`; iOS defaults to
+    // `capacitor://localhost`. The mismatch mattered once Clerk's
+    // production instance started validating the request's Origin header
+    // against an explicit allowlist (`allowed_origins`, set via Clerk's
+    // Backend API — no dashboard UI for it): `https://localhost` is a
+    // materially riskier origin to allowlist than `capacitor://localhost`,
+    // since any ordinary browser hitting a local dev server with a
+    // self-signed cert can present that Origin, whereas `capacitor://` is
+    // a custom scheme practically no non-Capacitor context can produce.
+    // Forcing both platforms onto the same, narrower `capacitor://`
+    // scheme means Clerk's allowlist only ever needs one entry, not two.
+    androidScheme: 'capacitor',
   },
 };
 
