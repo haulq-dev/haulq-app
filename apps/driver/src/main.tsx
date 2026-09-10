@@ -19,6 +19,7 @@ import { createRootRoute, createRoute, createRouter, RouterProvider } from '@tan
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { AuthGate } from './components/AuthGate.tsx';
+import { ErrorBoundary } from './components/ErrorBoundary.tsx';
 import { CheckinScreen, isCheckinRoute } from './routes/Checkin.tsx';
 import { InviteAcceptScreen } from './routes/Invite.tsx';
 import { LoadDetailScreen } from './routes/LoadDetail.tsx';
@@ -82,19 +83,60 @@ CapacitorApp.addListener('appUrlOpen', ({ url }) => {
 const root = document.getElementById('root');
 if (!root) throw new Error('#root missing from index.html');
 
+/**
+ * Catches what `ErrorBoundary` cannot: an error thrown outside React's
+ * render cycle. This turned out to be the actual shape of the real bug —
+ * Clerk's provider renders an empty-but-successful frame immediately, then
+ * fails *asynchronously* fetching its own JS bundle, as a rejected promise
+ * with nothing downstream to catch it. `ErrorBoundary` only sees errors
+ * thrown during render, so it never saw this one; a white screen was the
+ * result. Reproduced locally with a malformed key before this existed —
+ * see the commit this landed in for how.
+ *
+ * An overlay appended to `<body>`, not a replacement of `#root`'s content —
+ * React still owns that node, and this net was written for exactly the
+ * case where nobody can be sure what state React's tree is actually in.
+ * `id`-guarded so a second error while debugging doesn't stack duplicates.
+ */
+function showFatalError(error: unknown): void {
+  if (document.getElementById('haulq-fatal-error')) return;
+
+  const message = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+  const overlay = document.createElement('div');
+  overlay.id = 'haulq-fatal-error';
+  overlay.style.cssText =
+    'position:fixed;inset:0;z-index:9999;background:#fff;overflow:auto;font-family:sans-serif';
+  overlay.innerHTML = `<div style="max-width:28rem;margin:0 auto;padding:4rem 1.5rem">
+    <h1 style="font-size:1.25rem;color:#b91c1c">Something went wrong</h1>
+    <p style="font-size:0.875rem;color:#475569">${escapeHtml(message)}</p>
+  </div>`;
+  document.body.appendChild(overlay);
+}
+
+function escapeHtml(s: string): string {
+  const div = document.createElement('div');
+  div.textContent = s;
+  return div.innerHTML;
+}
+
+window.addEventListener('error', (event) => showFatalError(event.error ?? event.message));
+window.addEventListener('unhandledrejection', (event) => showFatalError(event.reason));
+
 createRoot(root).render(
   <StrictMode>
-    <QueryClientProvider client={queryClient}>
-      {isCheckinRoute() ? (
-        <CheckinScreen />
-      ) : (
-        // AuthGate is outside the router — see its own module note on the
-        // one path (`/invite/`) it still renders the router for while
-        // signed out.
-        <AuthGate>
-          <RouterProvider router={router} />
-        </AuthGate>
-      )}
-    </QueryClientProvider>
+    <ErrorBoundary>
+      <QueryClientProvider client={queryClient}>
+        {isCheckinRoute() ? (
+          <CheckinScreen />
+        ) : (
+          // AuthGate is outside the router — see its own module note on the
+          // one path (`/invite/`) it still renders the router for while
+          // signed out.
+          <AuthGate>
+            <RouterProvider router={router} />
+          </AuthGate>
+        )}
+      </QueryClientProvider>
+    </ErrorBoundary>
   </StrictMode>,
 );
