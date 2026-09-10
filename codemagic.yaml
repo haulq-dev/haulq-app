@@ -35,6 +35,17 @@ workflows:
       # added under. "SECRETS" is the catch-all for everything since that
       # isn't itself a signing credential — VITE_CLERK_PUBLISHABLE_KEY
       # today, whatever else needs a build-time value next.
+      #
+      # A group's variables are injected directly into the build
+      # environment once imported here — do not also redeclare one under
+      # `vars:` below "to substitute it in." YAML has no `$VAR` expansion,
+      # so `SOME_KEY: $SOME_KEY` under `vars:` does not mean "use the
+      # group's value" — it sets the variable to the eight-character
+      # literal string `$SOME_KEY`, silently overwriting the real one.
+      # That exact mistake shipped once already (VITE_CLERK_PUBLISHABLE_KEY,
+      # briefly) and produced "$VITE_CLERK_PUBLISHABLE_KEY" inside the
+      # built app instead of a real key, even with the group and variable
+      # both configured correctly on Codemagic's side.
       groups:
         - Certificate
         - SECRETS
@@ -59,17 +70,6 @@ workflows:
         # real explanation. Vite inlines this at build time, so it has to be
         # set here, not just in production's own environment.
         VITE_API_URL: "https://api.haulq.ai"
-        # Clerk's publishable key — safe to be public (it ships inside the
-        # client bundle by design, unlike CERTIFICATE_PRIVATE_KEY above),
-        # but still not typed directly into this file: add it to the
-        # SECRETS group in the Codemagic dashboard, named exactly this, and
-        # it's picked up automatically. Same Clerk project/key apps/web
-        # already uses — see AuthGate.tsx's own note on why this app has no
-        # separate dev-mode fallback. Left unset, the build still succeeds;
-        # AuthGate.tsx shows a clear "no sign-in configured" screen instead
-        # of the silent-401 failure VITE_API_URL's own comment above
-        # describes for a missing build-time var.
-        VITE_CLERK_PUBLISHABLE_KEY: $VITE_CLERK_PUBLISHABLE_KEY
       node: 22.18.0
       xcode: latest
       cocoapods: default
