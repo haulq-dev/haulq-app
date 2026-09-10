@@ -29,6 +29,28 @@ const config: CapacitorConfig = {
   appId: 'ai.haulq.app',
   appName: 'HaulQ',
   webDir: 'dist',
+  // Without this, the WebView's default navigation policy blocks it from
+  // loading or talking to any origin outside its own (`capacitor://localhost`)
+  // — including Clerk's own Frontend API domain, which its session/cookie
+  // handling needs to reach even for a plain email-code sign-in, not just
+  // OAuth. Sign-in appeared to "work" (a code arrived, the code was
+  // accepted) but silently bounced back to the sign-in screen instead of
+  // landing on a real session — this is why. The wildcard is Clerk's own
+  // convention (every instance gets a `<slug>.clerk.accounts.dev` Frontend
+  // API domain, or a custom one under `clerk.<yourdomain>` if that's ever
+  // configured) — decode the `pk_...` key's payload to find a given
+  // instance's domain if this ever needs updating for a different Clerk
+  // project.
+  //
+  // This does NOT fix Google/social sign-in — that's a separate, harder
+  // restriction. Google's OAuth policy refuses embedded WebViews outright
+  // (`disallowed_useragent`), regardless of what's allowlisted here; only a
+  // real browser context (Capacitor's Browser plugin, opening a system
+  // Safari/Custom Tabs view) satisfies it, which nothing in this app does
+  // yet. Email-code sign-in doesn't hit that restriction at all.
+  server: {
+    allowNavigation: ['*.clerk.accounts.dev', '*.clerk.com'],
+  },
 };
 
 export default config;
