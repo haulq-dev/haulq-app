@@ -30,6 +30,8 @@ const RoleSchema = z.enum(['owner', 'dispatcher', 'driver', 'accountant']);
 const InviteSchema = z.object({
   email: z.string().email(),
   role: RoleSchema.default('driver'),
+  /** Which roster row this login is for — see `orgInvitations.driverId`'s own note. */
+  driverId: z.string().uuid().optional(),
 });
 
 const ChangeRoleSchema = z.object({ role: RoleSchema });
@@ -60,6 +62,7 @@ const STATUS: Record<string, number> = {
   already_member: 409,
   already_accepted: 409,
   last_owner: 409,
+  driver_already_linked: 409,
   revoked: 410,
   expired: 410,
   invalid_token: 404,

@@ -54,12 +54,18 @@ async function newUser() {
   return u;
 }
 
-async function invite(orgId: string, email: string, role = 'driver', actor = ownerId) {
+async function invite(
+  orgId: string,
+  email: string,
+  role = 'driver',
+  actor = ownerId,
+  driverId?: string,
+) {
   return app.inject({
     method: 'POST',
     url: '/v1/members/invites',
     headers: as(orgId, actor),
-    payload: { email, role },
+    payload: { email, role, ...(driverId ? { driverId } : {}) },
   });
 }
 
@@ -69,6 +75,16 @@ const accept = (token: string, userId: string) =>
     url: `/v1/invitations/${token}/accept`,
     headers: { 'x-haulq-user-id': userId },
   });
+
+async function newDriver(orgId: string, fullName: string) {
+  const res = await app.inject({
+    method: 'POST',
+    url: '/v1/drivers',
+    headers: as(orgId),
+    payload: { fullName },
+  });
+  return res.json().id as string;
+}
 
 suite('members', () => {
   before(async () => {
@@ -155,6 +171,78 @@ suite('members', () => {
         headers: as(orgId),
       });
       assert.equal(JSON.stringify(res.json()).includes('tokenHash'), false);
+    });
+  });
+
+  // --- linking a driver's own account ---------------------------------------
+
+  describe('driver linking', () => {
+    it('links the roster row the moment the invited driver accepts', async () => {
+      const orgId = await newOrg('Link Co');
+      const driverId = await newDriver(orgId, 'Ray Alvarez');
+      const token = (await invite(orgId, 'ray@example.com', 'driver', ownerId, driverId))
+        .json().token as string;
+
+      const preview = await app.inject({ method: 'GET', url: `/v1/invitations/${token}` });
+      assert.equal(preview.json().driverName, 'Ray Alvarez');
+
+      const driverUser = await newUser();
+      const accepted = await accept(token, driverUser.id);
+      assert.equal(accepted.statusCode, 200);
+
+      const drivers = await app.inject({
+        method: 'GET',
+        url: '/v1/drivers',
+        headers: as(orgId),
+      });
+      const linked = (drivers.json().items as Array<{ id: string; userId: string | null }>).find(
+        (d) => d.id === driverId,
+      );
+      assert.equal(linked?.userId, driverUser.id);
+    });
+
+    it('refuses to invite for a driver on another account', async () => {
+      const orgId = await newOrg('Link Co A');
+      const otherOrgId = await newOrg('Link Co B');
+      const otherDriverId = await newDriver(otherOrgId, 'Not Yours');
+
+      const res = await invite(orgId, 'x@example.com', 'driver', ownerId, otherDriverId);
+      assert.equal(res.statusCode, 404);
+    });
+
+    it('fails the whole accept if the roster row got linked to someone else first', async () => {
+      // Two live invites naming the same driver — the second acceptance must
+      // not silently steal the link, and must not leave a membership behind
+      // for an account the app can never show any loads to.
+      const orgId = await newOrg('Race Co');
+      const driverId = await newDriver(orgId, 'Contested Driver');
+
+      const firstToken = (await invite(orgId, 'first@example.com', 'driver', ownerId, driverId))
+        .json().token as string;
+      const secondToken = (
+        await invite(orgId, 'second@example.com', 'driver', ownerId, driverId)
+      ).json().token as string;
+
+      const firstUser = await newUser();
+      assert.equal((await accept(firstToken, firstUser.id)).statusCode, 200);
+
+      const secondUser = await newUser();
+      const res = await accept(secondToken, secondUser.id);
+      assert.equal(res.statusCode, 409);
+      assert.match(res.json().explanation, /already linked to another account/);
+
+      // The second person did not end up a member of the org either — the
+      // failed link took the whole accept down with it, rather than leaving
+      // an account signed in with no assigned loads it could ever see.
+      const members = await app.inject({
+        method: 'GET',
+        url: '/v1/members',
+        headers: as(orgId),
+      });
+      const memberIds = (members.json().members.items as Array<{ userId: string }>).map(
+        (m) => m.userId,
+      );
+      assert.ok(!memberIds.includes(secondUser.id));
     });
   });
 

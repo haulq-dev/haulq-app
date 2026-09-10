@@ -21,6 +21,7 @@ import type { Scope } from '../context.ts';
 import { eventOutbox } from '../schema/events.ts';
 import { recordEvent } from '../events/record.ts';
 import { decodeCursor, toCursorPage, type CursorPage } from '../pagination.ts';
+import { drivers } from '../schema/fleet.ts';
 import { orgInvitations, orgMemberships, orgs, users } from '../schema/tenancy.ts';
 import { withTransaction } from '../transaction.ts';
 
@@ -170,7 +171,7 @@ export interface InviteResult {
 
 export async function inviteMember(
   s: Scope,
-  input: { email: string; role: Role },
+  input: { email: string; role: Role; driverId?: string | undefined },
   actorRole: Role,
 ): Promise<InviteResult> {
   const email = normalizeEmail(input.email);
@@ -184,6 +185,26 @@ export async function inviteMember(
   }
 
   return withTransaction(s, async (tx) => {
+    if (input.driverId) {
+      const [driver] = await tx.db
+        .select({ id: drivers.id })
+        .from(drivers)
+        .where(
+          and(
+            eq(drivers.id, input.driverId),
+            eq(drivers.orgId, tx.ctx.orgId),
+            isNull(drivers.deletedAt),
+          ),
+        );
+      if (!driver) {
+        throw new MemberError(
+          'not_found',
+          `driver ${input.driverId} not found`,
+          'That driver is not on this account.',
+        );
+      }
+    }
+
     // Already a member — a different situation from a pending invite, and it
     // deserves its own message rather than a duplicate-key error.
     const [existing] = await tx.db
@@ -230,6 +251,7 @@ export async function inviteMember(
         orgId: tx.ctx.orgId,
         email,
         role: input.role,
+        driverId: input.driverId ?? null,
         tokenHash: hashToken(token),
         invitedByUserId: tx.ctx.actor.type === 'user' ? tx.ctx.actor.id : null,
         expiresAt: new Date(Date.now() + INVITE_TTL_DAYS * 86_400_000),
@@ -327,6 +349,8 @@ export interface InvitationPreview {
   email: string;
   role: Role;
   expiresAt: Date;
+  /** The roster row this login will control, if the invite names one. */
+  driverName: string | null;
 }
 
 /**
@@ -350,9 +374,11 @@ export async function previewInvitation(
     .select({
       invitation: orgInvitations,
       orgName: orgs.name,
+      driverName: drivers.fullName,
     })
     .from(orgInvitations)
     .innerJoin(orgs, eq(orgs.id, orgInvitations.orgId))
+    .leftJoin(drivers, eq(drivers.id, orgInvitations.driverId))
     .where(eq(orgInvitations.tokenHash, hash));
 
   if (!row) {
@@ -400,6 +426,7 @@ export async function previewInvitation(
     email: row.invitation.email,
     role: row.invitation.role,
     expiresAt: row.invitation.expiresAt,
+    driverName: row.driverName,
   };
 }
 
@@ -525,6 +552,41 @@ export async function acceptInvitation(
         target: [orgMemberships.orgId, orgMemberships.userId],
         set: { role: invitation.role, status: 'active', acceptedAt: new Date() },
       });
+
+    // The invite named a specific roster row — link it now, inside the same
+    // transaction as claiming the invitation, so an account never ends up
+    // "joined" with its driver link silently missing. `userId is null` guards
+    // against a stale or double-accepted invite reassigning a row someone
+    // else already claimed; that case fails the whole accept rather than
+    // succeeding halfway, since a driver whose account isn't linked to a
+    // roster row cannot see any assigned loads in the app anyway — a silent
+    // partial join is a worse outcome than an explicit failure to retry.
+    if (invitation.driverId) {
+      const [linked] = await tx.db
+        .update(drivers)
+        .set({ userId: args.userId })
+        .where(
+          and(
+            eq(drivers.id, invitation.driverId),
+            eq(drivers.orgId, invitation.orgId),
+            isNull(drivers.userId),
+          ),
+        )
+        .returning({ id: drivers.id, fullName: drivers.fullName });
+
+      if (!linked) {
+        throw new MemberError(
+          'driver_already_linked',
+          `driver ${invitation.driverId} already linked to a different user`,
+          'This invitation\'s driver profile is already linked to another account. Ask your dispatcher to check the roster or send a new invitation.',
+        );
+      }
+
+      await recordEvent(tx, 'driver.linked', {
+        subjectId: linked.id,
+        payload: { name: linked.fullName, email: args.userEmail },
+      });
+    }
 
     const emailMismatch = normalizeEmail(args.userEmail) !== invitation.email;
 

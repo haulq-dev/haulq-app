@@ -327,6 +327,7 @@ export interface Invitation {
   id: string;
   email: string;
   role: Role;
+  driverId: string | null;
   expiresAt: string;
   createdAt: string;
   invitedByUserId: string | null;

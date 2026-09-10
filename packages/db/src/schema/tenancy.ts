@@ -190,6 +190,23 @@ export const orgInvitations = pgTable(
     email: text('email').notNull(),
     role: orgRoleEnum('role').notNull().default('driver'),
 
+    /**
+     * Which `drivers` row this login is for, when the invited role is
+     * `driver`. Not a Drizzle `.references()` — `fleet.ts` already imports
+     * `orgs`/`users` from this file, and importing `drivers` back here would
+     * make the two schema files circular. The real foreign key is added in
+     * `sql/post/0800_org_invitations_driver_fk.sql` instead, the same way
+     * this codebase already expresses constraints Drizzle's schema language
+     * cannot (see `0500_constraints.sql`).
+     *
+     * Deliberately explicit rather than matched by email on accept: a
+     * driver's own login address is routinely different from whatever is on
+     * file for them in `drivers.email` (see `acceptInvitation`'s own note on
+     * why email is not the authority), and matching would either miss the
+     * link or, worse, silently link the wrong roster row.
+     */
+    driverId: uuid('driver_id'),
+
     /** sha256 of the token, hex. The token itself is only ever in the link. */
     tokenHash: text('token_hash').notNull(),
 

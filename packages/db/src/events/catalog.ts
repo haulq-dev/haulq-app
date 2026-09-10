@@ -292,6 +292,19 @@ export const eventCatalog = {
     describe: (p) => `Added driver ${p.name}.`,
   }),
 
+  /**
+   * `drivers.userId` going from null to set — the moment a roster row
+   * (dispatcher-entered, possibly long before any app existed) becomes a
+   * real login. Its own verb rather than folding into `member.joined`
+   * because the two answer different questions: that one says who has
+   * access to the account, this one says which driver record a specific
+   * login now controls.
+   */
+  'driver.linked': define<{ name: string; email: string }>({
+    subjectType: 'driver',
+    describe: (p) => `Linked driver ${p.name} to the account signed in as ${p.email}.`,
+  }),
+
   // --- loads ---------------------------------------------------------------
 
   'load.created': define<{

@@ -12,12 +12,13 @@
  * forgets.
  */
 
-import { useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import {
   isPlaceholderEmail,
   request,
   ROLES,
+  type Driver,
   type Invitation,
   type Member,
   type Role,
@@ -111,17 +112,29 @@ function TokenPanel({ email, token }: { email: string; token: string }) {
 function InviteForm({ canInviteOwner }: { canInviteOwner: boolean }) {
   const [email, setEmail] = useState('');
   const [role, setRole] = useState<Role>('driver');
+  const [driverId, setDriverId] = useState('');
   const [issued, setIssued] = useState<{ email: string; token: string } | null>(null);
+
+  // Only fetched once the form needs it — a `driver`-role invite is the one
+  // case where the invitation has to name a specific roster row, so the
+  // driver app's own account can be linked to it the moment they accept (see
+  // `orgInvitations.driverId`'s own note in `packages/db/src/schema/tenancy.ts`).
+  const drivers = useQuery({
+    queryKey: ['drivers', 'for-invite'],
+    queryFn: () => request<{ items: Driver[] }>('/v1/drivers'),
+    enabled: role === 'driver',
+  });
 
   const queryClient = useQueryClient();
   const invite = useMutation({
     mutationFn: () =>
       request<{ invitation: Invitation; token: string }>('/v1/members/invites', {
-        body: { email, role },
+        body: { email, role, ...(role === 'driver' && driverId ? { driverId } : {}) },
       }),
     onSuccess: async (res) => {
       setIssued({ email: res.invitation.email, token: res.token });
       setEmail('');
+      setDriverId('');
       await queryClient.invalidateQueries({ queryKey: ['members'] });
     },
   });
@@ -149,7 +162,10 @@ function InviteForm({ canInviteOwner }: { canInviteOwner: boolean }) {
           <select
             className="hq-input"
             value={role}
-            onChange={(e) => setRole(e.target.value as Role)}
+            onChange={(e) => {
+              setRole(e.target.value as Role);
+              setDriverId('');
+            }}
           >
             {ROLES.map((r) => (
               <option key={r} value={r} disabled={r === 'owner' && !canInviteOwner}>
@@ -159,6 +175,25 @@ function InviteForm({ canInviteOwner }: { canInviteOwner: boolean }) {
             ))}
           </select>
         </Field>
+        {role === 'driver' && (
+          <Field
+            label="Driver"
+            hint="Optional — link this login to a roster row now, so the driver app knows which loads are theirs the moment they accept. Leave blank to add them to the roster later."
+          >
+            <select
+              className="hq-input"
+              value={driverId}
+              onChange={(e) => setDriverId(e.target.value)}
+            >
+              <option value="">Not linked yet</option>
+              {(drivers.data?.items ?? []).map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.fullName}
+                </option>
+              ))}
+            </select>
+          </Field>
+        )}
       </div>
 
       <div className="mt-5">

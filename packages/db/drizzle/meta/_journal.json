@@ -64,6 +64,13 @@
       "when": 1788389991525,
       "tag": "0008_cooing_dragon_man",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1789060770259,
+      "tag": "0009_acoustic_wallow",
+      "breakpoints": true
     }
   ]
 }

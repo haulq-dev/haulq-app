@@ -1,0 +1,1 @@
+ALTER TABLE "org_invitations" ADD COLUMN "driver_id" uuid;
