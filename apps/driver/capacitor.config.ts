@@ -53,18 +53,21 @@ const config: CapacitorConfig = {
   // yet. Email-code sign-in doesn't hit that restriction at all.
   server: {
     allowNavigation: ['clerk.haulq.ai', '*.clerk.accounts.dev', '*.clerk.com'],
-    // Android defaults to `https://localhost`; iOS defaults to
-    // `capacitor://localhost`. The mismatch mattered once Clerk's
-    // production instance started validating the request's Origin header
-    // against an explicit allowlist (`allowed_origins`, set via Clerk's
-    // Backend API — no dashboard UI for it): `https://localhost` is a
-    // materially riskier origin to allowlist than `capacitor://localhost`,
-    // since any ordinary browser hitting a local dev server with a
-    // self-signed cert can present that Origin, whereas `capacitor://` is
-    // a custom scheme practically no non-Capacitor context can produce.
-    // Forcing both platforms onto the same, narrower `capacitor://`
-    // scheme means Clerk's allowlist only ever needs one entry, not two.
-    androidScheme: 'capacitor',
+    // NOT `androidScheme: 'capacitor'` — tried it, reverted it. The idea
+    // was to unify Android onto the same narrower `capacitor://` origin
+    // iOS already uses by default, so Clerk's `allowed_origins` only
+    // needed one entry instead of two. It broke something worse: as of
+    // WebView 117+, Android's WebView cannot correctly resolve *any*
+    // external request under a non-http(s) custom scheme at all — every
+    // fetch to a real remote host, not just Clerk's, came back
+    // `net::ERR_NAME_NOT_RESOLVED`, confirmed against this exact app via
+    // `chrome://inspect`. That's Capacitor's own current documented
+    // guidance, not a workaround: androidScheme must stay `http`/`https`
+    // on modern WebView. So Android keeps its default `https://localhost`,
+    // and Clerk's `allowed_origins` needs both `capacitor://localhost`
+    // (iOS) and `https://localhost` (Android) — see the PATCH command in
+    // this app's own setup notes/chat history for how that's set; there's
+    // no Clerk Dashboard UI for it, only the Backend API.
   },
 };
 
