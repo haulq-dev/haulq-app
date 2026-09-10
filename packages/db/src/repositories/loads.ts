@@ -343,6 +343,8 @@ export async function createLoad(
 export interface ListLoadsQuery {
   status?: LoadStatus[] | undefined;
   truckId?: string | undefined;
+  /** A driver-role caller's own loads. The route resolves and forces this — never trust one supplied by the client. */
+  driverId?: string | undefined;
   limit?: number | undefined;
   /** Opaque, from a previous call's `nextCursor`. Omit for the first page. */
   cursor?: string | undefined;
@@ -365,6 +367,7 @@ export async function listLoads(s: Scope, q: ListLoadsQuery = {}): Promise<Curso
   const conditions = [eq(loads.orgId, s.ctx.orgId), isNull(loads.deletedAt)];
   if (q.status?.length) conditions.push(inArray(loads.status, q.status));
   if (q.truckId) conditions.push(eq(loads.truckId, q.truckId));
+  if (q.driverId) conditions.push(eq(loads.driverId, q.driverId));
   if (q.cursor) {
     const cursor = decodeCursor(q.cursor);
     const cursorDate = new Date(cursor.v);

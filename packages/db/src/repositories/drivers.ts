@@ -33,6 +33,24 @@ export interface ListDriversQuery {
   limit?: number | undefined;
 }
 
+/**
+ * The caller's own roster row in this org.
+ *
+ * For a `driver`-role request scoping its own reads (`GET /v1/loads` and
+ * friends) — undefined means this login is not linked to any `drivers` row
+ * yet (see `orgInvitations.driverId`/`acceptInvitation` in `members.ts`),
+ * which the route treats as "sees nothing" rather than an error.
+ */
+export async function driverIdForUser(s: Scope, userId: string): Promise<string | undefined> {
+  const [row] = await s.db
+    .select({ id: drivers.id })
+    .from(drivers)
+    .where(
+      and(eq(drivers.orgId, s.ctx.orgId), eq(drivers.userId, userId), isNull(drivers.deletedAt)),
+    );
+  return row?.id;
+}
+
 /** Alphabetical, cursor-paginated on `(fullName, id)` — see `pagination.ts`. */
 export async function listDrivers(s: Scope, q: ListDriversQuery = {}): Promise<CursorPage<Driver>> {
   const conditions = [eq(drivers.orgId, s.ctx.orgId), isNull(drivers.deletedAt)];

@@ -38,6 +38,7 @@ import {
   assignLoad,
   createLoad,
   CursorError,
+  driverIdForUser,
   getLoad,
   getLoadTracking,
   listLoads,
@@ -48,8 +49,9 @@ import {
   updateLoadStatus,
   updateLoadStop,
   type LoadStatus,
+  type Scope,
 } from '@haulq/db';
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { HttpError, requireRole, requireScope } from '../plugins/request-context.ts';
@@ -136,6 +138,20 @@ const IdParamSchema = z.object({ id: z.string().uuid() });
 const StopParamSchema = z.object({ id: z.string().uuid(), stopId: z.string().uuid() });
 
 /**
+ * A `driver`-role caller's own roster id, for scoping reads to their own
+ * assigned loads — never a client-supplied value, always resolved from the
+ * authenticated actor. `undefined` means the caller is not a driver (no
+ * scoping needed); `null` means they are a driver whose login is not linked
+ * to any `drivers` row yet (see `driverIdForUser`'s own note), which every
+ * caller here treats as "sees nothing" rather than an error.
+ */
+async function driverScopeFor(s: Scope, request: FastifyRequest): Promise<string | null | undefined> {
+  if (request.auth?.role !== 'driver') return undefined;
+  if (request.auth.actor.type !== 'user') return null;
+  return (await driverIdForUser(s, request.auth.actor.id)) ?? null;
+}
+
+/**
  * `status`/`truckId` stay plain, unconstrained strings — same as before this
  * file validated through Fastify at all. `status` in particular is read as
  * "?status=booked&status=dispatched" or comma-separated below, and either
@@ -163,9 +179,17 @@ export async function loadRoutes(app: FastifyInstance) {
         : undefined;
 
       try {
+        // A driver-role caller only ever sees their own assigned loads —
+        // resolved server-side, never taken from the query string.
+        const driverScope = await driverScopeFor(s, request);
+        if (driverScope === null) {
+          return { items: [], counts: await loadCounts(s), nextCursor: null };
+        }
+
         const { items, nextCursor } = await listLoads(s, {
           ...(status?.length ? { status } : {}),
           ...(truckId ? { truckId } : {}),
+          ...(driverScope ? { driverId: driverScope } : {}),
           limit,
           ...(cursor ? { cursor } : {}),
         });
@@ -185,6 +209,15 @@ export async function loadRoutes(app: FastifyInstance) {
       const { id } = request.params;
       const load = await getLoad(s, id);
       if (!load) throw new HttpError(404, 'not_found', 'That load no longer exists.');
+
+      // Same "does this exist" phrasing as a genuinely missing load — a
+      // driver probing another driver's load id learns nothing more than
+      // that a 404 does for one that was never there.
+      const driverScope = await driverScopeFor(s, request);
+      if (driverScope !== undefined && load.driverId !== driverScope) {
+        throw new HttpError(404, 'not_found', 'That load no longer exists.');
+      }
+
       return load;
     },
   );
@@ -192,12 +225,16 @@ export async function loadRoutes(app: FastifyInstance) {
   /**
    * What this one load actually made. PHASE_1_PLAN.md section 4's per-load
    * gap — a single-row read, not a new aggregation engine.
+   *
+   * Rate and margin are dispatcher/owner/accountant business — blocked for
+   * `driver` outright rather than scoped, unlike the reads above.
    */
   server.get(
     '/v1/loads/:id/margin',
     { schema: { tags: ['Loads'], summary: "A load's margin", params: IdParamSchema } },
     async (request) => {
       const s = await requireScope(request);
+      requireRole(request, 'owner', 'dispatcher', 'accountant');
       const { id } = request.params;
       const margin = await loadMargin(s, id);
       if (!margin) throw new HttpError(404, 'not_found', 'That load no longer exists.');
@@ -218,6 +255,16 @@ export async function loadRoutes(app: FastifyInstance) {
       const s = await requireScope(request);
       const { id } = request.params;
       try {
+        // `getLoad` is the same ownership check `GET /v1/loads/:id` already
+        // does — reused here rather than duplicated, at the cost of one
+        // extra read before the tracking view itself.
+        const load = await getLoad(s, id);
+        if (!load) throw new HttpError(404, 'not_found', 'That load no longer exists.');
+        const driverScope = await driverScopeFor(s, request);
+        if (driverScope !== undefined && load.driverId !== driverScope) {
+          throw new HttpError(404, 'not_found', 'That load no longer exists.');
+        }
+
         return await getLoadTracking(s, id);
       } catch (err) {
         rethrow(err);
