@@ -18,6 +18,20 @@ import { readSession, request, type Session } from '../lib/api.ts';
 import { CLERK_PUBLISHABLE_KEY, registerTokenGetter, usingClerk } from '../lib/auth.ts';
 import { Logo } from './Logo.tsx';
 
+/**
+ * Paths that render for a signed-out visitor — same reasoning as
+ * `apps/web`'s copy of this constant. An invite link is opened by someone
+ * who has no HaulQ account yet; showing a bare sign-in wall with no context
+ * is how the invitation gets ignored. `InviteAccept.tsx` does its own
+ * `useSignedIn()`-based branching once rendered here, exactly like web's
+ * `InviteScreen` does.
+ */
+const PUBLIC_PREFIXES = ['/invite/'] as const;
+
+function isPublicPath(pathname: string): boolean {
+  return PUBLIC_PREFIXES.some((p) => pathname.startsWith(p));
+}
+
 const SignedInContext = createContext(false);
 
 /** True once someone is signed in and their token is ready to attach to requests. */
@@ -115,10 +129,19 @@ export function AuthGate({ children }: { children: ReactNode }) {
 
   if (!usingClerk) return <NotConfiguredScreen />;
 
+  const publicPath = isPublicPath(window.location.pathname);
+
   return (
     <ClerkProvider publishableKey={CLERK_PUBLISHABLE_KEY} afterSignOutUrl="/">
       <SignedOut>
-        <SignInScreen />
+        {/* A public path renders the router itself, not instead of it, so
+            the route component can offer sign-in once it has shown what the
+            visitor is being invited to — same as web's own note here. */}
+        {publicPath ? (
+          <SignedInContext.Provider value={false}>{children}</SignedInContext.Provider>
+        ) : (
+          <SignInScreen />
+        )}
       </SignedOut>
       <SignedIn>
         <TokenBridge onReady={() => setTokenReady(true)} />

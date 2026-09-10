@@ -1,41 +1,29 @@
 /**
  * App shell.
  *
- * Two branches, decided once at mount from `isCheckinRoute()`, not a router:
+ * Two branches, decided once at mount from `isCheckinRoute()`:
  *
  *  - **A check-in link or a stored token** — `CheckinScreen`, unchanged,
  *    exactly as it worked when this was the whole app. Deliberately kept
  *    reachable with no sign-in at all, for a driver not yet linked to an
  *    account (see that file's own module note).
- *  - **Everything else** — `AuthGate`, a driver's own signed-in account.
- *    Real screens (their assigned loads, a stop's milestones) are still
- *    being built on top of this foundation; `LandingStub` below is a
- *    placeholder for exactly that gap, not a finished screen.
- *
- * `@tanstack/react-router` is a dependency already, ready for when that
- * signed-in side grows past one screen — not wired in yet, same reasoning
- * this file used to give for having no router at all: a router is a guess
- * about how many screens there will be, and right now there is one on each
- * side of this branch.
+ *  - **Everything else** — `AuthGate` wrapping a small router: accepting an
+ *    invite, a driver's own assigned loads, and one load's stop milestones.
+ *    Code-based routes, same reasoning `apps/web/src/main.tsx` gives: three
+ *    screens do not justify a codegen step.
  */
 
 import { App as CapacitorApp } from '@capacitor/app';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { createRootRoute, createRoute, createRouter, RouterProvider } from '@tanstack/react-router';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
-import { AuthGate, SignOutLink } from './components/AuthGate.tsx';
+import { AuthGate } from './components/AuthGate.tsx';
 import { CheckinScreen, isCheckinRoute } from './routes/Checkin.tsx';
+import { InviteAcceptScreen } from './routes/Invite.tsx';
+import { LoadDetailScreen } from './routes/LoadDetail.tsx';
+import { MyLoadsScreen } from './routes/MyLoads.tsx';
 import './styles.css';
-
-/** Stands in for the real signed-in screens (assigned loads, milestones) until those land. */
-function LandingStub() {
-  return (
-    <div className="mx-auto max-w-md space-y-4 px-6 py-16 text-center">
-      <p className="text-slate">You&apos;re signed in. Your loads will show up here.</p>
-      <SignOutLink />
-    </div>
-  );
-}
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -49,6 +37,28 @@ const queryClient = new QueryClient({
     },
   },
 });
+
+const rootRoute = createRootRoute();
+const indexRoute = createRoute({ getParentRoute: () => rootRoute, path: '/', component: MyLoadsScreen });
+const loadDetailRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/loads/$loadId',
+  component: LoadDetailScreen,
+});
+const inviteRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/invite/$token',
+  component: InviteAcceptScreen,
+});
+
+const routeTree = rootRoute.addChildren([indexRoute, loadDetailRoute, inviteRoute]);
+const router = createRouter({ routeTree });
+
+declare module '@tanstack/react-router' {
+  interface Register {
+    router: typeof router;
+  }
+}
 
 /**
  * A deep link opened while the app was already running (or cold-started
@@ -78,8 +88,11 @@ createRoot(root).render(
       {isCheckinRoute() ? (
         <CheckinScreen />
       ) : (
+        // AuthGate is outside the router — see its own module note on the
+        // one path (`/invite/`) it still renders the router for while
+        // signed out.
         <AuthGate>
-          <LandingStub />
+          <RouterProvider router={router} />
         </AuthGate>
       )}
     </QueryClientProvider>
