@@ -16,6 +16,18 @@
  * `{ type: 'integration', provider: 'driver_checkin_link' }`, the same
  * family `postmark-inbound.ts` already uses for an external actor that
  * authenticates by possessing a secret rather than by signing in.
+ *
+ * Two write paths now exist for the same stop-milestone report, on purpose,
+ * not as debt nobody decided on: `recordStopCheckin`/`undoStopCheckin` for
+ * the anonymous link above, and `recordStopCheckinAsDriver`/
+ * `undoStopCheckinAsDriver` for a driver acting through a real, linked
+ * account (`routes/loads.ts` calls the latter once `driverIdForUser`
+ * resolves and the caller is confirmed to own the load). Both end up in
+ * `applyStopCheckin`/`applyUndoStopCheckin` — the only difference is which
+ * actor gets attributed on `load_stop.checkin`. The anonymous path stays
+ * live indefinitely as the fallback for a driver not yet linked to an
+ * account, a sub-hauler, or anyone reached only by text message — this is
+ * not a migration in progress.
  */
 
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
@@ -325,6 +337,73 @@ export async function previewCheckin(db: Database, token: string): Promise<Check
  * timestamps stand on their own and a carrier reading `load_stops` sees
  * exactly what was tapped, when.
  */
+/**
+ * The write both `recordStopCheckin` (anonymous token) and
+ * `recordStopCheckinAsDriver` (an authenticated driver's own account) share
+ * — everything past establishing *which* load and *which* actor is making
+ * the report. Split out so the two callers differ only in how they got
+ * here: a token's `findCheckinLink` result, or a route that already
+ * resolved and verified the caller's own `Scope`.
+ */
+async function applyStopCheckin(
+  s: Scope,
+  args: {
+    loadId: string;
+    stopId: string;
+    milestone: StopMilestone;
+    occurredAt?: string | undefined;
+  },
+): Promise<{ stop: TrackedStop }> {
+  return withTransaction(s, async (tx) => {
+    const [stop] = await tx.db
+      .select()
+      .from(loadStops)
+      .where(and(eq(loadStops.id, args.stopId), eq(loadStops.loadId, args.loadId)));
+
+    if (!stop) {
+      throw new TrackError(
+        'not_found',
+        `stop ${args.stopId} not on load ${args.loadId}`,
+        'That stop is not on this load.',
+      );
+    }
+
+    const [load] = await tx.db
+      .select({ reference: loads.reference })
+      .from(loads)
+      .where(eq(loads.id, args.loadId));
+    if (!load) throw new Error('load for stop checkin is gone');
+
+    const at = args.occurredAt ? new Date(args.occurredAt) : new Date();
+    const column = MILESTONE_COLUMN[args.milestone];
+
+    const [updated] = await tx.db
+      .update(loadStops)
+      .set({
+        [column]: at,
+        ...(args.milestone === 'arrived' ? { arrivalSource: 'driver_app' } : {}),
+        updatedAt: new Date(),
+      })
+      .where(eq(loadStops.id, stop.id))
+      .returning();
+    if (!updated) throw new Error('stop checkin update returned nothing');
+
+    await recordEvent(tx, 'load_stop.checkin', {
+      subjectId: args.loadId,
+      payload: {
+        reference: load.reference,
+        stopSeq: stop.seq,
+        stopType: stop.type,
+        city: stop.city,
+        state: stop.state,
+        milestone: args.milestone,
+      },
+    });
+
+    return { stop: updated };
+  });
+}
+
 export async function recordStopCheckin(
   db: Database,
   args: {
@@ -346,54 +425,26 @@ export async function recordStopCheckin(
     db,
   };
 
-  return withTransaction(s, async (tx) => {
-    const [stop] = await tx.db
-      .select()
-      .from(loadStops)
-      .where(and(eq(loadStops.id, args.stopId), eq(loadStops.loadId, found.loadId)));
-
-    if (!stop) {
-      throw new TrackError(
-        'not_found',
-        `stop ${args.stopId} not on load ${found.loadId}`,
-        'That stop is not on this load.',
-      );
-    }
-
-    const [load] = await tx.db
-      .select({ reference: loads.reference })
-      .from(loads)
-      .where(eq(loads.id, found.loadId));
-    if (!load) throw new Error('load referenced by checkin link is gone');
-
-    const at = args.occurredAt ? new Date(args.occurredAt) : new Date();
-    const column = MILESTONE_COLUMN[args.milestone];
-
-    const [updated] = await tx.db
-      .update(loadStops)
-      .set({
-        [column]: at,
-        ...(args.milestone === 'arrived' ? { arrivalSource: 'driver_app' } : {}),
-        updatedAt: new Date(),
-      })
-      .where(eq(loadStops.id, stop.id))
-      .returning();
-    if (!updated) throw new Error('stop checkin update returned nothing');
-
-    await recordEvent(tx, 'load_stop.checkin', {
-      subjectId: found.loadId,
-      payload: {
-        reference: load.reference,
-        stopSeq: stop.seq,
-        stopType: stop.type,
-        city: stop.city,
-        state: stop.state,
-        milestone: args.milestone,
-      },
-    });
-
-    return { stop: updated };
+  return applyStopCheckin(s, {
+    loadId: found.loadId,
+    stopId: args.stopId,
+    milestone: args.milestone,
+    occurredAt: args.occurredAt,
   });
+}
+
+/**
+ * Same write, for a driver reporting through their own signed-in account
+ * rather than an anonymous check-in link. The caller (`routes/loads.ts`)
+ * has already resolved `s` from the request's real session and confirmed
+ * this load is assigned to this driver — so `load_stop.checkin` records
+ * `s.ctx.actor` as the actual `user`, not `driver_checkin_link`.
+ */
+export async function recordStopCheckinAsDriver(
+  s: Scope,
+  args: { loadId: string; stopId: string; milestone: StopMilestone; occurredAt?: string | undefined },
+): Promise<{ stop: TrackedStop }> {
+  return applyStopCheckin(s, args);
 }
 
 /**
@@ -416,31 +467,21 @@ const CHECKIN_UNDO_WINDOW_MS = 10 * 60_000;
  * and the undo, same as it would for a person watching over the driver's
  * shoulder.
  */
-export async function undoStopCheckin(
-  db: Database,
-  args: { token: string; stopId: string; milestone: StopMilestone; correlationId: string },
+/** Shared by `undoStopCheckin` (anonymous token) and `undoStopCheckinAsDriver` — see `applyStopCheckin`'s own note on the split. */
+async function applyUndoStopCheckin(
+  s: Scope,
+  args: { loadId: string; stopId: string; milestone: StopMilestone },
 ): Promise<{ stop: TrackedStop }> {
-  const found = await findCheckinLink(db, args.token);
-
-  const s: Scope = {
-    ctx: {
-      orgId: found.orgId,
-      actor: { type: 'integration', provider: 'driver_checkin_link' },
-      correlationId: args.correlationId,
-    },
-    db,
-  };
-
   return withTransaction(s, async (tx) => {
     const [stop] = await tx.db
       .select()
       .from(loadStops)
-      .where(and(eq(loadStops.id, args.stopId), eq(loadStops.loadId, found.loadId)));
+      .where(and(eq(loadStops.id, args.stopId), eq(loadStops.loadId, args.loadId)));
 
     if (!stop) {
       throw new TrackError(
         'not_found',
-        `stop ${args.stopId} not on load ${found.loadId}`,
+        `stop ${args.stopId} not on load ${args.loadId}`,
         'That stop is not on this load.',
       );
     }
@@ -467,8 +508,8 @@ export async function undoStopCheckin(
     const [load] = await tx.db
       .select({ reference: loads.reference })
       .from(loads)
-      .where(eq(loads.id, found.loadId));
-    if (!load) throw new Error('load referenced by checkin link is gone');
+      .where(eq(loads.id, args.loadId));
+    if (!load) throw new Error('load for stop checkin undo is gone');
 
     const [updated] = await tx.db
       .update(loadStops)
@@ -482,7 +523,7 @@ export async function undoStopCheckin(
     if (!updated) throw new Error('stop checkin undo returned nothing');
 
     await recordEvent(tx, 'load_stop.checkin_undone', {
-      subjectId: found.loadId,
+      subjectId: args.loadId,
       payload: {
         reference: load.reference,
         stopSeq: stop.seq,
@@ -495,6 +536,32 @@ export async function undoStopCheckin(
 
     return { stop: updated };
   });
+}
+
+export async function undoStopCheckin(
+  db: Database,
+  args: { token: string; stopId: string; milestone: StopMilestone; correlationId: string },
+): Promise<{ stop: TrackedStop }> {
+  const found = await findCheckinLink(db, args.token);
+
+  const s: Scope = {
+    ctx: {
+      orgId: found.orgId,
+      actor: { type: 'integration', provider: 'driver_checkin_link' },
+      correlationId: args.correlationId,
+    },
+    db,
+  };
+
+  return applyUndoStopCheckin(s, { loadId: found.loadId, stopId: args.stopId, milestone: args.milestone });
+}
+
+/** Same undo, for a driver acting through their own signed-in account — see `recordStopCheckinAsDriver`'s own note. */
+export async function undoStopCheckinAsDriver(
+  s: Scope,
+  args: { loadId: string; stopId: string; milestone: StopMilestone },
+): Promise<{ stop: TrackedStop }> {
+  return applyUndoStopCheckin(s, args);
 }
 
 /**

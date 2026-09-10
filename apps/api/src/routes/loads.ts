@@ -145,7 +145,7 @@ const StopParamSchema = z.object({ id: z.string().uuid(), stopId: z.string().uui
  * to any `drivers` row yet (see `driverIdForUser`'s own note), which every
  * caller here treats as "sees nothing" rather than an error.
  */
-async function driverScopeFor(s: Scope, request: FastifyRequest): Promise<string | null | undefined> {
+export async function driverScopeFor(s: Scope, request: FastifyRequest): Promise<string | null | undefined> {
   if (request.auth?.role !== 'driver') return undefined;
   if (request.auth.actor.type !== 'user') return null;
   return (await driverIdForUser(s, request.auth.actor.id)) ?? null;

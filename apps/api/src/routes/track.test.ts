@@ -24,6 +24,7 @@ let app: FastifyInstance;
 let userId: string;
 let driverUserId: string;
 const createdOrgs: string[] = [];
+const createdUsers: string[] = [];
 
 const as = (orgId: string, actingUserId = userId) => ({
   'x-haulq-org-id': orgId,
@@ -81,6 +82,7 @@ suite('track routes', () => {
 
   after(async () => {
     for (const id of createdOrgs) await destroyTestOrg(app.db, id);
+    for (const id of createdUsers) await destroyTestUser(app.db, id);
     await destroyTestUser(app.db, userId);
     await destroyTestUser(app.db, driverUserId);
     await app.close();
@@ -343,5 +345,205 @@ suite('track routes', () => {
     const res = await app.inject({ method: 'GET', url: '/v1/track/not-a-real-token' });
     assert.equal(res.statusCode, 404);
     assert.ok(res.json().explanation);
+  });
+
+  // --- a signed-in driver's own account, not an anonymous link --------------
+
+  describe('an authenticated driver reporting through their own account', () => {
+    async function linkedDriver(orgId: string): Promise<{ driverId: string; userId: string }> {
+      const created = await app.inject({
+        method: 'POST',
+        url: '/v1/drivers',
+        headers: as(orgId),
+        payload: { fullName: 'Authed Driver' },
+      });
+      const driverId = created.json().id as string;
+
+      const user = await createTestUser(app.db);
+      createdUsers.push(user.id);
+      const invited = await app.inject({
+        method: 'POST',
+        url: '/v1/members/invites',
+        headers: as(orgId),
+        payload: { email: `${user.id}@example.test`, role: 'driver', driverId },
+      });
+      const token = invited.json().token as string;
+      await app.inject({
+        method: 'POST',
+        url: `/v1/invitations/${token}/accept`,
+        headers: { 'x-haulq-user-id': user.id },
+      });
+
+      return { driverId, userId: user.id };
+    }
+
+    async function aDispatchedLoadForDriver(orgId: string, driverId: string) {
+      const truckRes = await app.inject({
+        method: 'POST',
+        url: '/v1/trucks',
+        headers: as(orgId),
+        payload: { label: 'Truck 2' },
+      });
+      const truckId = truckRes.json().id as string;
+
+      const loadRes = await app.inject({
+        method: 'POST',
+        url: '/v1/loads',
+        headers: as(orgId),
+        payload: {
+          status: 'dispatched',
+          brokerName: 'Prairie Freight',
+          truckId,
+          driverId,
+          stops: [
+            { type: 'pickup', city: 'Wichita', state: 'KS' },
+            { type: 'delivery', city: 'Denver', state: 'CO' },
+          ],
+        },
+      });
+      return loadRes.json() as {
+        id: string;
+        reference: number;
+        stops: Array<{ id: string; seq: number }>;
+      };
+    }
+
+    it("records a stop milestone under the driver's own name, not driver_checkin_link", async () => {
+      const orgId = await newOrg('Authed Checkin Carrier');
+      const { driverId, userId } = await linkedDriver(orgId);
+      const load = await aDispatchedLoadForDriver(orgId, driverId);
+      const pickupId = load.stops.find((s) => s.seq === 1)!.id;
+
+      const res = await app.inject({
+        method: 'POST',
+        url: `/v1/loads/${load.id}/stops/${pickupId}/checkin`,
+        headers: as(orgId, userId),
+        payload: { milestone: 'arrived' },
+      });
+      assert.equal(res.statusCode, 200);
+      assert.ok(res.json().stop.arrivedAt);
+
+      const timeline = await app.inject({
+        method: 'GET',
+        url: `/v1/timeline?subjectType=load&subjectId=${load.id}`,
+        headers: as(orgId),
+      });
+      const entries = timeline.json().items as Array<{
+        verb: string;
+        actorType: string;
+        actorId: string | null;
+      }>;
+      // `actorId` displays a user's email, not their raw id (see
+      // `context.ts`'s `actorId`) — the dev-mode stub hardcodes that email
+      // rather than looking it up, so the provable thing here is the actor
+      // *kind*: `user`, not the anonymous link's `driver_checkin_link`.
+      const checkin = entries.find((e) => e.verb === 'load_stop.checkin');
+      assert.equal(checkin?.actorType, 'user');
+      assert.notEqual(checkin?.actorId, 'driver_checkin_link');
+    });
+
+    it('undoes its own mis-tapped milestone', async () => {
+      const orgId = await newOrg('Authed Undo Carrier');
+      const { driverId, userId } = await linkedDriver(orgId);
+      const load = await aDispatchedLoadForDriver(orgId, driverId);
+      const pickupId = load.stops.find((s) => s.seq === 1)!.id;
+
+      await app.inject({
+        method: 'POST',
+        url: `/v1/loads/${load.id}/stops/${pickupId}/checkin`,
+        headers: as(orgId, userId),
+        payload: { milestone: 'arrived' },
+      });
+
+      const undo = await app.inject({
+        method: 'POST',
+        url: `/v1/loads/${load.id}/stops/${pickupId}/checkin/undo`,
+        headers: as(orgId, userId),
+        payload: { milestone: 'arrived' },
+      });
+      assert.equal(undo.statusCode, 200);
+      assert.equal(undo.json().stop.arrivedAt, null);
+    });
+
+    it("404s a driver tapping a milestone on a load that isn't theirs", async () => {
+      const orgId = await newOrg('Authed Wrong Load Carrier');
+      const { userId } = await linkedDriver(orgId);
+      const otherDriverId = (
+        await app.inject({
+          method: 'POST',
+          url: '/v1/drivers',
+          headers: as(orgId),
+          payload: { fullName: 'Someone Else' },
+        })
+      ).json().id as string;
+      const othersLoad = await aDispatchedLoadForDriver(orgId, otherDriverId);
+      const pickupId = othersLoad.stops.find((s) => s.seq === 1)!.id;
+
+      const res = await app.inject({
+        method: 'POST',
+        url: `/v1/loads/${othersLoad.id}/stops/${pickupId}/checkin`,
+        headers: as(orgId, userId),
+        payload: { milestone: 'arrived' },
+      });
+      assert.equal(res.statusCode, 404);
+    });
+
+    it('refuses a non-driver role at these routes even inside the right org', async () => {
+      const orgId = await newOrg('Authed Role Carrier');
+      const { driverId } = await linkedDriver(orgId);
+      const load = await aDispatchedLoadForDriver(orgId, driverId);
+      const pickupId = load.stops.find((s) => s.seq === 1)!.id;
+
+      const res = await app.inject({
+        method: 'POST',
+        url: `/v1/loads/${load.id}/stops/${pickupId}/checkin`,
+        headers: as(orgId), // the owner, not the linked driver
+        payload: { milestone: 'arrived' },
+      });
+      assert.equal(res.statusCode, 403);
+    });
+
+    it("records a position ping against the load's own truck", async () => {
+      const orgId = await newOrg('Authed Position Carrier');
+      const { driverId, userId } = await linkedDriver(orgId);
+      const load = await aDispatchedLoadForDriver(orgId, driverId);
+
+      const ping = await app.inject({
+        method: 'POST',
+        url: `/v1/loads/${load.id}/position`,
+        headers: as(orgId, userId),
+        payload: { lat: 39.0997, lng: -94.5786 },
+      });
+      assert.equal(ping.statusCode, 204);
+    });
+
+    it('refuses a position ping for a load with no truck assigned yet', async () => {
+      const orgId = await newOrg('Authed No Truck Carrier');
+      const { driverId, userId } = await linkedDriver(orgId);
+
+      const loadRes = await app.inject({
+        method: 'POST',
+        url: '/v1/loads',
+        headers: as(orgId),
+        payload: {
+          brokerName: 'Prairie Freight',
+          driverId,
+          stops: [
+            { type: 'pickup', city: 'Wichita', state: 'KS' },
+            { type: 'delivery', city: 'Denver', state: 'CO' },
+          ],
+        },
+      });
+      const load = loadRes.json() as { id: string };
+
+      const ping = await app.inject({
+        method: 'POST',
+        url: `/v1/loads/${load.id}/position`,
+        headers: as(orgId, userId),
+        payload: { lat: 39.0997, lng: -94.5786 },
+      });
+      assert.equal(ping.statusCode, 422);
+      assert.equal(ping.json().code, 'no_truck');
+    });
   });
 });

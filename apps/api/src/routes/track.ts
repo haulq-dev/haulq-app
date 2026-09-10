@@ -23,22 +23,27 @@ import {
   RecordStopCheckinSchema,
 } from '@haulq/contracts';
 import {
+  getLoad,
   issueCheckinLink,
   issueVisibilityLink,
   previewCheckin,
   previewTracking,
   recordCheckinPosition,
   recordStopCheckin,
+  recordStopCheckinAsDriver,
+  recordTruckPosition,
   revokeCheckinLink,
   revokeVisibilityLink,
   TrackError,
   undoStopCheckin,
+  undoStopCheckinAsDriver,
 } from '@haulq/db';
 import { randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { HttpError, requireRole, requireScope } from '../plugins/request-context.ts';
+import { driverScopeFor } from './loads.ts';
 
 const STATUS: Record<string, number> = {
   not_found: 404,
@@ -64,6 +69,7 @@ const IdParamSchema = z.object({ id: z.string().uuid() });
 // opaque string. Neither is a UUID; see the module note on `checkin/:token`.
 const TokenParamSchema = z.object({ token: z.string().min(1) });
 const StopCheckinParamSchema = z.object({ token: z.string().min(1), stopId: z.string().uuid() });
+const AuthedStopParamSchema = z.object({ id: z.string().uuid(), stopId: z.string().uuid() });
 
 export async function trackRoutes(app: FastifyInstance) {
   const server = app.withTypeProvider<ZodTypeProvider>();
@@ -150,6 +156,139 @@ export async function trackRoutes(app: FastifyInstance) {
       } catch (err) {
         rethrow(err);
       }
+    },
+  );
+
+  /**
+   * A signed-in driver's own milestone report — the account-based
+   * counterpart to `POST /v1/checkin/:token/stops/:stopId` below. Same
+   * write (`applyStopCheckin` in `repositories/track.ts`), reached through
+   * `requireScope`/`requireRole` instead of a token, so `load_stop.checkin`
+   * records the actual driver as the actor rather than
+   * `driver_checkin_link`. See that repository's module note for why both
+   * paths stay live side by side.
+   */
+  server.post(
+    '/v1/loads/:id/stops/:stopId/checkin',
+    {
+      schema: {
+        tags: ['Track'],
+        summary: "A signed-in driver's own stop milestone",
+        params: AuthedStopParamSchema,
+        body: RecordStopCheckinSchema,
+      },
+    },
+    async (request) => {
+      const s = await requireScope(request);
+      requireRole(request, 'driver');
+      const { id, stopId } = request.params;
+
+      const load = await getLoad(s, id);
+      if (!load) throw new HttpError(404, 'not_found', 'That load no longer exists.');
+      const driverScope = await driverScopeFor(s, request);
+      if (driverScope !== undefined && load.driverId !== driverScope) {
+        throw new HttpError(404, 'not_found', 'That load no longer exists.');
+      }
+
+      try {
+        return await recordStopCheckinAsDriver(s, {
+          loadId: id,
+          stopId,
+          milestone: request.body.milestone,
+          occurredAt: request.body.occurredAt,
+        });
+      } catch (err) {
+        rethrow(err);
+      }
+    },
+  );
+
+  server.post(
+    '/v1/loads/:id/stops/:stopId/checkin/undo',
+    {
+      schema: {
+        tags: ['Track'],
+        summary: "Undo a signed-in driver's own mis-tapped milestone",
+        params: AuthedStopParamSchema,
+        body: RecordStopCheckinSchema.pick({ milestone: true }),
+      },
+    },
+    async (request) => {
+      const s = await requireScope(request);
+      requireRole(request, 'driver');
+      const { id, stopId } = request.params;
+
+      const load = await getLoad(s, id);
+      if (!load) throw new HttpError(404, 'not_found', 'That load no longer exists.');
+      const driverScope = await driverScopeFor(s, request);
+      if (driverScope !== undefined && load.driverId !== driverScope) {
+        throw new HttpError(404, 'not_found', 'That load no longer exists.');
+      }
+
+      try {
+        return await undoStopCheckinAsDriver(s, { loadId: id, stopId, milestone: request.body.milestone });
+      } catch (err) {
+        rethrow(err);
+      }
+    },
+  );
+
+  /**
+   * A signed-in driver's own position ping — the account-based counterpart
+   * to `POST /v1/checkin/:token/position` below. `recordTruckPosition`
+   * itself needs no actor (position is telemetry, not an audit event — see
+   * its own doc), so this only has to resolve the load's truck and reuse it
+   * directly, same as the anonymous route does.
+   */
+  server.post(
+    '/v1/loads/:id/position',
+    {
+      schema: {
+        tags: ['Track'],
+        summary: "A signed-in driver's own position ping",
+        params: IdParamSchema,
+        body: RecordPositionSchema,
+      },
+    },
+    async (request, reply) => {
+      const s = await requireScope(request);
+      requireRole(request, 'driver');
+      const { id } = request.params;
+      const { lat, lng } = request.body;
+
+      const load = await getLoad(s, id);
+      if (!load) throw new HttpError(404, 'not_found', 'That load no longer exists.');
+      const driverScope = await driverScopeFor(s, request);
+      if (driverScope !== undefined && load.driverId !== driverScope) {
+        throw new HttpError(404, 'not_found', 'That load no longer exists.');
+      }
+      if (!load.truckId) {
+        throw new HttpError(
+          422,
+          'no_truck',
+          'This load has no truck assigned yet, so there is nowhere to record a position.',
+        );
+      }
+
+      let resolved: { city: string | null; state: string | null } | undefined;
+      if (app.reverseGeocoder) {
+        try {
+          resolved = await app.reverseGeocoder.reverseGeocode(lat, lng);
+        } catch (err) {
+          request.log.warn({ err }, 'reverse geocode failed for a driver-app position ping');
+        }
+      }
+
+      await recordTruckPosition(app.db, {
+        orgId: s.ctx.orgId,
+        truckId: load.truckId,
+        lat,
+        lng,
+        recordedAt: request.body.recordedAt ? new Date(request.body.recordedAt) : new Date(),
+        source: 'driver_app',
+        ...(resolved ? { city: resolved.city, state: resolved.state } : {}),
+      });
+      return reply.code(204).send();
     },
   );
 
