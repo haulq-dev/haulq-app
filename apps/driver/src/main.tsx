@@ -26,8 +26,11 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { AuthGate } from './components/AuthGate.tsx';
 import { ErrorBoundary } from './components/ErrorBoundary.tsx';
+import { AddTruckScreen } from './routes/AddTruck.tsx';
 import { CheckinScreen, isCheckinRoute } from './routes/Checkin.tsx';
+import { CreateLoadScreen } from './routes/CreateLoad.tsx';
 import { InviteAcceptScreen } from './routes/Invite.tsx';
+import { InviteDriverScreen } from './routes/InviteDriver.tsx';
 import { LoadDetailScreen } from './routes/LoadDetail.tsx';
 import { MyLoadsScreen } from './routes/MyLoads.tsx';
 import './styles.css';
@@ -74,8 +77,30 @@ const inviteRoute = createRoute({
   path: '/invite/$token',
   component: InviteAcceptScreen,
 });
+const addTruckRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/trucks/new',
+  component: AddTruckScreen,
+});
+const inviteDriverRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/drivers/new',
+  component: InviteDriverScreen,
+});
+const createLoadRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/loads/new',
+  component: CreateLoadScreen,
+});
 
-const routeTree = rootRoute.addChildren([indexRoute, loadDetailRoute, inviteRoute]);
+const routeTree = rootRoute.addChildren([
+  indexRoute,
+  loadDetailRoute,
+  inviteRoute,
+  addTruckRoute,
+  inviteDriverRoute,
+  createLoadRoute,
+]);
 const router = createRouter({ routeTree });
 
 declare module '@tanstack/react-router' {

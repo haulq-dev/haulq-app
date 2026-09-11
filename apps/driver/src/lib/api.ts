@@ -25,6 +25,8 @@ export interface Session {
   /** `?: string | undefined`, not `?: string` — `exactOptionalPropertyTypes` is on, and clearing the org means assigning `undefined`, not deleting the key. */
   orgId?: string | undefined;
   orgName?: string | undefined;
+  /** This login's role in `orgId` — owner/dispatcher/driver/accountant. Lets the UI hide owner/dispatcher-only actions from a driver; the API's own `requireRole` is what actually enforces it. */
+  role?: string | undefined;
 }
 
 const SESSION_KEY = 'haulq.driver.session';

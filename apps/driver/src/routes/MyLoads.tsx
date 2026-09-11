@@ -15,6 +15,30 @@ import { SignOutLink, useSession } from '../components/AuthGate.tsx';
 import { Card, Empty, ErrorNote, Pill } from '../components/ui.tsx';
 import { request } from '../lib/api.ts';
 
+/**
+ * The bare-minimum owner/dispatcher actions — add a truck, invite a
+ * driver, add a load — needed once self-serve carrier signup meant a
+ * brand-new carrier could land here with nothing else to do. Hidden from
+ * a driver's own view since none of the three apply to them; the API's
+ * own `requireRole(request, 'owner', 'dispatcher')` on all three routes
+ * is what actually enforces it, not this check.
+ */
+function ManageLinks() {
+  return (
+    <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
+      <Link to="/trucks/new" className="text-brand underline">
+        Add a truck
+      </Link>
+      <Link to="/drivers/new" className="text-brand underline">
+        Invite a driver
+      </Link>
+      <Link to="/loads/new" className="text-brand underline">
+        Add a load
+      </Link>
+    </div>
+  );
+}
+
 interface LoadStopSummary {
   seq: number;
   type: 'pickup' | 'delivery';
@@ -52,6 +76,8 @@ export function MyLoadsScreen() {
         <SignOutLink />
       </div>
       {session?.orgName && <p className="-mt-2 text-sm text-mute">{session.orgName}</p>}
+
+      {(session?.role === 'owner' || session?.role === 'dispatcher') && <ManageLinks />}
 
       {loads.isError && <ErrorNote error={loads.error} />}
 

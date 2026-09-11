@@ -299,7 +299,13 @@ function CreateOrgOrWait() {
         <button
           type="button"
           className="hq-btn hq-btn-brand mt-6"
-          onClick={() => writeSession({ userId: 'clerk', orgId: created.id, orgName: created.name })}
+          onClick={() =>
+            // The creator of a brand-new org is always its owner —
+            // `createOrg` (packages/db/src/repositories/orgs.ts) inserts
+            // the membership with role: 'owner' directly, no other role
+            // is possible here.
+            writeSession({ userId: 'clerk', orgId: created.id, orgName: created.name, role: 'owner' })
+          }
         >
           Continue
         </button>
@@ -355,7 +361,7 @@ function CreateOrgOrWait() {
  */
 function AutoSelectOrg({ org, children }: { org: OrgSummary; children: ReactNode }) {
   useEffect(() => {
-    writeSession({ userId: 'clerk', orgId: org.id, orgName: org.name });
+    writeSession({ userId: 'clerk', orgId: org.id, orgName: org.name, role: org.role });
   }, [org.id, org.name]);
 
   // `writeSession` dispatches `haulq:session`, which `useSession()` in the
@@ -375,7 +381,7 @@ function OrgPicker({ orgs }: { orgs: OrgSummary[] }) {
             key={org.id}
             type="button"
             className="flex w-full items-center justify-between border border-line bg-white px-4 py-3 text-left"
-            onClick={() => writeSession({ userId: 'clerk', orgId: org.id, orgName: org.name })}
+            onClick={() => writeSession({ userId: 'clerk', orgId: org.id, orgName: org.name, role: org.role })}
           >
             <span>{org.name}</span>
             <span className="field-label text-mute">{org.role}</span>
