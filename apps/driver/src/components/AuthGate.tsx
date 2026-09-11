@@ -20,6 +20,7 @@ import {
   SignedIn,
   SignedOut,
   SignIn,
+  SignUp,
   useAuth,
   useClerk,
   useUser,
@@ -69,6 +70,24 @@ const APPEARANCE = {
   },
 } as const;
 
+/**
+ * `SignInScreen`'s own `<SignIn/>`/`<SignUp/>` pair, on top of `APPEARANCE`.
+ * Clerk's built-in "Don't have an account? Sign up" / "Already have an
+ * account? Sign in" footer link is a real navigation to `signUpUrl`/
+ * `signInUrl` (Clerk's hosted Account Portal, absent an in-app route wired
+ * up for it) — outside `allowNavigation` (capacitor.config.ts), so the
+ * WebView handed it to the system browser instead of switching modes
+ * in-app. `SignInScreen` now does that switch itself with local state, so
+ * Clerk's own footer link is hidden here and replaced with a button that
+ * matches the existing "Have a check-in code instead?" pattern below it.
+ */
+const SIGN_IN_APPEARANCE = {
+  elements: {
+    ...APPEARANCE.elements,
+    footerAction: { display: 'none' },
+  },
+} as const;
+
 const SignedInContext = createContext(false);
 
 /** True once someone is signed in and their token is ready to attach to requests. */
@@ -115,19 +134,34 @@ function TokenBridge({ onReady }: { onReady: () => void }) {
 }
 
 function SignInScreen() {
+  const [mode, setMode] = useState<'sign-in' | 'sign-up'>('sign-in');
+
   return (
     <div className="mx-auto flex min-h-screen max-w-md flex-col items-center justify-center gap-8 px-6">
       <Logo />
-      <SignIn routing="hash" />
-      {/* A full navigation, not client-side state — `main.tsx` decides
-          `CheckinScreen` vs. this screen once, from the URL, at mount. */}
-      <button
-        type="button"
-        className="text-sm text-brand underline"
-        onClick={() => window.location.assign('/checkin')}
-      >
-        Have a check-in code instead?
-      </button>
+      {mode === 'sign-in' ? (
+        <SignIn routing="hash" appearance={SIGN_IN_APPEARANCE} />
+      ) : (
+        <SignUp routing="hash" appearance={SIGN_IN_APPEARANCE} />
+      )}
+      <div className="flex flex-col items-center gap-2">
+        <button
+          type="button"
+          className="text-sm text-brand underline"
+          onClick={() => setMode(mode === 'sign-in' ? 'sign-up' : 'sign-in')}
+        >
+          {mode === 'sign-in' ? "Don't have an account? Sign up" : 'Already have an account? Sign in'}
+        </button>
+        {/* A full navigation, not client-side state — `main.tsx` decides
+            `CheckinScreen` vs. this screen once, from the URL, at mount. */}
+        <button
+          type="button"
+          className="text-sm text-brand underline"
+          onClick={() => window.location.assign('/checkin')}
+        >
+          Have a check-in code instead?
+        </button>
+      </div>
     </div>
   );
 }
