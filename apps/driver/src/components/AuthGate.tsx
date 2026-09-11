@@ -21,8 +21,9 @@ import {
   SignIn,
   useAuth,
   useClerk,
+  useUser,
 } from '@clerk/clerk-react';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import { readSession, request, writeSession, type Session } from '../lib/api.ts';
 import {
@@ -31,6 +32,7 @@ import {
   keyProblem,
   registerTokenGetter,
 } from '../lib/auth.ts';
+import { ErrorNote } from './ui.tsx';
 import { Logo } from './Logo.tsx';
 
 /**
@@ -242,19 +244,104 @@ function OrgGate({ children }: { children: ReactNode }) {
     return <OrgPicker orgs={items} />;
   }
 
+  return <CreateOrgOrWait />;
+}
+
+interface CreatedOrg {
+  id: string;
+  name: string;
+}
+
+/**
+ * A login with zero orgs — either a brand-new person creating their own
+ * carrier (the self-serve path Apple's Guideline 3.2 review actually
+ * checks for: can anyone become a customer, not just someone a dispatcher
+ * already invited), or someone waiting on an invite/check-in code that
+ * hasn't reached them yet. Both stay on this one screen — creating a
+ * carrier is additive, not a replacement for the other two paths.
+ *
+ * `POST /v1/orgs` needs no prior org membership at all
+ * (`authenticateUser`-only on `apps/api/src/routes/orgs.ts` — the same
+ * endpoint `apps/web`'s own `createOrg` already calls), so nothing on the
+ * backend had to change for this to work.
+ */
+function CreateOrgOrWait() {
+  const { user } = useUser();
+  const [name, setName] = useState('');
+  const [created, setCreated] = useState<CreatedOrg | null>(null);
+
+  const create = useMutation({
+    mutationFn: () =>
+      request<{ org: CreatedOrg }>('/v1/orgs', {
+        body: {
+          name,
+          // The signed-in person's own email, not a placeholder — this is
+          // "where system mail goes" for the new carrier (see orgs'
+          // schema comment), and Clerk already has a verified one on hand.
+          contactEmail: user?.primaryEmailAddress?.emailAddress ?? '',
+        },
+      }),
+    onSuccess: (res) => setCreated(res.org),
+  });
+
+  if (created) {
+    return (
+      <div className="mx-auto max-w-md px-6 py-16">
+        <h1 className="mb-2 text-2xl">{created.name} is set up</h1>
+        <p className="text-slate">
+          This app shows loads and lets a driver report progress — to add trucks, invite drivers,
+          and start booking loads, sign in at <span className="num">app.haulq.ai</span> on a
+          computer.
+        </p>
+        {/* Deliberately not automatic — `writeSession` here is what moves
+            `OrgGate` on to `children`, and holding it behind a tap keeps
+            this confirmation from flashing past unread. */}
+        <button
+          type="button"
+          className="hq-btn hq-btn-brand mt-6"
+          onClick={() => writeSession({ userId: 'clerk', orgId: created.id, orgName: created.name })}
+        >
+          Continue
+        </button>
+      </div>
+    );
+  }
+
   return (
-    <div className="mx-auto max-w-md px-6 py-16">
-      <h1 className="mb-2 text-2xl">You're signed in, but not part of any account yet</h1>
-      <p className="text-slate">
-        Ask whoever invited you to send the link again, or use a check-in code instead.
-      </p>
-      <button
-        type="button"
-        className="mt-4 text-sm text-brand underline"
-        onClick={() => window.location.assign('/checkin')}
-      >
-        Have a check-in code instead?
-      </button>
+    <div className="mx-auto max-w-md space-y-8 px-6 py-16">
+      <div>
+        <h1 className="mb-2 text-2xl">Set up your carrier</h1>
+        <p className="mb-4 text-slate">New to HaulQ? Give your company a name to get started.</p>
+        <input
+          className="hq-input"
+          placeholder="Company name"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+        />
+        <button
+          type="button"
+          className="hq-btn hq-btn-brand mt-4 w-full"
+          disabled={!name.trim() || create.isPending}
+          onClick={() => create.mutate()}
+        >
+          {create.isPending ? 'Creating…' : 'Create carrier account'}
+        </button>
+        <ErrorNote error={create.error} />
+      </div>
+
+      <div className="border-t border-line pt-6">
+        <p className="text-sm text-slate">
+          Already connected to a carrier on HaulQ? Ask whoever invited you to send the link again,
+          or use a check-in code instead.
+        </p>
+        <button
+          type="button"
+          className="mt-2 text-sm text-brand underline"
+          onClick={() => window.location.assign('/checkin')}
+        >
+          Have a check-in code instead?
+        </button>
+      </div>
     </div>
   );
 }
