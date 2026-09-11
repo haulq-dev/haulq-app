@@ -15,7 +15,13 @@
 
 import { App as CapacitorApp } from '@capacitor/app';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { createRootRoute, createRoute, createRouter, RouterProvider } from '@tanstack/react-router';
+import {
+  createRootRoute,
+  createRoute,
+  createRouter,
+  Outlet,
+  RouterProvider,
+} from '@tanstack/react-router';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { AuthGate } from './components/AuthGate.tsx';
@@ -39,7 +45,24 @@ const queryClient = new QueryClient({
   },
 });
 
-const rootRoute = createRootRoute();
+/**
+ * Clears the status bar/notch for every routed screen, in one place.
+ * `Checkin.tsx` owns its own inset via `.hq-header-safe` on its header bar
+ * — it's mounted outside this router entirely — but nothing else did,
+ * which is exactly why "Your loads"'s heading rendered under the status
+ * bar on a real device: none of MyLoads/LoadDetail/Invite's own padding
+ * accounts for a dynamic inset that varies by device. Fixed once here
+ * rather than patched into each screen's own wrapper `div`.
+ */
+function RootLayout() {
+  return (
+    <div className="pt-[env(safe-area-inset-top)]">
+      <Outlet />
+    </div>
+  );
+}
+
+const rootRoute = createRootRoute({ component: RootLayout });
 const indexRoute = createRoute({ getParentRoute: () => rootRoute, path: '/', component: MyLoadsScreen });
 const loadDetailRoute = createRoute({
   getParentRoute: () => rootRoute,
