@@ -11,6 +11,7 @@
  * needs an actual choice, not just a placeholder message.
  */
 
+import { Browser } from '@capacitor/browser';
 import {
   ClerkFailed,
   ClerkLoaded,
@@ -137,6 +138,33 @@ export function SignOutLink() {
   return (
     <button type="button" className="text-sm text-brand underline" onClick={() => void signOut()}>
       Sign out
+    </button>
+  );
+}
+
+/**
+ * Apple Guideline 5.1.1(v): an app that supports account creation must
+ * also offer account deletion, in-app or via a link to a web page that
+ * handles it. This is the link — the actual deletion (Clerk's own
+ * self-service `user.delete()`) lives on `apps/web`'s `/delete-account`
+ * page, which both apps' logins share since they're the same Clerk
+ * identity. Every signed-in login gets this, not just owner/dispatcher —
+ * unlike `ManageLinks` in `MyLoads.tsx`, this isn't role-gated, since
+ * Apple's requirement applies to any account, driver included.
+ *
+ * Opened via `@capacitor/browser` rather than a plain link: this app's
+ * `allowNavigation` (`capacitor.config.ts`) only allowlists Clerk's own
+ * domains, not `app.haulq.ai`, and a destructive, identity-sensitive
+ * action belongs in a real browser tab regardless.
+ */
+export function DeleteAccountLink() {
+  return (
+    <button
+      type="button"
+      className="text-sm text-brand underline"
+      onClick={() => void Browser.open({ url: 'https://app.haulq.ai/delete-account' })}
+    >
+      Delete my account
     </button>
   );
 }

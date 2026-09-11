@@ -19,6 +19,7 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { AuthGate } from './components/AuthGate.tsx';
 import { Shell } from './components/Shell.tsx';
+import { DeleteAccountScreen } from './routes/DeleteAccount.tsx';
 import { DocumentsScreen } from './routes/Documents.tsx';
 import { DriversScreen } from './routes/Drivers.tsx';
 import { ImportScreen } from './routes/Import.tsx';
@@ -62,8 +63,15 @@ const queryClient = new QueryClient({
  * `/track/` joins it for the same reason: a broker watching a load has no
  * carrier nav to show and, per `AuthGate.tsx`'s `PUBLIC_PREFIXES`, no account
  * to show it to.
+ *
+ * `/delete-account` joins it too, but for a different reason than the other
+ * two: it needs no org context at all — it deletes the signed-in *person*,
+ * not anything org-scoped — and it's reached from the driver app's own
+ * `DeleteAccountLink` as a bare external link, where forcing an org pick
+ * first would be a pointless extra step in front of an action that has
+ * nothing to do with any one carrier.
  */
-const CHROMELESS = ['/invite/', '/track/'];
+const CHROMELESS = ['/invite/', '/track/', '/delete-account'];
 
 function RootLayout() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
@@ -155,6 +163,11 @@ const integrationsRoute = createRoute({
   path: '/integrations',
   component: IntegrationsScreen,
 });
+const deleteAccountRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/delete-account',
+  component: DeleteAccountScreen,
+});
 
 const routeTree = rootRoute.addChildren([
   indexRoute,
@@ -172,6 +185,7 @@ const routeTree = rootRoute.addChildren([
   inviteRoute,
   trackRoute,
   integrationsRoute,
+  deleteAccountRoute,
 ]);
 
 const router = createRouter({ routeTree });

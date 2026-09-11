@@ -11,7 +11,7 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
-import { SignOutLink, useSession } from '../components/AuthGate.tsx';
+import { DeleteAccountLink, SignOutLink, useSession } from '../components/AuthGate.tsx';
 import { Card, Empty, ErrorNote, Pill } from '../components/ui.tsx';
 import { request } from '../lib/api.ts';
 
@@ -73,7 +73,10 @@ export function MyLoadsScreen() {
     <div className="mx-auto max-w-md space-y-4 px-4 py-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl">Your loads</h1>
-        <SignOutLink />
+        <div className="flex flex-col items-end gap-0.5">
+          <SignOutLink />
+          <DeleteAccountLink />
+        </div>
       </div>
       {session?.orgName && <p className="-mt-2 text-sm text-mute">{session.orgName}</p>}
 
