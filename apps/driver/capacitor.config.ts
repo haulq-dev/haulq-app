@@ -84,6 +84,31 @@ const config: CapacitorConfig = {
     // this app's own setup notes/chat history for how that's set; there's
     // no Clerk Dashboard UI for it, only the Backend API.
   },
+  // The actual root cause behind "sign-in attempt created, prepare_first_factor
+  // 401s with code: 'signed_out', no code ever sent" — confirmed via
+  // chrome://inspect. It's a documented WebKit/iOS policy
+  // (NSHTTPCookieAcceptPolicyOnlyFromMainDocumentDomain): a WKWebView
+  // refuses any cookie whose domain differs from the page's own
+  // (`https://localhost`/`capacitor://localhost`), no matter what CORS
+  // headers the other side sends — so the cookie Clerk needs to track its
+  // pre-auth "client" session across clerk.haulq.ai never gets accepted,
+  // and every follow-up request looks signed-out. `allowNavigation` and
+  // Clerk's `allowed_origins` only control whether a request is allowed
+  // to be *made*; neither touches whether the resulting cookie is
+  // *kept*, which is the actual failure here.
+  //
+  // These two plugins patch `fetch`/`XMLHttpRequest`/`document.cookie` to
+  // route through native networking (NSURLSession on iOS) instead of the
+  // WebView's own JS engine, which isn't bound by the same restrictive
+  // policy — Capacitor's documented fix for exactly this class of
+  // cross-origin-cookie problem. This changes networking for every fetch
+  // in the app, not just Clerk's calls, but nothing else here does
+  // anything more exotic than plain JSON requests (see api.ts), so
+  // there's nothing else this could plausibly break.
+  plugins: {
+    CapacitorHttp: { enabled: true },
+    CapacitorCookies: { enabled: true },
+  },
 };
 
 export default config;
