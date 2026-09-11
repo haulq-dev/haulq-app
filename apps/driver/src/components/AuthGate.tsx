@@ -174,12 +174,49 @@ function SignInScreen() {
   );
 }
 
-/** Plain-text sign-out, for whatever screen wants one — no header/nav chrome exists yet to hang a `UserButton` off of. */
+/**
+ * Plain-text sign-out, for whatever screen wants one — no header/nav chrome
+ * exists yet to hang a `UserButton` off of.
+ *
+ * Clears the locally-cached org along with Clerk's own session. Without
+ * this, `OrgGate`'s `session?.orgId` short-circuit (see its own note) means
+ * the next sign-in — even as a different Clerk identity on the same device
+ * — would keep using whichever org was cached last, instead of resolving
+ * fresh via `useOrgs()`.
+ */
 export function SignOutLink() {
   const { signOut } = useClerk();
   return (
-    <button type="button" className="text-sm text-brand underline" onClick={() => void signOut()}>
+    <button
+      type="button"
+      className="text-sm text-brand underline"
+      onClick={() => {
+        writeSession(null);
+        void signOut();
+      }}
+    >
       Sign out
+    </button>
+  );
+}
+
+/**
+ * Drops the cached org without signing out, so `OrgGate` re-evaluates
+ * `useOrgs()` from scratch — the only way back to the picker for a login
+ * that has since gained (or needs to revisit) another org membership.
+ * `OrgGate`'s own short-circuit otherwise sticks to the first org resolved
+ * forever, with no other route back to a re-check.
+ */
+export function SwitchAccountLink() {
+  const session = useSession();
+  if (!session?.orgId) return null;
+  return (
+    <button
+      type="button"
+      className="text-sm text-brand underline"
+      onClick={() => writeSession({ userId: session.userId })}
+    >
+      Switch account
     </button>
   );
 }
