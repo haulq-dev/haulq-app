@@ -1,12 +1,12 @@
 /**
- * A signed-in driver's own assigned loads.
+ * The loads this login can see — a driver's own assigned load(s), or the
+ * whole org's for an owner/dispatcher/accountant signed in directly.
  *
- * `GET /v1/loads` is already server-scoped to this login's linked roster
- * row for a `driver`-role caller (`driverScopeFor` in
+ * `GET /v1/loads` is already server-scoped per role (`driverScopeFor` in
  * `apps/api/src/routes/loads.ts`) — this screen does no filtering of its
- * own, it just renders whatever comes back. The common case is exactly one
- * row; the list shape still holds for the day a driver is dispatched on a
- * second load before finishing the first.
+ * own, it just renders whatever comes back. A driver's common case is
+ * exactly one row; the list shape holds equally for a dispatcher scrolling
+ * the org's whole board.
  */
 
 import { useQuery } from '@tanstack/react-query';
@@ -57,7 +57,7 @@ export function MyLoadsScreen() {
 
       {loads.data && items.length === 0 && (
         <div className="hq-card p-4">
-          <Empty>Nothing assigned to you right now.</Empty>
+          <Empty>No loads yet.</Empty>
         </div>
       )}
 
