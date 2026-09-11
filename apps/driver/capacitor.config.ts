@@ -52,7 +52,22 @@ const config: CapacitorConfig = {
   // Safari/Custom Tabs view) satisfies it, which nothing in this app does
   // yet. Email-code sign-in doesn't hit that restriction at all.
   server: {
-    allowNavigation: ['clerk.haulq.ai', '*.clerk.accounts.dev', '*.clerk.com'],
+    allowNavigation: [
+      'clerk.haulq.ai',
+      '*.clerk.accounts.dev',
+      '*.clerk.com',
+      // Clerk's "Bot sign-up protection" (Configure → Attack protection in
+      // the Clerk dashboard) runs a Cloudflare Turnstile challenge before
+      // it will send a verification code. Turnstile's widget loads from
+      // this domain, which was missing here — so the WebView silently
+      // blocked it, the challenge never completed, and Clerk suppressed
+      // the email as a safety measure rather than erroring outright. That
+      // was the actual cause of "the sign-in attempt is created but no
+      // code ever arrives" on both the Android emulator and a real
+      // iPhone — not device/network flakiness, the same missing-domain
+      // shape as the two fixes above it.
+      'challenges.cloudflare.com',
+    ],
     // NOT `androidScheme: 'capacitor'` — tried it, reverted it. The idea
     // was to unify Android onto the same narrower `capacitor://` origin
     // iOS already uses by default, so Clerk's `allowed_origins` only
