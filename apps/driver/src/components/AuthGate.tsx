@@ -20,7 +20,6 @@ import {
   SignedIn,
   SignedOut,
   SignIn,
-  SignUp,
   useAuth,
   useClerk,
   useUser,
@@ -71,15 +70,22 @@ const APPEARANCE = {
 } as const;
 
 /**
- * `SignInScreen`'s own `<SignIn/>`/`<SignUp/>` pair, on top of `APPEARANCE`.
- * Clerk's built-in "Don't have an account? Sign up" / "Already have an
- * account? Sign in" footer link is a real navigation to `signUpUrl`/
- * `signInUrl` (Clerk's hosted Account Portal, absent an in-app route wired
- * up for it) — outside `allowNavigation` (capacitor.config.ts), so the
- * WebView handed it to the system browser instead of switching modes
- * in-app. `SignInScreen` now does that switch itself with local state, so
- * Clerk's own footer link is hidden here and replaced with a button that
- * matches the existing "Have a check-in code instead?" pattern below it.
+ * `SignInScreen`'s own copy of `APPEARANCE`, with Clerk's built-in "Don't
+ * have an account? Sign up" footer link hidden — replaced with a button
+ * that opens sign-up in the system browser via `Browser.open()`, same as
+ * `DeleteAccountLink` below.
+ *
+ * An embedded `<SignUp/>` was tried first, but Cloudflare Turnstile (this
+ * Clerk instance's bot-sign-up protection) runs sign-up through a
+ * `challenges.cloudflare.com` iframe that talks to its parent via
+ * `postMessage` — which fails inside this WebView (`postMessage` target
+ * origin `challenges.cloudflare.com` vs. the WebView's own origin,
+ * `https://localhost` on Android/iOS per `capacitor.config.ts`), surfacing
+ * as "Authentication unsuccessful due to failed security validations" no
+ * matter what's typed in. That's a WebView limitation, not something
+ * `allowNavigation` or an appearance override can fix — Turnstile expects
+ * a real browser origin. Sign-in has no such challenge and keeps working
+ * embedded; only sign-up needs the real browser.
  */
 const SIGN_IN_APPEARANCE = {
   elements: {
@@ -87,6 +93,12 @@ const SIGN_IN_APPEARANCE = {
     footerAction: { display: 'none' },
   },
 } as const;
+
+/** Clerk's hosted sign-up page for this instance, via the SDK rather than a hardcoded domain guess. */
+function useSignUpUrl(): string {
+  const clerk = useClerk();
+  return clerk.buildSignUpUrl();
+}
 
 const SignedInContext = createContext(false);
 
@@ -134,23 +146,19 @@ function TokenBridge({ onReady }: { onReady: () => void }) {
 }
 
 function SignInScreen() {
-  const [mode, setMode] = useState<'sign-in' | 'sign-up'>('sign-in');
+  const signUpUrl = useSignUpUrl();
 
   return (
     <div className="mx-auto flex min-h-screen max-w-md flex-col items-center justify-center gap-8 px-6">
       <Logo />
-      {mode === 'sign-in' ? (
-        <SignIn routing="hash" appearance={SIGN_IN_APPEARANCE} />
-      ) : (
-        <SignUp routing="hash" appearance={SIGN_IN_APPEARANCE} />
-      )}
+      <SignIn routing="hash" appearance={SIGN_IN_APPEARANCE} />
       <div className="flex flex-col items-center gap-2">
         <button
           type="button"
           className="text-sm text-brand underline"
-          onClick={() => setMode(mode === 'sign-in' ? 'sign-up' : 'sign-in')}
+          onClick={() => void Browser.open({ url: signUpUrl })}
         >
-          {mode === 'sign-in' ? "Don't have an account? Sign up" : 'Already have an account? Sign in'}
+          Don't have an account? Sign up
         </button>
         {/* A full navigation, not client-side state — `main.tsx` decides
             `CheckinScreen` vs. this screen once, from the URL, at mount. */}
