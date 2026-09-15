@@ -173,8 +173,18 @@ const EnvSchema = z.object({
    */
   STRIPE_SECRET_KEY: z.string().optional(),
   STRIPE_WEBHOOK_SECRET: z.string().optional(),
-  /** Price id for the Carrier Core plan's flat monthly subscription. */
+  /** Price id for the Core plan's flat monthly subscription. */
   STRIPE_PRICE_CARRIER_MONTHLY: z.string().optional(),
+  /**
+   * Fleet's two Prices — a flat platform fee plus a per-truck seat, billed
+   * as two line items on one subscription rather than one Price with
+   * `quantity` covering both, since only one of the two scales with fleet
+   * size. Optional independently of the Core price above: Fleet checkout
+   * 503s without these even when Core works fine — see
+   * `routes/billing.ts`.
+   */
+  STRIPE_PRICE_FLEET_PLATFORM_MONTHLY: z.string().optional(),
+  STRIPE_PRICE_FLEET_PER_TRUCK_MONTHLY: z.string().optional(),
 
   /**
    * `credential-crypto.ts`'s sealed-box keypair. Both optional together —

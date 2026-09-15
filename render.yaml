@@ -119,6 +119,10 @@ services:
     #                                NOT the `stripe listen` secret used
     #                                locally — those are different secrets
     #   STRIPE_PRICE_CARRIER_MONTHLY live Core price — see docs/stripe-catalog.md
+    #   STRIPE_PRICE_FLEET_PLATFORM_MONTHLY, STRIPE_PRICE_FLEET_PER_TRUCK_MONTHLY
+    #                                live Fleet prices — optional independently
+    #                                of Core's; Fleet checkout 503s without
+    #                                them even when Core works fine
     #
     # DATABASE_URL is now copied by hand, which `fromDatabase` used to do. Take
     # the INTERNAL connection string from the haulq-db dashboard — same region,

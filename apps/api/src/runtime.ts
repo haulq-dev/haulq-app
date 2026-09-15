@@ -190,10 +190,22 @@ export function buildBilling(env: Env, log: RuntimeLog): BillingClient | undefin
     return undefined;
   }
 
-  log.info({ billing: 'stripe' }, 'billing ready');
+  if (!env.STRIPE_PRICE_FLEET_PLATFORM_MONTHLY || !env.STRIPE_PRICE_FLEET_PER_TRUCK_MONTHLY) {
+    log.info(
+      { billing: 'stripe', fleet: false },
+      'Fleet Prices are not configured — Fleet checkout is unavailable. Set STRIPE_PRICE_FLEET_PLATFORM_MONTHLY and STRIPE_PRICE_FLEET_PER_TRUCK_MONTHLY to enable it.',
+    );
+  } else {
+    log.info({ billing: 'stripe', fleet: true }, 'billing ready, Core and Fleet');
+  }
+
   return {
     client: buildStripeClient(env.STRIPE_SECRET_KEY),
-    priceIds: { carrier: env.STRIPE_PRICE_CARRIER_MONTHLY },
+    priceIds: {
+      carrier: env.STRIPE_PRICE_CARRIER_MONTHLY,
+      fleetPlatform: env.STRIPE_PRICE_FLEET_PLATFORM_MONTHLY,
+      fleetPerTruck: env.STRIPE_PRICE_FLEET_PER_TRUCK_MONTHLY,
+    },
   };
 }
 

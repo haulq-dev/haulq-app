@@ -8,10 +8,12 @@
  * "your payment needs attention" are the same screen with a different
  * headline, not two features.
  *
- * Only Core is self-serve. Fleet is a real bundle in the product portfolio
- * (`HAULQ_BUILD_PLAN.md` section 3) but has no Stripe Price yet —
- * multi-truck settlements and per-truck pricing aren't built, so its card is
- * a contact link, not a Checkout button.
+ * Fleet is self-serve too: a flat platform fee plus a per-truck seat, two
+ * line items on one subscription (`billing/stripe.ts`'s `lineItemsFor`) —
+ * the truck count here is Checkout's `quantity` for the per-truck Price,
+ * not a value HaulQ tracks anywhere itself. Multi-truck settlements and
+ * roles aren't built yet; this screen sells the subscription ahead of that,
+ * same as Core sells Docs/Pay/Insights/Verify Pro ahead of full Dispatch.
  *
  * Core's price and contents follow the CFO pricing model's launch
  * recommendation (`HaulQ_CFO_Model`, Pricing/Dashboard sheets), not the
@@ -24,6 +26,7 @@
  */
 
 import { useMutation } from '@tanstack/react-query';
+import { useState } from 'react';
 import { ErrorNote, Money } from './ui.tsx';
 import { request } from '../lib/api.ts';
 
@@ -34,9 +37,22 @@ const CORE_INCLUDES = [
   'Verify Pro — broker authority, insurance, credit risk',
 ];
 
+const FLEET_PLATFORM_CENTS = 19900;
+const FLEET_PER_TRUCK_CENTS = 4900;
+
 export function PlansScreen({ pastDue = false }: { pastDue?: boolean }) {
-  const checkout = useMutation({
-    mutationFn: () => request<{ url: string }>('/v1/billing/checkout', { method: 'POST' }),
+  const [truckCount, setTruckCount] = useState(2);
+
+  const checkoutCore = useMutation({
+    mutationFn: () => request<{ url: string }>('/v1/billing/checkout', { body: { plan: 'carrier' } }),
+    onSuccess: (data) => {
+      window.location.href = data.url;
+    },
+  });
+
+  const checkoutFleet = useMutation({
+    mutationFn: () =>
+      request<{ url: string }>('/v1/billing/checkout', { body: { plan: 'fleet', truckCount } }),
     onSuccess: (data) => {
       window.location.href = data.url;
     },
@@ -73,12 +89,12 @@ export function PlansScreen({ pastDue = false }: { pastDue?: boolean }) {
           </ul>
           <button
             className="hq-btn hq-btn-brand"
-            disabled={checkout.isPending}
-            onClick={() => checkout.mutate()}
+            disabled={checkoutCore.isPending}
+            onClick={() => checkoutCore.mutate()}
           >
-            {checkout.isPending ? 'Redirecting…' : 'Subscribe to Core'}
+            {checkoutCore.isPending ? 'Redirecting…' : 'Subscribe to Core'}
           </button>
-          <ErrorNote error={checkout.error} />
+          <ErrorNote error={checkoutCore.error} />
         </div>
 
         <div className="flex flex-col border border-line bg-wash p-6">
@@ -86,17 +102,41 @@ export function PlansScreen({ pastDue = false }: { pastDue?: boolean }) {
             <h2 className="text-xl">Fleet</h2>
             <span className="field-label text-mute">Multiple trucks</span>
           </div>
-          <p className="mb-4 text-3xl text-mute">
-            Per truck
+          <p className="mb-4 text-3xl">
+            <Money cents={FLEET_PLATFORM_CENTS + FLEET_PER_TRUCK_CENTS * truckCount} />
+            <span className="text-base text-mute"> / month</span>
           </p>
-          <p className="mb-6 flex-1 text-sm text-slate">
-            Everything in Core, plus Dispatch, Track, roles, settlements across your
-            fleet, and per-truck pricing. Not self-serve yet — talk to us and we will
-            set your account up directly.
+          <p className="mb-4 flex-1 text-sm text-slate">
+            Everything in Core, plus Dispatch, Track, roles, and settlements across
+            your fleet. <Money cents={FLEET_PLATFORM_CENTS} className="text-ink" /> platform
+            fee plus <Money cents={FLEET_PER_TRUCK_CENTS} className="text-ink" /> per truck.
           </p>
-          <a className="hq-btn hq-btn-ghost text-center" href="mailto:hello@haulq.ai?subject=HaulQ Fleet">
-            Contact us
-          </a>
+
+          <label className="mb-4 block">
+            <span className="field-label mb-1 block text-mute">Number of trucks</span>
+            <input
+              type="number"
+              min={1}
+              className="hq-input"
+              value={truckCount}
+              onChange={(e) => setTruckCount(Math.max(1, Math.round(Number(e.target.value) || 1)))}
+            />
+          </label>
+
+          <button
+            className="hq-btn hq-btn-primary"
+            disabled={checkoutFleet.isPending}
+            onClick={() => checkoutFleet.mutate()}
+          >
+            {checkoutFleet.isPending ? 'Redirecting…' : 'Subscribe to Fleet'}
+          </button>
+          <ErrorNote error={checkoutFleet.error} />
+
+          <p className="mt-3 text-sm">
+            <a className="text-brand underline" href="mailto:hello@haulq.ai?subject=HaulQ Fleet">
+              Prefer to talk it through first? Contact us.
+            </a>
+          </p>
         </div>
       </div>
     </div>

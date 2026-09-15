@@ -21,7 +21,7 @@ import {
   SignatureError,
   verifySvixSignature,
 } from '../auth/svix-signature.ts';
-import { constructWebhookEvent, mapSubscriptionStatus, WebhookSignatureError } from '../billing/stripe.ts';
+import { constructWebhookEvent, mapSubscriptionStatus, planFromMetadata, WebhookSignatureError } from '../billing/stripe.ts';
 import { HttpError } from '../plugins/request-context.ts';
 
 interface ClerkEmailAddress {
@@ -216,9 +216,7 @@ export async function webhookRoutes(app: FastifyInstance) {
       }
       const updated = await activateSubscriptionForOrg(app.db, session.client_reference_id, {
         status,
-        // Hardcoded rather than read from metadata: Carrier is the only
-        // plan sold through Checkout today — see `billing/stripe.ts`'s `PlanKey`.
-        plan: 'carrier',
+        plan: planFromMetadata(session.metadata),
         stripeCustomerId: session.customer,
         stripeSubscriptionId:
           typeof session.subscription === 'string' ? session.subscription : undefined,
@@ -248,7 +246,7 @@ export async function webhookRoutes(app: FastifyInstance) {
         if (typeof subscription.customer !== 'string') return { handled: false };
         const updated = await applySubscriptionUpdate(app.db, subscription.customer, {
           status: mapSubscriptionStatus(subscription.status),
-          plan: 'carrier',
+          plan: planFromMetadata(subscription.metadata),
           stripeSubscriptionId: subscription.id,
         });
         if (!updated) {

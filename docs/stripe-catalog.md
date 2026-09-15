@@ -5,20 +5,22 @@ Created 15 Sep 2026 against `HaulQ_CFO_Model.xlsx`'s Pricing sheet — see that 
 for what each tier includes and why, and `HAULQ_BUILD_PLAN.md` section 12 for the
 launch-gating decision.
 
-**Only Core is wired into the app today.** `apps/api/src/env.ts`'s
-`STRIPE_PRICE_CARRIER_MONTHLY` points at Core's price, and `routes/billing.ts`'s
-Checkout only ever sells that one. Everything else below is cataloged ahead of
-need — created so a Price id exists the day each tier's release gate is actually
-met, not wired into Checkout or the paywall yet. Wiring a second tier in means
-extending `PlanKey` in `apps/api/src/billing/stripe.ts` beyond its current
-single member, not just flipping a price id.
+**Core and Fleet are wired into the app; Operations, Complete and Autopilot are
+not.** `apps/api/src/env.ts`'s `STRIPE_PRICE_CARRIER_MONTHLY` and the two
+`STRIPE_PRICE_FLEET_*` vars are what `routes/billing.ts`'s Checkout actually
+sells, selected by `PlansScreen.tsx`'s two cards. Fleet's price scales with a
+truck count the visitor types in on that screen — Checkout's `quantity` on the
+per-truck line item, not a value HaulQ stores anywhere itself. The remaining
+three tiers below are cataloged ahead of need — created so a Price id exists
+the day each one's release gate is actually met, not reachable from Checkout
+or the paywall yet.
 
 Individual module prices (Docs, Pay, Insights, Verify Pro, Track, Routes,
 Dispatch Assist) are **not** cataloged as Stripe objects — the CFO model's own
 Pricing sheet says not to lead with seven separate SKUs at launch. They exist
 only as reference numbers in that spreadsheet, for bundle-value allocation.
 
-## Core — the only tier sold today
+## Core — sold today
 
 | | Test mode | Live mode |
 |---|---|---|
@@ -45,11 +47,14 @@ Core plus Track and Routes.
 
 Operations plus Dispatch Assist.
 
-## Fleet Complete — not self-serve (PlansScreen's "Contact us" card)
+## Fleet Complete — sold today
 
-Two Prices on one Product — a flat platform fee plus a per-truck seat, meant to
-be two line items on one subscription rather than one Price with `quantity`
-covering both.
+Two Prices on one Product — a flat platform fee plus a per-truck seat, billed
+as two line items on one subscription rather than one Price with `quantity`
+covering both, since only one of the two scales with fleet size. `PlansScreen`
+still sells this ahead of the fleet controls and multi-truck settlements the
+CFO model's own release gate names — same tradeoff Core already makes against
+Dispatch and Track.
 
 | | Test mode | Live mode |
 |---|---|---|
@@ -70,7 +75,8 @@ differently for a single truck vs. a fleet seat.
 
 ## Doppler
 
-Only `STRIPE_PRICE_CARRIER_MONTHLY` (Core's price) is an env var today — see
-`.env.example`. The rest of this catalog has no corresponding env var until a
-route actually sells it; add one at that point rather than pre-wiring price ids
-for tiers Checkout can't reach yet.
+`STRIPE_PRICE_CARRIER_MONTHLY`, `STRIPE_PRICE_FLEET_PLATFORM_MONTHLY` and
+`STRIPE_PRICE_FLEET_PER_TRUCK_MONTHLY` are env vars today — see `.env.example`
+and `render.yaml`'s Doppler `prd` list. Operations, Complete and Autopilot have
+no corresponding env var until a route actually sells them; add one at that
+point rather than pre-wiring price ids for tiers Checkout can't reach yet.
