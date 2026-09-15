@@ -121,6 +121,29 @@ export function planFromMetadata(metadata: Stripe.Metadata | null | undefined): 
   return metadata?.['plan'] === 'fleet' ? 'fleet' : 'carrier';
 }
 
+export class NoStripeCustomerError extends Error {}
+
+/**
+ * A Billing Portal session — card on file, invoice history, cancellation.
+ * Not plan switching: Fleet's two-line-item subscription doesn't map onto
+ * the Portal's own "change plan" UI cleanly, and Checkout already owns
+ * that flow (`PlansScreen.tsx`) — same split a reference implementation in
+ * another project already settled on, portal for what Stripe's hosted page
+ * still does well, in-app buttons for the rest.
+ */
+export async function createPortalSession(
+  billing: BillingClient,
+  input: { stripeCustomerId: string | null; returnUrl: string },
+): Promise<Stripe.BillingPortal.Session> {
+  if (!input.stripeCustomerId) {
+    throw new NoStripeCustomerError('org has no Stripe customer yet — nothing to manage until Checkout completes once');
+  }
+  return billing.client.billingPortal.sessions.create({
+    customer: input.stripeCustomerId,
+    return_url: input.returnUrl,
+  });
+}
+
 export class WebhookSignatureError extends Error {}
 
 /** Verifies the `stripe-signature` header over the raw request body. */

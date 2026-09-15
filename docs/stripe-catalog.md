@@ -73,6 +73,19 @@ differently for a single truck vs. a fleet seat.
 | Single-truck price ($79/mo flat) | `price_1UG0ShEW0ODCVdCO1dQ4zz9t` | `price_1UG0TvIhbSoMF1VwoHsGvynl` |
 | Per-truck price ($49/mo, quantity = truck count) | `price_1UG0SiEW0ODCVdCOsQcTADzC` | `price_1UG0TwIhbSoMF1VwNzAvu0jb` |
 
+## Billing Portal
+
+One configuration per mode, created via the API (Dashboard config UI does
+the same thing, no functional difference) — `POST /v1/billing/portal`
+doesn't pass a `configuration` id, so Stripe uses whichever configuration
+is `active` for the account in that mode. Payment method, invoice history,
+and cancellation only — no `subscription_update`, on purpose. See
+`createPortalSession`'s note in `apps/api/src/billing/stripe.ts`.
+
+| | Test mode | Live mode |
+|---|---|---|
+| Configuration | `bpc_1UG1kAEW0ODCVdCOGHAYllXG` | `bpc_1UG1kMIhbSoMF1VwS7fAtHfM` |
+
 ## Doppler
 
 `STRIPE_PRICE_CARRIER_MONTHLY`, `STRIPE_PRICE_FLEET_PLATFORM_MONTHLY` and

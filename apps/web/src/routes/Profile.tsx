@@ -316,12 +316,54 @@ function Identity() {
   );
 }
 
+/**
+ * One button, into Stripe's own Billing Portal — payment method, invoice
+ * history, cancellation. Not plan switching: that stays on the paywall's
+ * own Checkout buttons (`PlansScreen.tsx`), since Fleet's two-line-item
+ * subscription doesn't map onto the Portal's built-in "change plan" UI the
+ * way Core's single Price does. See `createPortalSession`'s note in
+ * `apps/api/src/billing/stripe.ts`.
+ *
+ * Reachable here rather than Shell's header, unlike account deletion —
+ * billing is scoped to this carrier, not the signed-in person, so it
+ * belongs wherever this org's other settings already live. It only makes
+ * sense once `active`, i.e. once Checkout has run at least once, so this
+ * screen is never reached any other way — `Shell.tsx`'s gate gets here
+ * first.
+ */
+function Billing() {
+  const portal = useMutation({
+    mutationFn: () => request<{ url: string }>('/v1/billing/portal', { method: 'POST' }),
+    onSuccess: (data) => {
+      window.location.href = data.url;
+    },
+  });
+
+  return (
+    <Card title="Billing">
+      <p className="mb-4 max-w-prose text-sm text-slate">
+        Update your payment method, view invoices, or cancel — through Stripe's own
+        secure billing page.
+      </p>
+      <button
+        className="hq-btn hq-btn-ghost"
+        disabled={portal.isPending}
+        onClick={() => portal.mutate()}
+      >
+        {portal.isPending ? 'Redirecting…' : 'Manage billing'}
+      </button>
+      <ErrorNote error={portal.error} />
+    </Card>
+  );
+}
+
 export function ProfileScreen() {
   return (
     <div className="space-y-6">
       <h1 className="text-3xl">Carrier and costs</h1>
       <Identity />
       <OperatingCosts />
+      <Billing />
       {/* Account deletion moved to Shell's header — reachable from every
           gate state, not just once this org is paid. See Shell.tsx. */}
     </div>
