@@ -83,8 +83,11 @@ const RESULT_MESSAGE: Record<string, { text: string; tone: 'ok' | 'warn' }> = {
 export function IntegrationsScreen() {
   const session = useSession();
   const orgs = useOrgs();
-  const myRole = orgs.data?.items.find((o) => o.id === session?.orgId)?.role;
-  const canConnect = myRole === 'owner';
+  const myOrg = orgs.data?.items.find((o) => o.id === session?.orgId);
+  const canConnect = myOrg?.role === 'owner';
+  // Track is Fleet-only — see apps/api/src/billing/entitlements.ts. Checked
+  // here so a Core owner sees why before clicking, not just the 403 after.
+  const fleetEntitled = myOrg?.plan === 'fleet';
 
   const redirectResult = useMotiveRedirectResult();
 
@@ -183,7 +186,17 @@ export function IntegrationsScreen() {
         ) : (
           <div className="flex flex-wrap items-center justify-between gap-3">
             <Empty>Not connected. Position reports from Motive-equipped trucks will use this once it is.</Empty>
-            {canConnect ? (
+            {!canConnect ? (
+              <span className="text-sm text-mute">Only an owner can connect an integration.</span>
+            ) : !fleetEntitled ? (
+              <span className="text-sm text-mute">
+                Track needs the Fleet plan —{' '}
+                <a className="text-brand underline" href="mailto:hello@haulq.ai?subject=HaulQ Fleet">
+                  contact us to upgrade
+                </a>
+                .
+              </span>
+            ) : (
               <button
                 className="hq-btn hq-btn-brand"
                 disabled={connect.isPending}
@@ -191,8 +204,6 @@ export function IntegrationsScreen() {
               >
                 {connect.isPending ? 'Redirecting…' : 'Connect Motive'}
               </button>
-            ) : (
-              <span className="text-sm text-mute">Only an owner can connect an integration.</span>
             )}
           </div>
         )}

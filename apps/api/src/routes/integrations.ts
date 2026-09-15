@@ -34,6 +34,7 @@ import {
 import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { requireEntitlement } from '../billing/entitlements.ts';
 import { exchangeMotiveCode, motiveAuthorizeUrl } from '../integrations/motive.ts';
 import { suggestMotiveMatches } from '../integrations/motive-match.ts';
 import { accessTokenFor, fetchMotiveVehicles } from '../integrations/motive-sync.ts';
@@ -199,6 +200,7 @@ export async function integrationRoutes(app: FastifyInstance) {
     async (request) => {
       const s = await requireScope(request);
       requireRole(request, 'owner');
+      await requireEntitlement(s, 'track');
 
       const config = requireMotiveConfig(app);
       // The client secret signs state rather than a dedicated secret existing

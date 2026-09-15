@@ -42,6 +42,7 @@ import { randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { requireEntitlement } from '../billing/entitlements.ts';
 import { HttpError, requireRole, requireScope } from '../plugins/request-context.ts';
 import { driverScopeFor } from './loads.ts';
 
@@ -96,6 +97,7 @@ export async function trackRoutes(app: FastifyInstance) {
     async (request, reply) => {
       const s = await requireScope(request);
       requireRole(request, 'owner', 'dispatcher');
+      await requireEntitlement(s, 'track');
       const { id } = request.params;
 
       try {
@@ -131,6 +133,7 @@ export async function trackRoutes(app: FastifyInstance) {
     async (request, reply) => {
       const s = await requireScope(request);
       requireRole(request, 'owner', 'dispatcher');
+      await requireEntitlement(s, 'track');
       const { id } = request.params;
 
       try {

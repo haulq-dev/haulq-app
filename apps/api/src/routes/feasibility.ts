@@ -19,6 +19,7 @@ import { getLoad, getTruck } from '@haulq/db';
 import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { requireEntitlement } from '../billing/entitlements.ts';
 import { HereApiError } from '../integrations/here.ts';
 import type { TruckProfile } from '../integrations/routing-provider.ts';
 import { HttpError, requireRole, requireScope } from '../plugins/request-context.ts';
@@ -44,6 +45,7 @@ export async function feasibilityRoutes(app: FastifyInstance) {
     async (request) => {
       const s = await requireScope(request);
       requireRole(request, 'owner', 'dispatcher');
+      await requireEntitlement(s, 'routes');
       const { id } = request.params;
       const body = request.body ?? {};
 
