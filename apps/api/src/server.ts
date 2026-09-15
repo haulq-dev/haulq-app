@@ -41,18 +41,20 @@ import { startMotiveSyncRunner } from './integrations/motive-sync-runner.ts';
 import { startVerifyRecheckRunner } from './verify/recheck-runner.ts';
 import { buildOutboxGroups } from './outbox/handlers.ts';
 import { startOutboxRunner } from './outbox/runner.ts';
-import { buildBilling, buildDocumentReader, buildGeocoder, buildMailer, buildModelReader, buildPlacesProvider, buildRoutingProvider, buildStorage } from './runtime.ts';
+import { buildBilling, buildDocumentReader, buildGeocoder, buildMailer, buildMechanicSearchProvider, buildModelReader, buildPlacesProvider, buildRoutingProvider, buildStorage } from './runtime.ts';
 import type { ModelDocumentReader } from './documents/model-reader.ts';
 import type { DocumentReader } from './documents/reader.ts';
 import type { Geocoder, ReverseGeocoder } from './integrations/here-geocode.ts';
 import type { PlacesProvider } from './integrations/here-places.ts';
 import type { RoutingProvider } from './integrations/routing-provider.ts';
+import type { MechanicSearchProvider } from './integrations/yelp.ts';
 import { requestContextPlugin } from './plugins/request-context.ts';
 import { billingRoutes } from './routes/billing.ts';
 import { brokerRoutes } from './routes/brokers.ts';
 import { documentRoutes } from './routes/documents.ts';
 import { geocodeRoutes } from './routes/geocode.ts';
 import { feasibilityRoutes } from './routes/feasibility.ts';
+import { mechanicsRoutes } from './routes/mechanics.ts';
 import { nearbyStopsRoutes } from './routes/nearby-stops.ts';
 import { integrationRoutes } from './routes/integrations.ts';
 import { driverRoutes } from './routes/drivers.ts';
@@ -82,6 +84,8 @@ declare module 'fastify' {
     reverseGeocoder: ReverseGeocoder | undefined;
     /** Same gate as `routingProvider`/`geocoder` — see `runtime.ts`'s `buildPlacesProvider`. */
     placesProvider: PlacesProvider | undefined;
+    /** Undefined until `YELP_API_KEY` is set — see `runtime.ts`'s `buildMechanicSearchProvider`. */
+    mechanicSearchProvider: MechanicSearchProvider | undefined;
     /** Undefined until `STRIPE_SECRET_KEY` and `STRIPE_PRICE_CARRIER_MONTHLY` are set — see `runtime.ts`'s `buildBilling`. */
     billing: BillingClient | undefined;
   }
@@ -155,6 +159,14 @@ export interface BuildOptions {
    * is configured, and no provider at all when it is not.
    */
   placesProvider?: PlacesProvider | undefined;
+
+  /**
+   * Override the mechanic search provider. Same reasoning as `placesProvider`
+   * above — tests inject a fake so the nearby-mechanics route can be
+   * exercised with no Yelp account. Left unset, the server picks Yelp when
+   * `YELP_API_KEY` is configured, and no provider at all when it is not.
+   */
+  mechanicSearchProvider?: MechanicSearchProvider | undefined;
 
   /**
    * Override billing. Tests inject a fake Stripe client. Left unset, the
@@ -232,6 +244,7 @@ export async function buildServer(
   app.decorate('geocoder', options.geocoder ?? hereGeocoder);
   app.decorate('reverseGeocoder', options.reverseGeocoder ?? hereGeocoder);
   app.decorate('placesProvider', options.placesProvider ?? buildPlacesProvider(env, app.log));
+  app.decorate('mechanicSearchProvider', options.mechanicSearchProvider ?? buildMechanicSearchProvider(env, app.log));
   app.decorate('billing', options.billing ?? buildBilling(env, app.log));
 
   startOutboxRunner(app, {
@@ -397,6 +410,7 @@ export async function buildServer(
   await app.register(trackRoutes);
   await app.register(feasibilityRoutes);
   await app.register(nearbyStopsRoutes);
+  await app.register(mechanicsRoutes);
   await app.register(geocodeRoutes);
   await app.register(integrationRoutes);
   await app.register(payRoutes);

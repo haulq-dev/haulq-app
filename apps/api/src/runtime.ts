@@ -33,6 +33,7 @@ import { HereRoutingProvider } from './integrations/here.ts';
 import { HereGeocoder } from './integrations/here-geocode.ts';
 import { HerePlacesProvider } from './integrations/here-places.ts';
 import type { RoutingProvider } from './integrations/routing-provider.ts';
+import { YelpMechanicSearchProvider } from './integrations/yelp.ts';
 
 /**
  * The logging surface these builders need.
@@ -251,4 +252,26 @@ export function buildPlacesProvider(env: Env, log: RuntimeLog): HerePlacesProvid
   return env.HERE_PLACES_BASE_URL
     ? new HerePlacesProvider({ apiKey: env.HERE_API_KEY }, env.HERE_PLACES_BASE_URL)
     : new HerePlacesProvider({ apiKey: env.HERE_API_KEY });
+}
+
+/**
+ * Yelp when a key is configured, undefined otherwise — same shape as
+ * `buildPlacesProvider` above. `GET /v1/mechanics/nearby` treats an unset
+ * provider as a 503, not a crash and not a guess. `FEATURE_REQUESTS_PLAN.md`
+ * section 3 — this is deliberately the cheap prototype, not a persistent
+ * trust-score pipeline.
+ */
+export function buildMechanicSearchProvider(env: Env, log: RuntimeLog): YelpMechanicSearchProvider | undefined {
+  if (!env.YELP_API_KEY) {
+    log.info(
+      { mechanicSearchProvider: false },
+      'Yelp is not configured — nearby-mechanic search is unavailable. Set YELP_API_KEY to enable it.',
+    );
+    return undefined;
+  }
+
+  log.info({ mechanicSearchProvider: 'yelp' }, 'mechanic search provider ready');
+  return env.YELP_BASE_URL
+    ? new YelpMechanicSearchProvider({ apiKey: env.YELP_API_KEY }, env.YELP_BASE_URL)
+    : new YelpMechanicSearchProvider({ apiKey: env.YELP_API_KEY });
 }

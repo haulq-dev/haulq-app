@@ -848,3 +848,28 @@ export const NearbyStopsResponseSchema = z.object({
   stops: z.array(StopNearbyPlacesSchema),
 });
 export type NearbyStopsResponse = z.infer<typeof NearbyStopsResponseSchema>;
+
+// ---------------------------------------------------------------------------
+// Mechanics — nearby search (FEATURE_REQUESTS_PLAN.md section 3)
+// ---------------------------------------------------------------------------
+//
+// The boss's own hedge on the call: "could just be a normal AI search"
+// rather than a built trust-score pipeline. This is that smaller version —
+// a live Yelp lookup, no storage. See `yelp.ts`'s module note.
+
+export const MechanicSchema = z.object({
+  name: z.string(),
+  /** 1–5, Yelp's own aggregate. Null when Yelp has not rated this business. */
+  rating: z.number().nullable(),
+  reviewCount: z.number().int(),
+  address: z.string().nullable(),
+  phone: z.string().nullable(),
+  distanceMiles: z.number(),
+  yelpUrl: z.string(),
+});
+export type Mechanic = z.infer<typeof MechanicSchema>;
+
+export const NearbyMechanicsResponseSchema = z.object({
+  mechanics: z.array(MechanicSchema),
+});
+export type NearbyMechanicsResponse = z.infer<typeof NearbyMechanicsResponseSchema>;

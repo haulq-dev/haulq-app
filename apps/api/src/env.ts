@@ -248,6 +248,20 @@ const EnvSchema = z.object({
    * same as `HERE_GEOCODE_BASE_URL`.
    */
   HERE_PLACES_BASE_URL: z.string().url().optional(),
+
+  /**
+   * Yelp Fusion, for the nearby-mechanic search `FEATURE_REQUESTS_PLAN.md`
+   * section 3 scopes as a cheap-to-validate prototype: call a reviews API at
+   * request time, store nothing, see whether carriers use it before building
+   * a persistent trust-score pipeline. Same platform-level-credential shape
+   * as `FMCSA_WEBKEY` and `HERE_API_KEY` — one HaulQ-owned Yelp account
+   * serves every tenant's search, not a per-org secret. Optional, same
+   * degrade-rather-than-fail pattern as every other external service here:
+   * without it, `GET /v1/mechanics/nearby` 503s.
+   */
+  YELP_API_KEY: z.string().optional(),
+  /** Override for tests only — production never sets this. */
+  YELP_BASE_URL: z.string().url().optional(),
 });
 
 export type Env = z.infer<typeof EnvSchema>;
