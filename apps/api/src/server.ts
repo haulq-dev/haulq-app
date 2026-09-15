@@ -63,6 +63,7 @@ import { payRoutes } from './routes/pay.ts';
 import { postmarkInboundRoutes } from './routes/postmark-inbound.ts';
 import { timelineRoutes } from './routes/timeline.ts';
 import { trackRoutes } from './routes/track.ts';
+import { usageRoutes } from './routes/usage.ts';
 import { webhookRoutes } from './routes/webhooks.ts';
 import { truckRoutes } from './routes/trucks.ts';
 
@@ -386,6 +387,7 @@ export async function buildServer(
   await app.register(integrationRoutes);
   await app.register(payRoutes);
   await app.register(insightsRoutes);
+  await app.register(usageRoutes);
   await app.register(importRoutes);
   // Registered without fastify-plugin so its binary body parser stays scoped
   // to these routes rather than applying to every upload in the API.

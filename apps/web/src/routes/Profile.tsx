@@ -357,12 +357,83 @@ function Billing() {
   );
 }
 
+interface MonthlyUsage {
+  monthStart: string;
+  documentsReceived: number;
+  invoicesGenerated: number;
+  trackCheckins: number;
+  brokerChecks: number;
+}
+
+const USAGE_ROWS: Array<{ key: keyof MonthlyUsage; label: string; note: string }> = [
+  { key: 'documentsReceived', label: 'Documents received', note: 'Docs — rate confirmations, BOLs, and everything else that came in' },
+  { key: 'invoicesGenerated', label: 'Invoices generated', note: 'Pay — one per invoice created, not per status change' },
+  { key: 'trackCheckins', label: 'Track check-ins', note: 'Track — driver stop milestones, from a link or the app' },
+  { key: 'brokerChecks', label: 'Broker checks', note: 'Verify — on-demand authority checks you asked for, not the nightly re-check sweep' },
+];
+
+/**
+ * Raw counts, not progress bars against a limit — `orgs.monthlyUsageCap` is
+ * a dollar ceiling nothing has ever written a real value into or enforced
+ * yet (see its comment in `packages/db/src/schema/tenancy.ts`), and none of
+ * Core or Fleet defines a volume limit anywhere. Showing a fake "X of Y"
+ * bar against a limit that doesn't functionally exist would be more
+ * misleading than showing nothing. Same four counts
+ * `apps/api/src/scripts/usage-benchmark.ts` sweeps every org for — see
+ * that script and `packages/db/src/repositories/usage.ts` for why these
+ * four.
+ */
+function Usage() {
+  const usage = useQuery({
+    queryKey: ['usage'],
+    queryFn: () => request<MonthlyUsage>('/v1/usage'),
+  });
+
+  if (usage.isLoading) {
+    return (
+      <Card title="Usage this month">
+        <p className="text-mute">Loading…</p>
+      </Card>
+    );
+  }
+  if (!usage.data) return <Card title="Usage this month"><ErrorNote error={usage.error} /></Card>;
+  const data = usage.data;
+
+  const monthLabel = new Date(data.monthStart).toLocaleDateString('en-US', {
+    month: 'long',
+    year: 'numeric',
+    timeZone: 'UTC',
+  });
+
+  return (
+    <Card title="Usage this month">
+      <p className="mb-4 max-w-prose text-sm text-slate">
+        What HaulQ has counted for {monthLabel} so far. Nothing here is enforced or
+        billed by volume yet — it's here so you can see what a month of using HaulQ
+        actually looks like.
+      </p>
+      <ul className="space-y-3">
+        {USAGE_ROWS.map((row) => (
+          <li key={row.key} className="flex items-baseline justify-between gap-4">
+            <div>
+              <div className="text-sm">{row.label}</div>
+              <div className="text-xs text-mute">{row.note}</div>
+            </div>
+            <span className="num shrink-0 text-xl">{data[row.key].toLocaleString()}</span>
+          </li>
+        ))}
+      </ul>
+    </Card>
+  );
+}
+
 export function ProfileScreen() {
   return (
     <div className="space-y-6">
       <h1 className="text-3xl">Carrier and costs</h1>
       <Identity />
       <OperatingCosts />
+      <Usage />
       <Billing />
       {/* Account deletion moved to Shell's header — reachable from every
           gate state, not just once this org is paid. See Shell.tsx. */}
