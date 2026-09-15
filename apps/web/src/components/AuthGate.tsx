@@ -24,6 +24,7 @@ import {
   UserButton,
 } from '@clerk/clerk-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useNavigate } from '@tanstack/react-router';
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import {
   readSession,
@@ -221,10 +222,36 @@ export function OrgPicker() {
   );
 }
 
-/** Clerk's account menu, for the header. Renders nothing in dev mode. */
+/**
+ * Clerk's account menu, for the header. Renders nothing in dev mode.
+ *
+ * Carries a custom "Delete account" action into Clerk's own dropdown,
+ * tucked behind a click on the avatar rather than sitting in the header as
+ * standing text — a destructive, identity-level action earns that
+ * restraint once real carriers are the ones seeing it. It lives here
+ * rather than on the Profile screen because `AccountMenu` renders in every
+ * one of `Shell`'s states (`OrgPicker`, `PlansScreen`, the real app), while
+ * Profile is `children` and only reachable once an org is `active` — a
+ * fresh or unpaid account could never reach it there.
+ */
 export function AccountMenu() {
+  const navigate = useNavigate();
   if (!usingClerk) return null;
-  return <UserButton afterSignOutUrl="/" />;
+  return (
+    <UserButton afterSignOutUrl="/">
+      <UserButton.MenuItems>
+        <UserButton.Action
+          label="Delete account"
+          labelIcon={
+            <svg viewBox="0 0 16 16" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden>
+              <path d="M3 4h10M6.5 4V2.5h3V4M4 4l.6 9a1 1 0 0 0 1 .9h4.8a1 1 0 0 0 1-.9L12 4" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          }
+          onClick={() => void navigate({ to: '/delete-account' })}
+        />
+      </UserButton.MenuItems>
+    </UserButton>
+  );
 }
 
 /**

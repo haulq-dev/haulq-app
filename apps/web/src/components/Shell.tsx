@@ -326,19 +326,7 @@ export function Shell({ children }: { children: ReactNode }) {
           </nav>
 
           <div className="ml-auto flex shrink-0 items-center gap-1">
-            {/*
-             * Deliberately in the header, not the Profile screen — Profile
-             * is `children`, which only renders once this org is `active`.
-             * A brand-new or unpaid account can never reach it, and
-             * deleting the signed-in person has nothing to do with any one
-             * carrier's payment status anyway (same reasoning `/delete-
-             * account` itself being CHROMELESS already applies). The header
-             * renders in every one of Shell's states — OrgPicker,
-             * PlansScreen, and the real app — so this does too.
-             */}
-            <Link to="/delete-account" className="field-label px-2 text-mute hover:text-ink">
-              Delete account
-            </Link>
+            {/* Account deletion lives in AccountMenu's own dropdown now — see AuthGate.tsx. */}
             <AccountMenu />
 
             <button
