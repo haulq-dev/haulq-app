@@ -12,7 +12,7 @@
 
 import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
-import { addTestMembership, createTestUser, destroyTestOrg, destroyTestUser } from '@haulq/db';
+import { addTestMembership, createTestUser, destroyTestOrg, destroyTestUser, setTestOrgPlan } from '@haulq/db';
 import type { FastifyInstance } from 'fastify';
 import { loadEnv } from '../env.ts';
 import { buildServer } from '../server.ts';
@@ -31,6 +31,12 @@ const as = (orgId: string, actingUserId = userId) => ({
   'x-haulq-user-id': actingUserId,
 });
 
+/**
+ * Fleet by default. `billing/entitlements.ts`'s Track gate (added after
+ * this suite was first written) refuses a Core-plan org before any of
+ * `track.ts` runs, so every test here needs an org that clears it — see
+ * `setTestOrgPlan`'s own comment in `testing.ts`.
+ */
 async function newOrg(name: string): Promise<string> {
   const res = await app.inject({
     method: 'POST',
@@ -39,6 +45,7 @@ async function newOrg(name: string): Promise<string> {
     payload: { name, contactEmail: 'owner@example.com' },
   });
   const id = res.json().org.id as string;
+  await setTestOrgPlan(app.db, { orgId: id, plan: 'fleet' });
   createdOrgs.push(id);
   return id;
 }

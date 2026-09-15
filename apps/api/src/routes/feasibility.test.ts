@@ -19,6 +19,7 @@ import {
   createTestUser,
   destroyTestOrg,
   destroyTestUser,
+  setTestOrgPlan,
   type Database,
 } from '@haulq/db';
 import type { FastifyInstance } from 'fastify';
@@ -76,14 +77,22 @@ async function newApp(routingProvider: RoutingProvider | undefined): Promise<Fas
   );
 }
 
-async function newOrg(app: FastifyInstance, userId: string, name: string): Promise<string> {
+/**
+ * Fleet by default. `billing/entitlements.ts`'s Routes gate (added after
+ * this suite was first written) refuses a Core-plan org before any of
+ * `feasibility.ts` runs, so every test here needs an org that clears it —
+ * see `setTestOrgPlan`'s own comment in `testing.ts`.
+ */
+async function newOrg(app: FastifyInstance, db: Database, userId: string, name: string): Promise<string> {
   const res = await app.inject({
     method: 'POST',
     url: '/v1/orgs',
     headers: { 'x-haulq-user-id': userId },
     payload: { name, contactEmail: 'owner@example.com' },
   });
-  return res.json().org.id as string;
+  const orgId = res.json().org.id as string;
+  await setTestOrgPlan(db, { orgId, plan: 'fleet' });
+  return orgId;
 }
 
 async function aLoad(
@@ -135,7 +144,7 @@ suite('feasibility route', () => {
   it('answers 503 when no routing provider is configured', async () => {
     const app = await newApp(undefined);
     try {
-      const orgId = await newOrg(app, userId, 'Feasibility Not Configured Carrier');
+      const orgId = await newOrg(app, db, userId, 'Feasibility Not Configured Carrier');
       createdOrgs.push(orgId);
       const loadId = await aLoad(app, orgId, userId, '2026-09-01T18:00:00Z');
       const truckId = await aTruck(app, orgId, userId);
@@ -157,7 +166,7 @@ suite('feasibility route', () => {
     const provider = new FakeRoutingProvider(aFeasibleRoute(new Date('2026-09-01T15:00:00Z')));
     const app = await newApp(provider);
     try {
-      const orgId = await newOrg(app, userId, 'Feasibility Clean Carrier');
+      const orgId = await newOrg(app, db, userId, 'Feasibility Clean Carrier');
       createdOrgs.push(orgId);
       const loadId = await aLoad(app, orgId, userId, '2026-09-01T18:00:00Z');
       const truckId = await aTruck(app, orgId, userId);
@@ -184,7 +193,7 @@ suite('feasibility route', () => {
     ]);
     const app = await newApp(provider);
     try {
-      const orgId = await newOrg(app, userId, 'Feasibility Restricted Carrier');
+      const orgId = await newOrg(app, db, userId, 'Feasibility Restricted Carrier');
       createdOrgs.push(orgId);
       const loadId = await aLoad(app, orgId, userId, '2026-09-01T18:00:00Z');
       const truckId = await aTruck(app, orgId, userId);
@@ -208,7 +217,7 @@ suite('feasibility route', () => {
     const provider = new FakeRoutingProvider(aFeasibleRoute(new Date('2026-09-01T19:00:00Z')));
     const app = await newApp(provider);
     try {
-      const orgId = await newOrg(app, userId, 'Feasibility Late Carrier');
+      const orgId = await newOrg(app, db, userId, 'Feasibility Late Carrier');
       createdOrgs.push(orgId);
       const loadId = await aLoad(app, orgId, userId, '2026-09-01T18:00:00Z');
       const truckId = await aTruck(app, orgId, userId);
@@ -232,7 +241,7 @@ suite('feasibility route', () => {
     const provider = new FakeRoutingProvider(aFeasibleRoute(new Date()));
     const app = await newApp(provider);
     try {
-      const orgId = await newOrg(app, userId, 'Feasibility No Coordinates Carrier');
+      const orgId = await newOrg(app, db, userId, 'Feasibility No Coordinates Carrier');
       createdOrgs.push(orgId);
       const truckId = await aTruck(app, orgId, userId);
       const loadRes = await app.inject({
@@ -265,7 +274,7 @@ suite('feasibility route', () => {
     const provider = new FakeRoutingProvider(aFeasibleRoute(new Date()));
     const app = await newApp(provider);
     try {
-      const orgId = await newOrg(app, userId, 'Feasibility No Truck Carrier');
+      const orgId = await newOrg(app, db, userId, 'Feasibility No Truck Carrier');
       createdOrgs.push(orgId);
       const loadId = await aLoad(app, orgId, userId, '2026-09-01T18:00:00Z');
 
