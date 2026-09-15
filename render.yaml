@@ -111,6 +111,14 @@ services:
     #                                nothing polls Motive, same OUTBOX_POLL_MS
     #                                pattern; also needs the encryption
     #                                keypair above to actually run
+    #   STRIPE_SECRET_KEY            live-mode; a restricted key, not the
+    #                                account's full secret key — see
+    #                                docs/stripe-catalog.md
+    #   STRIPE_WEBHOOK_SECRET        from the live Dashboard webhook endpoint
+    #                                at https://api.haulq.ai/webhooks/stripe,
+    #                                NOT the `stripe listen` secret used
+    #                                locally — those are different secrets
+    #   STRIPE_PRICE_CARRIER_MONTHLY live Core price — see docs/stripe-catalog.md
     #
     # DATABASE_URL is now copied by hand, which `fromDatabase` used to do. Take
     # the INTERNAL connection string from the haulq-db dashboard — same region,

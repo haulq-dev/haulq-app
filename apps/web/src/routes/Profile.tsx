@@ -19,6 +19,7 @@ import {
   type OperatingFacts,
 } from '@haulq/contracts';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Link } from '@tanstack/react-router';
 import { useState } from 'react';
 import {
   request,
@@ -322,6 +323,19 @@ export function ProfileScreen() {
       <h1 className="text-3xl">Carrier and costs</h1>
       <Identity />
       <OperatingCosts />
+      {/*
+       * Apple Guideline 5.1.1(v): account creation needs an equally
+       * reachable path to account deletion. `/delete-account` is the one
+       * implementation the driver app's own `DeleteAccountLink` already
+       * points at (same Clerk identity, same page) — this just gives the
+       * web app a way in too, unobtrusive on purpose since it deletes the
+       * signed-in person's login, not this carrier's records.
+       */}
+      <p className="text-sm">
+        <Link to="/delete-account" className="text-brand underline">
+          Delete my account
+        </Link>
+      </p>
     </div>
   );
 }
