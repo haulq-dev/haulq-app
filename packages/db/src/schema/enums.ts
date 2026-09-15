@@ -27,6 +27,13 @@ export const orgStatusEnum = pgEnum('org_status', [
 ]);
 
 /**
+ * Which bundle an org subscribed to. Null until they pick one — `orgs.status`
+ * stays `trialing` for that whole window, so the app gate reads status, not
+ * this column, to decide who gets in. This is what Stripe billed them for.
+ */
+export const orgPlanEnum = pgEnum('org_plan', ['carrier', 'fleet']);
+
+/**
  * Roles, coarse on purpose. Fine-grained permissions belong in a policy table
  * once HaulQ Fleet needs them; four roles cover an owner-operator and a
  * fifteen-truck fleet.

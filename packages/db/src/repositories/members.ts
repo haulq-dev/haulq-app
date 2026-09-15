@@ -24,6 +24,7 @@ import { decodeCursor, toCursorPage, type CursorPage } from '../pagination.ts';
 import { drivers } from '../schema/fleet.ts';
 import { orgInvitations, orgMemberships, orgs, users } from '../schema/tenancy.ts';
 import { withTransaction } from '../transaction.ts';
+import type { Org } from './orgs.ts';
 
 export type Role = 'owner' | 'dispatcher' | 'driver' | 'accountant';
 export type Invitation = typeof orgInvitations.$inferSelect;
@@ -728,6 +729,9 @@ export interface OrgSummary {
   name: string;
   slug: string;
   role: Role;
+  /** Drives the web app's payment gate — see `Shell.tsx`. Anything but `active` blocks entry. */
+  status: Org['status'];
+  plan: Org['plan'];
 }
 
 /**
@@ -744,6 +748,8 @@ export async function orgsForUser(db: Database, userId: string): Promise<OrgSumm
       name: orgs.name,
       slug: orgs.slug,
       role: orgMemberships.role,
+      status: orgs.status,
+      plan: orgs.plan,
     })
     .from(orgMemberships)
     .innerJoin(orgs, eq(orgs.id, orgMemberships.orgId))

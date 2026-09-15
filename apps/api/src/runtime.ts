@@ -23,6 +23,7 @@ import {
   r2FromEnv,
   type ObjectStore,
 } from '@haulq/db';
+import { buildStripeClient, type BillingClient } from './billing/stripe.ts';
 import { AzureDocumentReader, ChainedDocumentReader } from './documents/azure-reader.ts';
 import { AnthropicModelReader, type ModelDocumentReader } from './documents/model-reader.ts';
 import { LocalDocumentReader, type DocumentReader } from './documents/reader.ts';
@@ -30,6 +31,7 @@ import { LogMailer, PostmarkMailer, type Mailer } from './email/postmark.ts';
 import type { Env } from './env.ts';
 import { HereRoutingProvider } from './integrations/here.ts';
 import { HereGeocoder } from './integrations/here-geocode.ts';
+import { HerePlacesProvider } from './integrations/here-places.ts';
 import type { RoutingProvider } from './integrations/routing-provider.ts';
 
 /**
@@ -174,6 +176,28 @@ export function buildRoutingProvider(env: Env, log: RuntimeLog): RoutingProvider
     : new HereRoutingProvider({ apiKey: env.HERE_API_KEY });
 }
 
+/**
+ * A Stripe client plus the plan-to-Price map, when both the secret key and
+ * the Carrier Core price are set. Same gate shape as `buildRoutingProvider`
+ * above: `routes/billing.ts` treats an unset client as a 503, not a guess at
+ * a default price.
+ */
+export function buildBilling(env: Env, log: RuntimeLog): BillingClient | undefined {
+  if (!env.STRIPE_SECRET_KEY || !env.STRIPE_PRICE_CARRIER_MONTHLY) {
+    log.info(
+      { billing: false },
+      'Stripe is not configured — checkout is unavailable. Set STRIPE_SECRET_KEY and STRIPE_PRICE_CARRIER_MONTHLY to enable it.',
+    );
+    return undefined;
+  }
+
+  log.info({ billing: 'stripe' }, 'billing ready');
+  return {
+    client: buildStripeClient(env.STRIPE_SECRET_KEY),
+    priceIds: { carrier: env.STRIPE_PRICE_CARRIER_MONTHLY },
+  };
+}
+
 /** Same account as `buildRoutingProvider` above — a different HERE endpoint, not a separate credential. */
 export function buildGeocoder(env: Env, log: RuntimeLog): HereGeocoder | undefined {
   if (!env.HERE_API_KEY) {
@@ -195,4 +219,24 @@ export function buildGeocoder(env: Env, log: RuntimeLog): HereGeocoder | undefin
     env.HERE_GEOCODE_BASE_URL,
     env.HERE_REVGEOCODE_BASE_URL,
   );
+}
+
+/**
+ * Same account as `buildRoutingProvider`/`buildGeocoder` above — a fourth
+ * HERE endpoint (`/browse`), not a separate credential. Same gate, same
+ * degrade-rather-than-fail shape. `FEATURE_REQUESTS_PLAN.md` section 4.
+ */
+export function buildPlacesProvider(env: Env, log: RuntimeLog): HerePlacesProvider | undefined {
+  if (!env.HERE_API_KEY) {
+    log.info(
+      { placesProvider: false },
+      'HERE is not configured — nearby-stop lookup is unavailable. Set HERE_API_KEY to enable it.',
+    );
+    return undefined;
+  }
+
+  log.info({ placesProvider: 'here' }, 'places provider ready');
+  return env.HERE_PLACES_BASE_URL
+    ? new HerePlacesProvider({ apiKey: env.HERE_API_KEY }, env.HERE_PLACES_BASE_URL)
+    : new HerePlacesProvider({ apiKey: env.HERE_API_KEY });
 }

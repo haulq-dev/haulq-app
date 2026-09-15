@@ -29,6 +29,7 @@ import {
 import { money, pk, timestamps } from './_shared.ts';
 import {
   membershipStatusEnum,
+  orgPlanEnum,
   orgRoleEnum,
   orgStatusEnum,
   orgTypeEnum,
@@ -75,11 +76,30 @@ export const orgs = pgTable(
      */
     ...money('monthlyUsageCap'),
 
+    /**
+     * Which bundle this org is subscribed to. Null until Stripe Checkout
+     * completes — see `orgPlanEnum`.
+     */
+    plan: orgPlanEnum('plan'),
+    /**
+     * Stripe's id for this org's Customer object. Set on the first Checkout
+     * Session, whether or not it ever completes — Stripe creates the
+     * Customer up front so an abandoned Checkout can still be recovered.
+     */
+    stripeCustomerId: text('stripe_customer_id'),
+    /**
+     * The active (or most recent) Subscription id. `orgs.status` is the
+     * source of truth for access — this is for looking a subscription up in
+     * Stripe, not for deciding whether to let someone in.
+     */
+    stripeSubscriptionId: text('stripe_subscription_id'),
+
     ...timestamps,
   },
   (t) => [
     uniqueIndex('orgs_slug_key').on(t.slug),
     index('orgs_status_idx').on(t.status),
+    uniqueIndex('orgs_stripe_customer_id_key').on(t.stripeCustomerId),
   ],
 );
 

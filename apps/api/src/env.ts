@@ -160,6 +160,23 @@ const EnvSchema = z.object({
   MOTIVE_REDIRECT_URI: z.string().url().optional(),
 
   /**
+   * Stripe Billing. All optional together: `/v1/billing/checkout` 503s
+   * rather than sending someone to a Checkout Session nothing can fulfill —
+   * same pattern as `MOTIVE_CLIENT_ID` above.
+   *
+   * `STRIPE_SECRET_KEY` is a restricted key in production (see
+   * docs/deploy-render.md) — the full account secret only in local dev,
+   * where the blast radius of a leak is one developer's sandbox account.
+   * `STRIPE_WEBHOOK_SECRET` is the signing secret for the Checkout/
+   * subscription webhook specifically — `whsec_...`, from the Dashboard's
+   * webhook endpoint, same shape as `CLERK_WEBHOOK_SECRET`.
+   */
+  STRIPE_SECRET_KEY: z.string().optional(),
+  STRIPE_WEBHOOK_SECRET: z.string().optional(),
+  /** Price id for the Carrier Core plan's flat monthly subscription. */
+  STRIPE_PRICE_CARRIER_MONTHLY: z.string().optional(),
+
+  /**
    * `credential-crypto.ts`'s sealed-box keypair. Both optional together —
    * without them Motive's OAuth callback has nowhere safe to put the token
    * it just received, so it refuses rather than storing one unsealed.
@@ -214,6 +231,13 @@ const EnvSchema = z.object({
    * `HERE_GEOCODE_BASE_URL`.
    */
   HERE_REVGEOCODE_BASE_URL: z.string().url().optional(),
+  /**
+   * Truck-relevant POI (truck stops, weigh stations, rest areas, fuel) —
+   * `browse.search.hereapi.com`, a fourth HERE endpoint under the same
+   * account. `FEATURE_REQUESTS_PLAN.md` section 4. Override for tests only,
+   * same as `HERE_GEOCODE_BASE_URL`.
+   */
+  HERE_PLACES_BASE_URL: z.string().url().optional(),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

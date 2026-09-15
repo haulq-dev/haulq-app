@@ -32,6 +32,7 @@ import {
 import type { Authenticator } from './auth/authenticator.ts';
 import { ClerkAuthenticator } from './auth/clerk-authenticator.ts';
 import { DevAuthenticator } from './auth/dev-authenticator.ts';
+import type { BillingClient } from './billing/stripe.ts';
 import type { Env } from './env.ts';
 import type { Mailer } from './email/postmark.ts';
 import { startDetentionScanRunner } from './exceptions/detention-runner.ts';
@@ -40,16 +41,19 @@ import { startMotiveSyncRunner } from './integrations/motive-sync-runner.ts';
 import { startVerifyRecheckRunner } from './verify/recheck-runner.ts';
 import { buildOutboxGroups } from './outbox/handlers.ts';
 import { startOutboxRunner } from './outbox/runner.ts';
-import { buildDocumentReader, buildGeocoder, buildMailer, buildModelReader, buildRoutingProvider, buildStorage } from './runtime.ts';
+import { buildBilling, buildDocumentReader, buildGeocoder, buildMailer, buildModelReader, buildPlacesProvider, buildRoutingProvider, buildStorage } from './runtime.ts';
 import type { ModelDocumentReader } from './documents/model-reader.ts';
 import type { DocumentReader } from './documents/reader.ts';
 import type { Geocoder, ReverseGeocoder } from './integrations/here-geocode.ts';
+import type { PlacesProvider } from './integrations/here-places.ts';
 import type { RoutingProvider } from './integrations/routing-provider.ts';
 import { requestContextPlugin } from './plugins/request-context.ts';
+import { billingRoutes } from './routes/billing.ts';
 import { brokerRoutes } from './routes/brokers.ts';
 import { documentRoutes } from './routes/documents.ts';
 import { geocodeRoutes } from './routes/geocode.ts';
 import { feasibilityRoutes } from './routes/feasibility.ts';
+import { nearbyStopsRoutes } from './routes/nearby-stops.ts';
 import { integrationRoutes } from './routes/integrations.ts';
 import { driverRoutes } from './routes/drivers.ts';
 import { importRoutes } from './routes/imports.ts';
@@ -75,6 +79,10 @@ declare module 'fastify' {
     geocoder: Geocoder | undefined;
     /** Same underlying HERE account as `geocoder`, decorated separately — see `here-geocode.ts`'s module note. */
     reverseGeocoder: ReverseGeocoder | undefined;
+    /** Same gate as `routingProvider`/`geocoder` — see `runtime.ts`'s `buildPlacesProvider`. */
+    placesProvider: PlacesProvider | undefined;
+    /** Undefined until `STRIPE_SECRET_KEY` and `STRIPE_PRICE_CARRIER_MONTHLY` are set — see `runtime.ts`'s `buildBilling`. */
+    billing: BillingClient | undefined;
   }
 }
 
@@ -138,6 +146,22 @@ export interface BuildOptions {
    * that's the same `HereGeocoder` instance, since it answers both.
    */
   reverseGeocoder?: ReverseGeocoder | undefined;
+
+  /**
+   * Override the places provider. Same reasoning as `routingProvider` above
+   * — tests inject a fake so the nearby-stops route can be exercised with
+   * no HERE account. Left unset, the server picks HERE when `HERE_API_KEY`
+   * is configured, and no provider at all when it is not.
+   */
+  placesProvider?: PlacesProvider | undefined;
+
+  /**
+   * Override billing. Tests inject a fake Stripe client. Left unset, the
+   * server builds one when `STRIPE_SECRET_KEY` and
+   * `STRIPE_PRICE_CARRIER_MONTHLY` are configured, and none at all when
+   * they are not — see `runtime.ts`'s `buildBilling`.
+   */
+  billing?: BillingClient | undefined;
 }
 
 /**
@@ -206,6 +230,8 @@ export async function buildServer(
   const hereGeocoder = buildGeocoder(env, app.log);
   app.decorate('geocoder', options.geocoder ?? hereGeocoder);
   app.decorate('reverseGeocoder', options.reverseGeocoder ?? hereGeocoder);
+  app.decorate('placesProvider', options.placesProvider ?? buildPlacesProvider(env, app.log));
+  app.decorate('billing', options.billing ?? buildBilling(env, app.log));
 
   startOutboxRunner(app, {
     groups: buildOutboxGroups({
@@ -361,6 +387,7 @@ export async function buildServer(
   // the webhook route — the signature is over the bytes as sent.
   await app.register(webhookRoutes);
   await app.register(orgRoutes);
+  await app.register(billingRoutes);
   await app.register(memberRoutes);
   await app.register(truckRoutes);
   await app.register(driverRoutes);
@@ -368,6 +395,7 @@ export async function buildServer(
   await app.register(brokerRoutes);
   await app.register(trackRoutes);
   await app.register(feasibilityRoutes);
+  await app.register(nearbyStopsRoutes);
   await app.register(geocodeRoutes);
   await app.register(integrationRoutes);
   await app.register(payRoutes);

@@ -161,6 +161,96 @@ export async function getOrg(s: Scope): Promise<Org | undefined> {
 }
 
 // ---------------------------------------------------------------------------
+// Billing
+// ---------------------------------------------------------------------------
+
+export interface SubscriptionUpdate {
+  status: 'trialing' | 'active' | 'past_due' | 'paused' | 'cancelled';
+  plan?: 'carrier' | 'fleet' | undefined;
+  stripeSubscriptionId?: string | undefined;
+}
+
+/** Shared by both webhook entry points below — everything past "which org" is identical. */
+async function writeSubscriptionUpdate(
+  db: Database,
+  orgId: string,
+  update: SubscriptionUpdate & { stripeCustomerId?: string | undefined },
+): Promise<Org> {
+  const s = scope(db, {
+    orgId,
+    actor: { type: 'integration', provider: 'stripe-webhook' },
+    correlationId: randomUUID(),
+  });
+
+  return withTransaction(s, async (tx) => {
+    const [row] = await tx.db
+      .update(orgs)
+      .set({
+        status: update.status,
+        ...(update.plan !== undefined ? { plan: update.plan } : {}),
+        ...(update.stripeCustomerId !== undefined
+          ? { stripeCustomerId: update.stripeCustomerId }
+          : {}),
+        ...(update.stripeSubscriptionId !== undefined
+          ? { stripeSubscriptionId: update.stripeSubscriptionId }
+          : {}),
+      })
+      .where(eq(orgs.id, orgId))
+      .returning();
+    if (!row) throw new Error('org subscription update returned nothing');
+
+    await recordEvent(tx, 'org.subscription_updated', {
+      subjectId: orgId,
+      payload: {
+        status: update.status,
+        plan: update.plan,
+        stripeSubscriptionId: update.stripeSubscriptionId,
+      },
+    });
+
+    return row;
+  });
+}
+
+/**
+ * The *first* write for a subscription — Checkout completing, or its async
+ * payment settling afterward. Looked up by org id (Checkout's
+ * `client_reference_id`, set when the session was created), not by Stripe
+ * Customer id, because this is the write that attaches the Customer id to
+ * begin with: nothing has it yet for `applySubscriptionUpdate` below to find
+ * an org by.
+ */
+export async function activateSubscriptionForOrg(
+  db: Database,
+  orgId: string,
+  update: SubscriptionUpdate & { stripeCustomerId: string },
+): Promise<Org | undefined> {
+  const [existing] = await db.select().from(orgs).where(eq(orgs.id, orgId));
+  if (!existing) return undefined;
+  return writeSubscriptionUpdate(db, orgId, update);
+}
+
+/**
+ * Every write *after* activation — `customer.subscription.updated`/
+ * `deleted`, and a failed async payment. Looked up by `stripeCustomerId`
+ * rather than taking a `Scope`, because the webhook has no org-scoped
+ * session, only the customer id Stripe's event carries — and by this point
+ * `activateSubscriptionForOrg` has already attached one.
+ */
+export async function applySubscriptionUpdate(
+  db: Database,
+  stripeCustomerId: string,
+  update: SubscriptionUpdate,
+): Promise<Org | undefined> {
+  const [existing] = await db
+    .select()
+    .from(orgs)
+    .where(eq(orgs.stripeCustomerId, stripeCustomerId));
+  if (!existing) return undefined;
+  return writeSubscriptionUpdate(db, existing.id, update);
+}
+
+// ---------------------------------------------------------------------------
 // Profile
 // ---------------------------------------------------------------------------
 

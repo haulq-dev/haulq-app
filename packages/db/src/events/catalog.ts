@@ -88,6 +88,19 @@ export const eventCatalog = {
     describe: (p) => `Updated the carrier profile (${p.changed.join(', ')}).`,
   }),
 
+  /** Written by the Stripe webhook — see `applySubscriptionUpdate` in `repositories/orgs.ts`. */
+  'org.subscription_updated': define<{
+    status: string;
+    plan?: string | undefined;
+    stripeSubscriptionId?: string | undefined;
+  }>({
+    subjectType: 'org',
+    describe: (p) =>
+      p.plan
+        ? `Subscription for the ${p.plan} plan is now ${p.status}.`
+        : `Subscription is now ${p.status}.`,
+  }),
+
   'org.operating_facts_updated': define<{
     changed: string[];
     completeForScoring: boolean;

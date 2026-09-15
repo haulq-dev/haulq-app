@@ -14,6 +14,7 @@ import { request, writeSession } from '../lib/api.ts';
 import { usingClerk } from '../lib/auth.ts';
 import { AccountMenu, OrgPicker, useOrgs, useSession } from './AuthGate.tsx';
 import { Logo } from './Logo.tsx';
+import { PlansScreen } from './PlansScreen.tsx';
 
 /**
  * Grouped, not one flat list.
@@ -252,8 +253,16 @@ function NavDropdown({ label, items, pathname }: { label: string; items: readonl
 
 export function Shell({ children }: { children: ReactNode }) {
   const session = useSession();
+  const orgs = useOrgs();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const [menuOpen, setMenuOpen] = useState(false);
+
+  /**
+   * The org this session is in, with its billing status — not just the id
+   * `session.orgId` carries. `useOrgs` is already fetched for the dev bar's
+   * picker above; reading the same query here costs nothing extra.
+   */
+  const currentOrg = orgs.data?.items.find((o) => o.id === session?.orgId);
 
   /**
    * Close on navigation.
@@ -346,7 +355,20 @@ export function Shell({ children }: { children: ReactNode }) {
       </header>
 
       <main className="mx-auto max-w-6xl px-4 py-6 sm:px-6 sm:py-8">
-        {session?.orgId ? children : <OrgPicker />}
+        {!session?.orgId ? (
+          <OrgPicker />
+        ) : !currentOrg ? (
+          // Covers both "still loading" and "just created, `orgs` hasn't
+          // refetched yet" — either way this org's status is unknown, and
+          // unknown must not read as paid. Only a positive `status ===
+          // 'active'` below renders the real app; every other outcome,
+          // including this one, blocks it.
+          <p className="text-mute">Loading…</p>
+        ) : currentOrg.status !== 'active' ? (
+          <PlansScreen pastDue={currentOrg.status === 'past_due'} />
+        ) : (
+          children
+        )}
       </main>
     </div>
   );

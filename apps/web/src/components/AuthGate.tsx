@@ -86,10 +86,13 @@ export function useSession(): Session | null {
   return session;
 }
 
-interface OrgSummary {
+export interface OrgSummary {
   id: string;
   name: string;
   role: string;
+  /** Drives the payment gate in `Shell.tsx`. Anything but `'active'` means no confirmed subscription. */
+  status: 'trialing' | 'active' | 'past_due' | 'paused' | 'cancelled';
+  plan: 'carrier' | 'fleet' | null;
 }
 
 export function useOrgs() {
