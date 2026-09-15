@@ -687,6 +687,18 @@ export const eventCatalog = {
     describe: (p) => `Disconnected your ${p.board} account.`,
   }),
 
+  // --- mailbox connections — FEATURE_REQUESTS_PLAN.md section 1 -----------
+
+  'mailbox_connection.connected': define<{ provider: string }>({
+    subjectType: 'mailbox_connection',
+    describe: (p) => `Connected your mailbox through ${p.provider}. Rate confirmations sent there will come in automatically.`,
+  }),
+
+  'mailbox_connection.disconnected': define<{ provider: string }>({
+    subjectType: 'mailbox_connection',
+    describe: (p) => `Disconnected your ${p.provider} mailbox. Rate confirmations will need to be forwarded again.`,
+  }),
+
   // --- track — Phase 2a --------------------------------------------------
   //
   // PHASE_2_PLAN.md section 4's exit gate, restated: a driver can report

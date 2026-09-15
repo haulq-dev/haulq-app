@@ -19,6 +19,7 @@ export * from './repositories/identity.ts';
 export * from './repositories/imports.ts';
 export * from './repositories/insights.ts';
 export * from './repositories/loads.ts';
+export * from './repositories/mailbox.ts';
 export * from './repositories/members.ts';
 export * from './repositories/onboarding.ts';
 export * from './repositories/orgs.ts';

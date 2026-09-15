@@ -262,6 +262,44 @@ const EnvSchema = z.object({
   YELP_API_KEY: z.string().optional(),
   /** Override for tests only — production never sets this. */
   YELP_BASE_URL: z.string().url().optional(),
+
+  /**
+   * Unipile, for `FEATURE_REQUESTS_PLAN.md` section 1's mailbox-ingest
+   * feature — connecting a carrier's actual work inbox so a rate
+   * confirmation reaches the existing Docs pipeline without a manual
+   * forward. A single platform-level developer credential, same shape as
+   * `HERE_API_KEY`: one HaulQ-owned Unipile account serves every tenant's
+   * mailbox connection, not a per-org secret — the per-org piece is the
+   * `account_id` `mailbox_connections` stores, not a second API key.
+   * `UNIPILE_DSN` is the account's own assigned base URL (Unipile issues
+   * one per account, not a shared one), required alongside the key.
+   * Optional together, same degrade-rather-than-fail pattern as every other
+   * external service here: without them, mailbox connect/disconnect 503s.
+   */
+  UNIPILE_API_KEY: z.string().optional(),
+  UNIPILE_DSN: z.string().url().optional(),
+  /**
+   * This API's own public address for Unipile's account-created callback —
+   * `POST /v1/mailbox/connect` sends it as `notify_url` on every hosted-auth
+   * link it requests. Same shape as `MOTIVE_REDIRECT_URI`: a full absolute
+   * URL configured explicitly rather than derived, since this codebase does
+   * not otherwise track its own public origin. Include the
+   * `UNIPILE_WEBHOOK_SECRET` query param below in the value, e.g.
+   * `https://api.haulq.ai/v1/webhooks/unipile/account-notify?secret=...`.
+   */
+  UNIPILE_NOTIFY_URL: z.string().url().optional(),
+  /**
+   * A shared secret this codebase controls and appends as a query param to
+   * both Unipile webhook URLs — `notify_url` above, and whatever URL is
+   * registered in Unipile's own dashboard for the "new email" webhook (that
+   * one is operator setup, not something this codebase requests
+   * programmatically — see `unipile-inbound.ts`'s module note). Neither of
+   * Unipile's webhooks carries a signature, same reasoning
+   * `POSTMARK_INBOUND_USER`/`_PASSWORD` exist for Postmark's own
+   * signature-less inbound webhook. Both Unipile webhook routes 503
+   * without it.
+   */
+  UNIPILE_WEBHOOK_SECRET: z.string().optional(),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

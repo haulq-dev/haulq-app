@@ -33,6 +33,7 @@ import { HereRoutingProvider } from './integrations/here.ts';
 import { HereGeocoder } from './integrations/here-geocode.ts';
 import { HerePlacesProvider } from './integrations/here-places.ts';
 import type { RoutingProvider } from './integrations/routing-provider.ts';
+import { UnipileHostedClient, type UnipileClient } from './integrations/unipile.ts';
 import { YelpMechanicSearchProvider } from './integrations/yelp.ts';
 
 /**
@@ -274,4 +275,24 @@ export function buildMechanicSearchProvider(env: Env, log: RuntimeLog): YelpMech
   return env.YELP_BASE_URL
     ? new YelpMechanicSearchProvider({ apiKey: env.YELP_API_KEY }, env.YELP_BASE_URL)
     : new YelpMechanicSearchProvider({ apiKey: env.YELP_API_KEY });
+}
+
+/**
+ * Unipile when both the key and the account's DSN are configured, undefined
+ * otherwise — same degrade-rather-than-fail shape as every other optional
+ * integration here. `POST /v1/mailbox/connect` and both Unipile webhook
+ * routes treat an unset client as a 503. `FEATURE_REQUESTS_PLAN.md`
+ * section 1.
+ */
+export function buildUnipileClient(env: Env, log: RuntimeLog): UnipileClient | undefined {
+  if (!env.UNIPILE_API_KEY || !env.UNIPILE_DSN) {
+    log.info(
+      { unipileClient: false },
+      'Unipile is not configured — mailbox connect is unavailable. Set UNIPILE_API_KEY and UNIPILE_DSN to enable it.',
+    );
+    return undefined;
+  }
+
+  log.info({ unipileClient: 'unipile' }, 'unipile client ready');
+  return new UnipileHostedClient({ apiKey: env.UNIPILE_API_KEY, dsn: env.UNIPILE_DSN });
 }
