@@ -804,3 +804,47 @@ export const LoadFeasibilityResponseSchema = z.object({
   estimatedArrivalAt: z.string().datetime(),
 });
 export type LoadFeasibilityResponse = z.infer<typeof LoadFeasibilityResponseSchema>;
+
+// ---------------------------------------------------------------------------
+// Routes — nearby stops (FEATURE_REQUESTS_PLAN.md section 4)
+// ---------------------------------------------------------------------------
+//
+// PHASE_3_PLAN.md section 2's Routes gap: "truck-relevant POI data... low
+// bridges, restricted roads, scales, parking, service points." This is the
+// HERE-`/browse`-backed half of that — truck stops, weigh stations, rest
+// areas, truck washes and fuel near each of a load's stops. Static place
+// records, not live occupancy — see `here-places.ts`'s module note.
+
+export const NearbyStopCategorySchema = z.enum([
+  'truckStop',
+  'weighStation',
+  'restArea',
+  'truckWash',
+  'fuelStation',
+]);
+
+export const NearbyPlaceSchema = z.object({
+  name: z.string(),
+  category: NearbyStopCategorySchema,
+  categoryLabel: z.string(),
+  lat: z.number(),
+  lng: z.number(),
+  distanceMiles: z.number(),
+  /** Null when HERE has no resolved address string for this place. */
+  address: z.string().nullable(),
+});
+export type NearbyPlace = z.infer<typeof NearbyPlaceSchema>;
+
+export const StopNearbyPlacesSchema = z.object({
+  seq: z.number().int(),
+  city: z.string(),
+  state: z.string(),
+  /** Empty when this stop has no coordinates yet, not an error — see `nearby-stops.ts`. */
+  places: z.array(NearbyPlaceSchema),
+});
+export type StopNearbyPlaces = z.infer<typeof StopNearbyPlacesSchema>;
+
+export const NearbyStopsResponseSchema = z.object({
+  stops: z.array(StopNearbyPlacesSchema),
+});
+export type NearbyStopsResponse = z.infer<typeof NearbyStopsResponseSchema>;

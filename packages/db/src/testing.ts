@@ -149,6 +149,23 @@ export async function setTestMembershipRole(
     );
 }
 
+/**
+ * Set an org's plan directly, bypassing Stripe. `billing/entitlements.ts`'s
+ * `requireEntitlement` derives access from `orgs.plan` — Track and Routes
+ * are Fleet-only as of the entitlement gate this repo added — so any test
+ * hitting a gated route needs a way to put an org on `'fleet'` with no
+ * webhook and no real subscription. Production only ever sets this through
+ * `writeSubscriptionUpdate` (a real Stripe event); this is the test-only
+ * equivalent, same reasoning `setTestMembershipRole` above already applies
+ * to role.
+ */
+export async function setTestOrgPlan(
+  db: Database,
+  args: { orgId: string; plan: 'carrier' | 'fleet' },
+): Promise<void> {
+  await db.update(orgs).set({ plan: args.plan }).where(eq(orgs.id, args.orgId));
+}
+
 export async function getTestUser(
   db: Database,
   id: string,

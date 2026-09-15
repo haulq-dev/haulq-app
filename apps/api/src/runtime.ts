@@ -31,6 +31,7 @@ import { LogMailer, PostmarkMailer, type Mailer } from './email/postmark.ts';
 import type { Env } from './env.ts';
 import { HereRoutingProvider } from './integrations/here.ts';
 import { HereGeocoder } from './integrations/here-geocode.ts';
+import { HerePlacesProvider } from './integrations/here-places.ts';
 import type { RoutingProvider } from './integrations/routing-provider.ts';
 
 /**
@@ -230,4 +231,24 @@ export function buildGeocoder(env: Env, log: RuntimeLog): HereGeocoder | undefin
     env.HERE_GEOCODE_BASE_URL,
     env.HERE_REVGEOCODE_BASE_URL,
   );
+}
+
+/**
+ * Same account as `buildRoutingProvider`/`buildGeocoder` above — a fourth
+ * HERE endpoint (`/browse`), not a separate credential. Same gate, same
+ * degrade-rather-than-fail shape. `FEATURE_REQUESTS_PLAN.md` section 4.
+ */
+export function buildPlacesProvider(env: Env, log: RuntimeLog): HerePlacesProvider | undefined {
+  if (!env.HERE_API_KEY) {
+    log.info(
+      { placesProvider: false },
+      'HERE is not configured — nearby-stop lookup is unavailable. Set HERE_API_KEY to enable it.',
+    );
+    return undefined;
+  }
+
+  log.info({ placesProvider: 'here' }, 'places provider ready');
+  return env.HERE_PLACES_BASE_URL
+    ? new HerePlacesProvider({ apiKey: env.HERE_API_KEY }, env.HERE_PLACES_BASE_URL)
+    : new HerePlacesProvider({ apiKey: env.HERE_API_KEY });
 }
