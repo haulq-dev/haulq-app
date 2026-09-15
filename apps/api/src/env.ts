@@ -231,13 +231,6 @@ const EnvSchema = z.object({
    * `HERE_GEOCODE_BASE_URL`.
    */
   HERE_REVGEOCODE_BASE_URL: z.string().url().optional(),
-  /**
-   * Truck-relevant POI (truck stops, weigh stations, rest areas, fuel) —
-   * `browse.search.hereapi.com`, a fourth HERE endpoint under the same
-   * account. `FEATURE_REQUESTS_PLAN.md` section 4. Override for tests only,
-   * same as `HERE_GEOCODE_BASE_URL`.
-   */
-  HERE_PLACES_BASE_URL: z.string().url().optional(),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

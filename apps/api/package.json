@@ -9,8 +9,7 @@
     "start": "node --experimental-strip-types src/index.ts",
     "typecheck": "tsc --noEmit",
     "test": "node --env-file-if-exists=../../.env --test --test-concurrency=1 --experimental-strip-types \"src/**/*.test.ts\"",
-    "validate-here-etas": "node --env-file-if-exists=../../.env --experimental-strip-types src/scripts/validate-here-etas.ts",
-    "usage-benchmark": "node --env-file-if-exists=../../.env --experimental-strip-types src/scripts/usage-benchmark.ts"
+    "validate-here-etas": "node --env-file-if-exists=../../.env --experimental-strip-types src/scripts/validate-here-etas.ts"
   },
   "dependencies": {
     "@clerk/backend": "^3.16.6",
