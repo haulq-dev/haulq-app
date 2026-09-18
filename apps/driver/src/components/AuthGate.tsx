@@ -22,9 +22,8 @@ import {
   SignIn,
   useAuth,
   useClerk,
-  useUser,
 } from '@clerk/clerk-react';
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import { readSession, request, writeSession, type Session } from '../lib/api.ts';
 import {
@@ -33,7 +32,6 @@ import {
   keyProblem,
   registerTokenGetter,
 } from '../lib/auth.ts';
-import { ErrorNote } from './ui.tsx';
 import { Logo } from './Logo.tsx';
 
 /**
@@ -71,21 +69,10 @@ const APPEARANCE = {
 
 /**
  * `SignInScreen`'s own copy of `APPEARANCE`, with Clerk's built-in "Don't
- * have an account? Sign up" footer link hidden — replaced with a button
- * that opens sign-up in the system browser via `Browser.open()`, same as
- * `DeleteAccountLink` below.
- *
- * An embedded `<SignUp/>` was tried first, but Cloudflare Turnstile (this
- * Clerk instance's bot-sign-up protection) runs sign-up through a
- * `challenges.cloudflare.com` iframe that talks to its parent via
- * `postMessage` — which fails inside this WebView (`postMessage` target
- * origin `challenges.cloudflare.com` vs. the WebView's own origin,
- * `https://localhost` on Android/iOS per `capacitor.config.ts`), surfacing
- * as "Authentication unsuccessful due to failed security validations" no
- * matter what's typed in. That's a WebView limitation, not something
- * `allowNavigation` or an appearance override can fix — Turnstile expects
- * a real browser origin. Sign-in has no such challenge and keeps working
- * embedded; only sign-up needs the real browser.
+ * have an account? Sign up" footer link hidden. This app is sign-in only:
+ * Apple's Guideline 3.1.1 review treated business registration inside the
+ * app as a route to external purchases, so account creation happens
+ * elsewhere and this screen offers no way to start it.
  */
 const SIGN_IN_APPEARANCE = {
   elements: {
@@ -93,12 +80,6 @@ const SIGN_IN_APPEARANCE = {
     footerAction: { display: 'none' },
   },
 } as const;
-
-/** Clerk's hosted sign-up page for this instance, via the SDK rather than a hardcoded domain guess. */
-function useSignUpUrl(): string {
-  const clerk = useClerk();
-  return clerk.buildSignUpUrl();
-}
 
 const SignedInContext = createContext(false);
 
@@ -146,20 +127,11 @@ function TokenBridge({ onReady }: { onReady: () => void }) {
 }
 
 function SignInScreen() {
-  const signUpUrl = useSignUpUrl();
-
   return (
     <div className="mx-auto flex min-h-screen max-w-md flex-col items-center justify-center gap-8 px-6">
       <Logo />
       <SignIn routing="hash" appearance={SIGN_IN_APPEARANCE} />
       <div className="flex flex-col items-center gap-2">
-        <button
-          type="button"
-          className="text-sm text-brand underline"
-          onClick={() => void Browser.open({ url: signUpUrl })}
-        >
-          Don't have an account? Sign up
-        </button>
         {/* A full navigation, not client-side state — `main.tsx` decides
             `CheckinScreen` vs. this screen once, from the URL, at mount. */}
         <button
@@ -351,109 +323,34 @@ function OrgGate({ children }: { children: ReactNode }) {
     return <OrgPicker orgs={items} />;
   }
 
-  return <CreateOrgOrWait />;
-}
-
-interface CreatedOrg {
-  id: string;
-  name: string;
+  return <NoAccountScreen />;
 }
 
 /**
- * A login with zero orgs — either a brand-new person creating their own
- * carrier (the self-serve path Apple's Guideline 3.2 review actually
- * checks for: can anyone become a customer, not just someone a dispatcher
- * already invited), or someone waiting on an invite/check-in code that
- * hasn't reached them yet. Both stay on this one screen — creating a
- * carrier is additive, not a replacement for the other two paths.
- *
- * `POST /v1/orgs` needs no prior org membership at all
- * (`authenticateUser`-only on `apps/api/src/routes/orgs.ts` — the same
- * endpoint `apps/web`'s own `createOrg` already calls), so nothing on the
- * backend had to change for this to work.
+ * A login with zero orgs. This app deliberately has no way to create a
+ * carrier (Apple Guideline 3.1.1 treats business registration in the app as
+ * a route to external purchases) — accounts are created elsewhere, and this
+ * app only signs into them. The copy stays neutral on purpose: no pointer to
+ * a sign-up or purchase page.
  */
-function CreateOrgOrWait() {
-  const { user } = useUser();
-  const [name, setName] = useState('');
-  const [created, setCreated] = useState<CreatedOrg | null>(null);
-
-  const create = useMutation({
-    mutationFn: () =>
-      request<{ org: CreatedOrg }>('/v1/orgs', {
-        body: {
-          name,
-          // The signed-in person's own email, not a placeholder — this is
-          // "where system mail goes" for the new carrier (see orgs'
-          // schema comment), and Clerk already has a verified one on hand.
-          contactEmail: user?.primaryEmailAddress?.emailAddress ?? '',
-        },
-      }),
-    onSuccess: (res) => setCreated(res.org),
-  });
-
-  if (created) {
-    return (
-      <div className="mx-auto max-w-md px-6 py-16">
-        <h1 className="mb-2 text-2xl">{created.name} is set up</h1>
-        <p className="text-slate">
-          This app shows loads and lets a driver report progress — to add trucks, invite drivers,
-          and start booking loads, sign in at <span className="num">app.haulq.ai</span> on a
-          computer.
-        </p>
-        {/* Deliberately not automatic — `writeSession` here is what moves
-            `OrgGate` on to `children`, and holding it behind a tap keeps
-            this confirmation from flashing past unread. */}
-        <button
-          type="button"
-          className="hq-btn hq-btn-brand mt-6"
-          onClick={() =>
-            // The creator of a brand-new org is always its owner —
-            // `createOrg` (packages/db/src/repositories/orgs.ts) inserts
-            // the membership with role: 'owner' directly, no other role
-            // is possible here.
-            writeSession({ userId: 'clerk', orgId: created.id, orgName: created.name, role: 'owner' })
-          }
-        >
-          Continue
-        </button>
-      </div>
-    );
-  }
-
+function NoAccountScreen() {
   return (
-    <div className="mx-auto max-w-md space-y-8 px-6 py-16">
-      <div>
-        <h1 className="mb-2 text-2xl">Set up your carrier</h1>
-        <p className="mb-4 text-slate">New to HaulQ? Give your company a name to get started.</p>
-        <input
-          className="hq-input"
-          placeholder="Company name"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-        />
-        <button
-          type="button"
-          className="hq-btn hq-btn-brand mt-4 w-full"
-          disabled={!name.trim() || create.isPending}
-          onClick={() => create.mutate()}
-        >
-          {create.isPending ? 'Creating…' : 'Create carrier account'}
-        </button>
-        <ErrorNote error={create.error} />
-      </div>
-
-      <div className="border-t border-line pt-6">
-        <p className="text-sm text-slate">
-          Already connected to a carrier on HaulQ? Ask whoever invited you to send the link again,
-          or use a check-in code instead.
-        </p>
-        <button
-          type="button"
-          className="mt-2 text-sm text-brand underline"
-          onClick={() => window.location.assign('/checkin')}
-        >
-          Have a check-in code instead?
-        </button>
+    <div className="mx-auto max-w-md space-y-4 px-6 py-16">
+      <h1 className="text-2xl">No carrier yet</h1>
+      <p className="text-slate">
+        This login isn't connected to a carrier. Ask your carrier's owner or dispatcher to send you
+        an invitation, or use a check-in code.
+      </p>
+      <button
+        type="button"
+        className="text-sm text-brand underline"
+        onClick={() => window.location.assign('/checkin')}
+      >
+        Have a check-in code instead?
+      </button>
+      <div className="flex gap-4 pt-2">
+        <SignOutLink />
+        <DeleteAccountLink />
       </div>
     </div>
   );
