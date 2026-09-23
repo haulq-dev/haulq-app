@@ -19,7 +19,10 @@
  * response and a real new-email webhook delivery the day an account
  * activates, before any of it reaches a carrier's inbox.
  *
- * Two moves, not one client class: **connect** (this file) hands back a URL
+ * Three calls: **send** (added for `FEATURE_REQUESTS_PLAN.md` section 8 —
+ * only ever invoked through `outbound/dispatch.ts`, which enforces the
+ * carrier's autonomy policy before anything leaves), **connect**, and
+ * **fetch attachment**. Connect (this file) hands back a URL
  * a browser is redirected to — Unipile itself runs the actual Google/
  * Microsoft OAuth dialog, so HaulQ never touches a mailbox password or an
  * OAuth code exchange. **Fetch attachment** is the only other call this
@@ -61,7 +64,42 @@ interface HostedAuthLinkResponse {
   url?: string;
 }
 
+export interface SendEmailInput {
+  accountId: string;
+  to: string[];
+  subject: string;
+  /** Plain text. The client renders it to HTML, since Unipile's body is HTML by default. */
+  body: string;
+  /** A prior message's provider id — makes this a threaded reply. */
+  replyToProviderId?: string | undefined;
+  /**
+   * Unipile's `Idempotency-Key`: a retry with the same key returns the
+   * original result instead of sending twice. Callers pass the outbound
+   * message's own id.
+   */
+  idempotencyKey: string;
+}
+
+interface SendEmailResponse {
+  provider_id?: string;
+  tracking_id?: string;
+}
+
+const escapeHtml = (s: string) =>
+  s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+/** Plain text to HTML that keeps its line breaks — escaped, so a body can never inject markup. */
+export function textToHtml(text: string): string {
+  return escapeHtml(text).replace(/\r?\n/g, '<br>\n');
+}
+
 export interface UnipileClient {
+  /**
+   * Send an email from a connected mailbox. Sends nothing HaulQ has not
+   * already decided to send — the caller is `outbound/dispatch.ts`, the one
+   * choke point, and nothing else should call this directly.
+   */
+  sendEmail(input: SendEmailInput): Promise<{ providerMessageId: string | null }>;
   /** Returns the URL to redirect the carrier's browser to — does not redirect itself, same "hand back the URL" shape `motiveAuthorizeUrl` uses. */
   createHostedAuthLink(input: HostedAuthLinkInput): Promise<string>;
   /** Raw bytes and the provider-claimed content type for one attachment on one email. */
@@ -123,6 +161,41 @@ export class UnipileHostedClient implements UnipileClient {
       throw new UnipileApiError(0, 'Unipile returned no hosted auth URL');
     }
     return body.url;
+  }
+
+  async sendEmail(input: SendEmailInput): Promise<{ providerMessageId: string | null }> {
+    let response: Response;
+    try {
+      response = await fetch(`${this.dsn}/api/v1/emails`, {
+        method: 'POST',
+        headers: {
+          'x-api-key': this.apiKey,
+          accept: 'application/json',
+          'content-type': 'application/json',
+          'idempotency-key': input.idempotencyKey,
+        },
+        body: JSON.stringify({
+          account_id: input.accountId,
+          to: input.to.map((identifier) => ({ identifier })),
+          subject: input.subject,
+          body: textToHtml(input.body),
+          ...(input.replyToProviderId ? { reply_to: input.replyToProviderId } : {}),
+        }),
+      });
+    } catch (err) {
+      throw new UnipileApiError(0, `Unipile unreachable: ${err instanceof Error ? err.message : String(err)}`);
+    }
+
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      throw new UnipileApiError(response.status, `Unipile ${response.status}: ${text.slice(0, 500)}`);
+    }
+
+    // The response shape is not confirmed against a real send — same
+    // caveat as the rest of this file. Read defensively: a sent message
+    // with no id we recognize is still a sent message.
+    const body = (await response.json().catch(() => ({}))) as SendEmailResponse;
+    return { providerMessageId: body.provider_id ?? body.tracking_id ?? null };
   }
 
   async fetchAttachment(

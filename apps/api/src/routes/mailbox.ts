@@ -12,10 +12,11 @@
  * reason: this is an API a frontend calls before sending the browser
  * anywhere, not the browser's own navigation target.
  *
- * Ingest-only, deliberately. Nothing here, or anywhere downstream of it,
- * sends mail through the connected mailbox — `FEATURE_REQUESTS_PLAN.md`
- * section 1's own open decision names sending as a separate, higher-risk
- * feature to scope later, not this pass.
+ * Nothing in this file sends mail. Connecting a mailbox only enables
+ * *reading* it. Sending through a connected mailbox is a separate,
+ * opt-in capability (`sending_enabled`, off by default and reset on every
+ * reconnect) that goes only through `outbound/dispatch.ts` — see
+ * `FEATURE_REQUESTS_PLAN.md` section 8 for why it is gated that way.
  */
 
 import { disconnectMailbox, getMailboxConnection, requestMailboxConnection } from '@haulq/db';

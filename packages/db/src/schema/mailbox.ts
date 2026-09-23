@@ -21,7 +21,7 @@
  */
 
 import { sql } from 'drizzle-orm';
-import { index, pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
+import { boolean, index, pgTable, text, timestamp, uniqueIndex, uuid } from 'drizzle-orm/pg-core';
 import { pk, timestamps } from './_shared.ts';
 import { orgs } from './tenancy.ts';
 
@@ -46,6 +46,17 @@ export const mailboxConnections = pgTable(
 
     /** 'pending' | 'connected' | 'disconnected'. Text, same reasoning as `board_credentials.status`. */
     status: text('status').notNull().default('pending'),
+
+    /**
+     * The kill switch, inverted so the safe state is the default: false
+     * until the owner turns sending on, and turning it off again holds
+     * every outbound message to shadow instantly. Lives here rather than
+     * on `orgs` because sending is a property of *this* connection — a
+     * disconnected or replaced mailbox must not inherit an "on" nobody
+     * re-confirmed, and `requestMailboxConnection` resets it.
+     * `FEATURE_REQUESTS_PLAN.md` section 8.
+     */
+    sendingEnabled: boolean('sending_enabled').notNull().default(false),
 
     connectedAt: timestamp('connected_at', { withTimezone: true }),
     disconnectedAt: timestamp('disconnected_at', { withTimezone: true }),

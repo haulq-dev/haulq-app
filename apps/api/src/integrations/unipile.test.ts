@@ -136,3 +136,69 @@ describe('UnipileHostedClient.fetchAttachment', () => {
     );
   });
 });
+
+describe('UnipileHostedClient.sendEmail', () => {
+  beforeEach(() => {
+    script = { status: 200, body: { provider_id: 'prov-123' } };
+  });
+
+  it('posts json with the account, recipients, subject, an html body and the idempotency key', async () => {
+    const client = new UnipileHostedClient({ apiKey: 'test-key', dsn: base });
+    const result = await client.sendEmail({
+      accountId: 'acct-1',
+      to: ['broker@example.com', 'ap@example.com'],
+      subject: 'POD for load 1042',
+      body: 'Hi,\nPlease send the <POD> & confirm.',
+      idempotencyKey: 'msg-uuid-1',
+    });
+
+    assert.equal(result.providerMessageId, 'prov-123');
+    assert.equal(lastRequest!.method, 'POST');
+    assert.equal(lastRequest!.url, '/api/v1/emails');
+    assert.equal(lastRequest!.headers['x-api-key'], 'test-key');
+    assert.equal(lastRequest!.headers['idempotency-key'], 'msg-uuid-1');
+
+    const body = JSON.parse(lastRequest!.body);
+    assert.equal(body.account_id, 'acct-1');
+    assert.deepEqual(body.to, [{ identifier: 'broker@example.com' }, { identifier: 'ap@example.com' }]);
+    assert.equal(body.subject, 'POD for load 1042');
+    // Newlines survive, and markup in the text is escaped, never injected.
+    assert.equal(body.body, 'Hi,<br>\nPlease send the &lt;POD&gt; &amp; confirm.');
+    assert.equal(body.reply_to, undefined);
+  });
+
+  it('threads a reply when given the prior message id', async () => {
+    const client = new UnipileHostedClient({ apiKey: 'test-key', dsn: base });
+    await client.sendEmail({
+      accountId: 'acct-1',
+      to: ['broker@example.com'],
+      subject: 'Re: load',
+      body: 'ok',
+      replyToProviderId: 'prior-provider-id',
+      idempotencyKey: 'msg-uuid-2',
+    });
+    assert.equal(JSON.parse(lastRequest!.body).reply_to, 'prior-provider-id');
+  });
+
+  it('still succeeds, with no id, when the response carries none we recognize', async () => {
+    script.body = {};
+    const client = new UnipileHostedClient({ apiKey: 'test-key', dsn: base });
+    const result = await client.sendEmail({
+      accountId: 'acct-1',
+      to: ['broker@example.com'],
+      subject: 's',
+      body: 'b',
+      idempotencyKey: 'k',
+    });
+    assert.equal(result.providerMessageId, null);
+  });
+
+  it('throws UnipileApiError when Unipile refuses', async () => {
+    script = { status: 403, body: { title: 'Insufficient permissions' } };
+    const client = new UnipileHostedClient({ apiKey: 'test-key', dsn: base });
+    await assert.rejects(
+      () => client.sendEmail({ accountId: 'a', to: ['x@example.com'], subject: 's', body: 'b', idempotencyKey: 'k' }),
+      (err: unknown) => err instanceof UnipileApiError && err.status === 403,
+    );
+  });
+});

@@ -58,6 +58,7 @@ import { feasibilityRoutes } from './routes/feasibility.ts';
 import { mechanicsRoutes } from './routes/mechanics.ts';
 import { mailboxRoutes } from './routes/mailbox.ts';
 import { nearbyStopsRoutes } from './routes/nearby-stops.ts';
+import { outboundRoutes } from './routes/outbound.ts';
 import { integrationRoutes } from './routes/integrations.ts';
 import { driverRoutes } from './routes/drivers.ts';
 import { importRoutes } from './routes/imports.ts';
@@ -426,6 +427,7 @@ export async function buildServer(
   await app.register(nearbyStopsRoutes);
   await app.register(mechanicsRoutes);
   await app.register(mailboxRoutes);
+  await app.register(outboundRoutes);
   await app.register(geocodeRoutes);
   await app.register(integrationRoutes);
   await app.register(payRoutes);

@@ -85,6 +85,13 @@
       "when": 1789505277685,
       "tag": "0011_heavy_king_bedlam",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1790195660386,
+      "tag": "0012_heavy_hydra",
+      "breakpoints": true
     }
   ]
 }

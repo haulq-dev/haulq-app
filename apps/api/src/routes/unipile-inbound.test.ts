@@ -52,6 +52,10 @@ class FakeUnipileClient implements UnipileClient {
     this.attachments.set(attachmentId, body);
   }
 
+  async sendEmail(): Promise<{ providerMessageId: string | null }> {
+    throw new Error('not used by this suite');
+  }
+
   async createHostedAuthLink(): Promise<string> {
     return 'https://account.unipile.com/fake-link';
   }

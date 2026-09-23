@@ -699,6 +699,46 @@ export const eventCatalog = {
     describe: (p) => `Disconnected your ${p.provider} mailbox. Rate confirmations will need to be forwarded again.`,
   }),
 
+  // --- outbound — FEATURE_REQUESTS_PLAN.md section 8 ----------------------
+  //
+  // What HaulQ sends in a carrier's name. Shadow drafts are rows in
+  // `outbound_messages`, not events: nothing happened yet. An event fires
+  // when something actually did — a send, a failure, a person's decision,
+  // or the carrier changing how much freedom the system has.
+
+  'outbound.sent': define<{ actionType: string; to: string; subject: string }>({
+    subjectType: 'outbound_message',
+    describe: (p) => `Sent "${p.subject}" to ${p.to} on your behalf.`,
+  }),
+
+  'outbound.failed': define<{ actionType: string; to: string; error: string }>({
+    subjectType: 'outbound_message',
+    describe: (p) => `Could not send a message to ${p.to}: ${p.error}.`,
+  }),
+
+  'outbound.approved': define<{ actionType: string; to: string }>({
+    subjectType: 'outbound_message',
+    describe: (p) => `Approved a message to ${p.to}.`,
+  }),
+
+  'outbound.rejected': define<{ actionType: string; to: string }>({
+    subjectType: 'outbound_message',
+    describe: (p) => `Rejected a drafted message to ${p.to}.`,
+  }),
+
+  'outbound.sending_changed': define<{ enabled: boolean }>({
+    subjectType: 'mailbox_connection',
+    describe: (p) =>
+      p.enabled
+        ? 'Turned on sending from your mailbox.'
+        : 'Turned off sending from your mailbox. Everything is held for review until it is back on.',
+  }),
+
+  'outbound.mode_changed': define<{ actionType: string; mode: string }>({
+    subjectType: 'autonomy_setting',
+    describe: (p) => `Set "${p.actionType}" to ${p.mode}.`,
+  }),
+
   // --- track — Phase 2a --------------------------------------------------
   //
   // PHASE_2_PLAN.md section 4's exit gate, restated: a driver can report

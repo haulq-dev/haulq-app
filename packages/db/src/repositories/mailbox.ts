@@ -45,6 +45,9 @@ export async function requestMailboxConnection(s: Scope, provider = 'unipile'): 
         provider,
         status: 'pending',
         unipileAccountId: null,
+        // A new connection never inherits an "on" the owner did not
+        // re-confirm — see `schema/mailbox.ts`'s note on `sending_enabled`.
+        sendingEnabled: false,
         connectedAt: null,
         disconnectedAt: null,
         updatedAt: new Date(),
@@ -116,7 +119,13 @@ export async function disconnectMailbox(s: Scope): Promise<void> {
   await withTransaction(s, async (tx) => {
     const [row] = await tx.db
       .update(mailboxConnections)
-      .set({ status: 'disconnected', unipileAccountId: null, disconnectedAt: new Date(), updatedAt: new Date() })
+      .set({
+        status: 'disconnected',
+        unipileAccountId: null,
+        sendingEnabled: false,
+        disconnectedAt: new Date(),
+        updatedAt: new Date(),
+      })
       .where(eq(mailboxConnections.orgId, tx.ctx.orgId))
       .returning();
     if (!row) return;

@@ -31,6 +31,10 @@ const suite = url ? describe : describe.skip;
 class FakeUnipileClient implements UnipileClient {
   public lastLinkInput: HostedAuthLinkInput | undefined;
 
+  async sendEmail(): Promise<{ providerMessageId: string | null }> {
+    throw new Error('not used by this suite');
+  }
+
   async createHostedAuthLink(input: HostedAuthLinkInput): Promise<string> {
     this.lastLinkInput = input;
     return 'https://account.unipile.com/fake-link';

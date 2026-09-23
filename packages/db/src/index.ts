@@ -23,6 +23,7 @@ export * from './repositories/mailbox.ts';
 export * from './repositories/members.ts';
 export * from './repositories/onboarding.ts';
 export * from './repositories/orgs.ts';
+export * from './repositories/outbound.ts';
 export * from './repositories/pay.ts';
 export * from './repositories/track.ts';
 export * from './repositories/trucks.ts';

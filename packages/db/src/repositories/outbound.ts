@@ -1,0 +1,271 @@
+/**
+ * Outbound — the record of everything sent, drafted or held in a carrier's
+ * name, and the settings that decide which. `FEATURE_REQUESTS_PLAN.md`
+ * section 8, piece 1.
+ *
+ * This file only records and transitions state. *Deciding* what mode a
+ * message runs in, and actually calling Unipile, is `apps/api`'s
+ * `outbound/dispatch.ts` — the one choke point. Keeping the two apart is
+ * what lets every rule (ceiling, kill switch, dedupe) live in one place
+ * instead of being re-derived by each caller.
+ */
+
+import { and, desc, eq } from 'drizzle-orm';
+import type { Scope } from '../context.ts';
+import { recordEvent } from '../events/record.ts';
+import { mailboxConnections } from '../schema/mailbox.ts';
+import { autonomySettings, outboundMessages } from '../schema/outbound.ts';
+import { withTransaction } from '../transaction.ts';
+
+export type OutboundMessageRow = typeof outboundMessages.$inferSelect;
+
+export class OutboundStateError extends Error {
+  readonly code: 'not_connected' | 'not_found' | 'wrong_state';
+  constructor(code: OutboundStateError['code'], message: string) {
+    super(message);
+    this.name = 'OutboundStateError';
+    this.code = code;
+  }
+}
+
+// --- settings ---------------------------------------------------------------
+
+export interface StoredOutboundSettings {
+  sendingEnabled: boolean;
+  /** Only the action types the carrier has explicitly set. */
+  modes: Record<string, string>;
+}
+
+export async function getOutboundSettings(s: Scope): Promise<StoredOutboundSettings> {
+  const [connection] = await s.db
+    .select({ sendingEnabled: mailboxConnections.sendingEnabled, status: mailboxConnections.status })
+    .from(mailboxConnections)
+    .where(eq(mailboxConnections.orgId, s.ctx.orgId));
+
+  const rows = await s.db
+    .select({ actionType: autonomySettings.actionType, mode: autonomySettings.mode })
+    .from(autonomySettings)
+    .where(eq(autonomySettings.orgId, s.ctx.orgId));
+
+  return {
+    // A flag left on a connection that is no longer connected is not "on".
+    sendingEnabled: connection?.status === 'connected' && connection.sendingEnabled,
+    modes: Object.fromEntries(rows.map((r) => [r.actionType, r.mode])),
+  };
+}
+
+/** The kill switch. Turning it on needs a connected mailbox; turning it off never does. */
+export async function setSendingEnabled(s: Scope, enabled: boolean): Promise<void> {
+  await withTransaction(s, async (tx) => {
+    const [row] = await tx.db
+      .update(mailboxConnections)
+      .set({ sendingEnabled: enabled, updatedAt: new Date() })
+      .where(
+        enabled
+          ? and(eq(mailboxConnections.orgId, tx.ctx.orgId), eq(mailboxConnections.status, 'connected'))
+          : eq(mailboxConnections.orgId, tx.ctx.orgId),
+      )
+      .returning({ id: mailboxConnections.id });
+
+    if (!row) {
+      if (enabled) {
+        throw new OutboundStateError('not_connected', 'Connect a mailbox before turning sending on.');
+      }
+      return;
+    }
+
+    await recordEvent(tx, 'outbound.sending_changed', { subjectId: row.id, payload: { enabled } });
+  });
+}
+
+export async function setAutonomyMode(s: Scope, actionType: string, mode: string): Promise<void> {
+  await withTransaction(s, async (tx) => {
+    const [row] = await tx.db
+      .insert(autonomySettings)
+      .values({ orgId: tx.ctx.orgId, actionType, mode })
+      .onConflictDoUpdate({
+        target: [autonomySettings.orgId, autonomySettings.actionType],
+        set: { mode, updatedAt: new Date() },
+      })
+      .returning({ id: autonomySettings.id });
+    if (!row) throw new Error('autonomy setting upsert returned nothing');
+
+    await recordEvent(tx, 'outbound.mode_changed', { subjectId: row.id, payload: { actionType, mode } });
+  });
+}
+
+// --- messages ---------------------------------------------------------------
+
+export interface CreateOutboundInput {
+  actionType: string;
+  mode: string;
+  status: 'shadow' | 'pending_approval' | 'sending';
+  holdReason: string | null;
+  toAddresses: string[];
+  subject: string;
+  body: string;
+  relatedType?: string | undefined;
+  relatedId?: string | undefined;
+  dedupeKey?: string | undefined;
+}
+
+/**
+ * Record a message. Idempotent on `dedupeKey`: a second call with the same
+ * key returns the first row and `created: false`, so a loop that
+ * re-evaluates the same load every pass cannot chase twice. The caller
+ * must not send when `created` is false.
+ */
+export async function createOutbound(
+  s: Scope,
+  input: CreateOutboundInput,
+): Promise<{ message: OutboundMessageRow; created: boolean }> {
+  const [inserted] = await s.db
+    .insert(outboundMessages)
+    .values({
+      orgId: s.ctx.orgId,
+      actionType: input.actionType,
+      mode: input.mode,
+      status: input.status,
+      holdReason: input.holdReason,
+      toAddresses: input.toAddresses,
+      subject: input.subject,
+      body: input.body,
+      relatedType: input.relatedType ?? null,
+      relatedId: input.relatedId ?? null,
+      dedupeKey: input.dedupeKey ?? null,
+    })
+    .onConflictDoNothing()
+    .returning();
+  if (inserted) return { message: inserted, created: true };
+
+  if (!input.dedupeKey) throw new Error('outbound insert returned nothing without a dedupe key');
+  const [existing] = await s.db
+    .select()
+    .from(outboundMessages)
+    .where(and(eq(outboundMessages.orgId, s.ctx.orgId), eq(outboundMessages.dedupeKey, input.dedupeKey)));
+  if (!existing) throw new Error('outbound dedupe conflict but no existing row');
+  return { message: existing, created: false };
+}
+
+export async function getOutbound(s: Scope, id: string): Promise<OutboundMessageRow | undefined> {
+  const [row] = await s.db
+    .select()
+    .from(outboundMessages)
+    .where(and(eq(outboundMessages.id, id), eq(outboundMessages.orgId, s.ctx.orgId)));
+  return row;
+}
+
+export async function listOutbound(
+  s: Scope,
+  opts: { status?: string | undefined; limit?: number | undefined } = {},
+): Promise<OutboundMessageRow[]> {
+  return s.db
+    .select()
+    .from(outboundMessages)
+    .where(
+      opts.status
+        ? and(eq(outboundMessages.orgId, s.ctx.orgId), eq(outboundMessages.status, opts.status))
+        : eq(outboundMessages.orgId, s.ctx.orgId),
+    )
+    .orderBy(desc(outboundMessages.createdAt))
+    .limit(opts.limit ?? 100);
+}
+
+/**
+ * Atomically move a message from `from` to `sending`. Returns undefined if
+ * it was not in that state — someone else already claimed it, or it was
+ * rejected — which is what makes a double-approve, or an approve racing a
+ * reject, send at most once.
+ */
+export async function claimForSending(
+  s: Scope,
+  id: string,
+  from: 'pending_approval',
+  decidedByUserId: string,
+): Promise<OutboundMessageRow | undefined> {
+  return withTransaction(s, async (tx) => {
+    const [row] = await tx.db
+      .update(outboundMessages)
+      .set({ status: 'sending', decidedByUserId, decidedAt: new Date(), updatedAt: new Date() })
+      .where(
+        and(
+          eq(outboundMessages.id, id),
+          eq(outboundMessages.orgId, tx.ctx.orgId),
+          eq(outboundMessages.status, from),
+        ),
+      )
+      .returning();
+    if (!row) return undefined;
+
+    await recordEvent(tx, 'outbound.approved', {
+      subjectId: row.id,
+      payload: { actionType: row.actionType, to: row.toAddresses.join(', ') },
+    });
+    return row;
+  });
+}
+
+export async function markOutboundSent(
+  s: Scope,
+  id: string,
+  providerMessageId: string | null,
+): Promise<OutboundMessageRow> {
+  return withTransaction(s, async (tx) => {
+    const [row] = await tx.db
+      .update(outboundMessages)
+      .set({ status: 'sent', providerMessageId, sentAt: new Date(), error: null, updatedAt: new Date() })
+      .where(and(eq(outboundMessages.id, id), eq(outboundMessages.orgId, tx.ctx.orgId)))
+      .returning();
+    if (!row) throw new OutboundStateError('not_found', `outbound message ${id} not found`);
+
+    await recordEvent(tx, 'outbound.sent', {
+      subjectId: row.id,
+      payload: { actionType: row.actionType, to: row.toAddresses.join(', '), subject: row.subject },
+    });
+    return row;
+  });
+}
+
+export async function markOutboundFailed(s: Scope, id: string, error: string): Promise<OutboundMessageRow> {
+  return withTransaction(s, async (tx) => {
+    const [row] = await tx.db
+      .update(outboundMessages)
+      .set({ status: 'failed', error, updatedAt: new Date() })
+      .where(and(eq(outboundMessages.id, id), eq(outboundMessages.orgId, tx.ctx.orgId)))
+      .returning();
+    if (!row) throw new OutboundStateError('not_found', `outbound message ${id} not found`);
+
+    await recordEvent(tx, 'outbound.failed', {
+      subjectId: row.id,
+      payload: { actionType: row.actionType, to: row.toAddresses.join(', '), error },
+    });
+    return row;
+  });
+}
+
+export async function rejectOutbound(
+  s: Scope,
+  id: string,
+  decidedByUserId: string,
+): Promise<OutboundMessageRow | undefined> {
+  return withTransaction(s, async (tx) => {
+    const [row] = await tx.db
+      .update(outboundMessages)
+      .set({ status: 'rejected', decidedByUserId, decidedAt: new Date(), updatedAt: new Date() })
+      .where(
+        and(
+          eq(outboundMessages.id, id),
+          eq(outboundMessages.orgId, tx.ctx.orgId),
+          eq(outboundMessages.status, 'pending_approval'),
+        ),
+      )
+      .returning();
+    if (!row) return undefined;
+
+    await recordEvent(tx, 'outbound.rejected', {
+      subjectId: row.id,
+      payload: { actionType: row.actionType, to: row.toAddresses.join(', ') },
+    });
+    return row;
+  });
+}
