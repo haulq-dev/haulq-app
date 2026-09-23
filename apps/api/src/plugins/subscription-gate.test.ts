@@ -95,7 +95,8 @@ suite('subscription gate', () => {
         const res = await listLoads(app, orgId);
         assert.equal(res.statusCode, 402, status);
         assert.equal(res.json().code, 'subscription_inactive');
-        assert.ok(res.json().explanation);
+        // Shown verbatim by older app builds, so it must not steer anyone to pay.
+        assert.doesNotMatch(res.json().explanation, /haulq\.ai|subscribe|upgrade|billing|pricing/i);
       }
 
       await setTestOrgStatus(db, { orgId, status: 'active' });

@@ -151,14 +151,16 @@ export async function requireScope(
   // The same rule `apps/web`'s `Shell.tsx` applies: only a positive `active`
   // passes. `past_due` and `trialing` are blocked too. See
   // `REQUIRE_ACTIVE_SUBSCRIPTION` in env.ts for why this is behind a flag.
+  //
+  // The wording names no place to pay, on purpose. The App Store build that
+  // was live when this shipped shows an API explanation verbatim, and a
+  // pointer to haulq.ai there is the purchase steering Guideline 3.1.1
+  // rejected the app for. Web never shows this text, because its own
+  // paywall renders before any request is made.
   if (app.env.REQUIRE_ACTIVE_SUBSCRIPTION && !options.allowInactiveSubscription) {
     const org = await getOrg(s);
     if (org?.status !== 'active') {
-      throw new HttpError(
-        402,
-        'subscription_inactive',
-        "This carrier's HaulQ subscription isn't active. The account owner can sort it out at haulq.ai.",
-      );
+      throw new HttpError(402, 'subscription_inactive', "This carrier's HaulQ account isn't active right now.");
     }
   }
 
