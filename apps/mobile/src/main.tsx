@@ -37,8 +37,8 @@ import { CheckinScreen, isCheckinRoute } from './routes/Checkin.tsx';
 import { CreateLoadScreen } from './routes/CreateLoad.tsx';
 import { InviteAcceptScreen } from './routes/Invite.tsx';
 import { InviteDriverScreen } from './routes/InviteDriver.tsx';
-import { LoadDetailScreen } from './routes/LoadDetail.tsx';
-import { MyLoadsScreen } from './routes/MyLoads.tsx';
+import { LoadRoute } from './routes/load/LoadScreen.tsx';
+import { HomeRoute } from './routes/Home.tsx';
 import './styles.css';
 
 const queryClient: QueryClient = new QueryClient({
@@ -93,11 +93,11 @@ function RootLayout() {
 }
 
 const rootRoute = createRootRoute({ component: RootLayout });
-const indexRoute = createRoute({ getParentRoute: () => rootRoute, path: '/', component: MyLoadsScreen });
+const indexRoute = createRoute({ getParentRoute: () => rootRoute, path: '/', component: HomeRoute });
 const loadDetailRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/loads/$loadId',
-  component: LoadDetailScreen,
+  component: LoadRoute,
 });
 const inviteRoute = createRoute({
   getParentRoute: () => rootRoute,

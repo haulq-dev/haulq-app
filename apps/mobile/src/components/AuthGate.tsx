@@ -32,6 +32,7 @@ import {
   keyProblem,
   registerTokenGetter,
 } from '../lib/auth.ts';
+import { WEB_ORIGIN } from '../lib/share.ts';
 import { Logo } from './Logo.tsx';
 import { SubscriptionGate } from './Shell.tsx';
 
@@ -208,7 +209,7 @@ export function DeleteAccountLink() {
     <button
       type="button"
       className="text-sm text-brand underline"
-      onClick={() => void Browser.open({ url: 'https://app.haulq.ai/delete-account' })}
+      onClick={() => void Browser.open({ url: `${WEB_ORIGIN}/delete-account` })}
     >
       Delete my account
     </button>

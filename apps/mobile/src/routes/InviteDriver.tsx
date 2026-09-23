@@ -69,7 +69,7 @@ export function InviteDriverScreen() {
         <button
           type="button"
           className="hq-btn hq-btn-brand w-full"
-          onClick={() => void navigate({ to: '/' })}
+          onClick={() => void navigate({ to: '/account' })}
         >
           Done
         </button>
@@ -79,8 +79,8 @@ export function InviteDriverScreen() {
 
   return (
     <div className="mx-auto max-w-md space-y-4 px-4 py-6">
-      <button className="text-sm text-brand underline" onClick={() => void navigate({ to: '/' })}>
-        ← Your loads
+      <button className="text-sm text-brand underline" onClick={() => void navigate({ to: '/account' })}>
+        ‹ Account
       </button>
       <h1 className="text-2xl">Invite a driver</h1>
       <input

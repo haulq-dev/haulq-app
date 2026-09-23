@@ -10,7 +10,8 @@
  * the rest of this screen in (identity, operating costs, usage).
  */
 
-import { planLabel } from '@haulq/client';
+import { canDispatch, planLabel } from '@haulq/client';
+import { Link } from '@tanstack/react-router';
 import type { ReactNode } from 'react';
 import { DeleteAccountLink, SignOutLink, SwitchAccountLink, useOrgs, useSession } from '../components/AuthGate.tsx';
 import { Card } from '../components/ui.tsx';
@@ -39,6 +40,21 @@ export function AccountScreen() {
           <Row label="Plan">{planLabel(org?.plan)}</Row>
         </dl>
       </Card>
+
+      {/* Until M4 brings full Trucks and Drivers screens, the two quick-add
+          forms from the owner shortcuts live here. */}
+      {canDispatch(org?.role ?? session?.role) && (
+        <Card title="Fleet">
+          <div className="flex flex-col items-start gap-3">
+            <Link to="/trucks/new" className="text-sm text-brand underline">
+              Add a truck
+            </Link>
+            <Link to="/drivers/new" className="text-sm text-brand underline">
+              Invite a driver
+            </Link>
+          </div>
+        </Card>
+      )}
 
       <div className="hq-card flex flex-col items-start gap-3 p-4">
         {hasOtherOrgs && <SwitchAccountLink />}

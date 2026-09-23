@@ -20,13 +20,13 @@ export function AddTruckScreen() {
 
   const create = useMutation({
     mutationFn: () => request('/v1/trucks', { body: { label } }),
-    onSuccess: () => void navigate({ to: '/' }),
+    onSuccess: () => void navigate({ to: '/account' }),
   });
 
   return (
     <div className="mx-auto max-w-md space-y-4 px-4 py-6">
-      <button className="text-sm text-brand underline" onClick={() => void navigate({ to: '/' })}>
-        ← Your loads
+      <button className="text-sm text-brand underline" onClick={() => void navigate({ to: '/account' })}>
+        ‹ Account
       </button>
       <h1 className="text-2xl">Add a truck</h1>
       <input

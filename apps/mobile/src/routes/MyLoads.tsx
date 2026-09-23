@@ -1,45 +1,19 @@
 /**
- * The loads this login can see — a driver's own assigned load(s), or the
- * whole org's for an owner/dispatcher/accountant signed in directly.
+ * A driver's own assigned loads. Office roles get `Loads.tsx` instead; see
+ * `Home.tsx`.
  *
  * `GET /v1/loads` is already server-scoped per role (`driverScopeFor` in
- * `apps/api/src/routes/loads.ts`) — this screen does no filtering of its
- * own, it just renders whatever comes back. A driver's common case is
- * exactly one row; the list shape holds equally for a dispatcher scrolling
- * the org's whole board.
+ * `apps/api/src/routes/loads.ts`), so this screen does no filtering of its
+ * own. A driver's common case is exactly one row.
+ *
+ * With no tab bar for drivers, the account links live in this header.
  */
 
 import { useQuery } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
-import { canDispatch } from '@haulq/client';
 import { DeleteAccountLink, SignOutLink, SwitchAccountLink, useSession } from '../components/AuthGate.tsx';
-import { showsTabBar } from '../components/Shell.tsx';
 import { Card, Empty, ErrorNote, Pill } from '../components/ui.tsx';
 import { request } from '../lib/api.ts';
-
-/**
- * The bare-minimum owner/dispatcher actions — add a truck, invite a
- * driver, add a load — needed once self-serve carrier signup meant a
- * brand-new carrier could land here with nothing else to do. Hidden from
- * a driver's own view since none of the three apply to them; the API's
- * own `requireRole(request, 'owner', 'dispatcher')` on all three routes
- * is what actually enforces it, not this check.
- */
-function ManageLinks() {
-  return (
-    <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
-      <Link to="/trucks/new" className="text-brand underline">
-        Add a truck
-      </Link>
-      <Link to="/drivers/new" className="text-brand underline">
-        Invite a driver
-      </Link>
-      <Link to="/loads/new" className="text-brand underline">
-        Add a load
-      </Link>
-    </div>
-  );
-}
 
 interface LoadStopSummary {
   seq: number;
@@ -70,25 +44,18 @@ export function MyLoadsScreen() {
   });
 
   const items = loads.data?.items ?? [];
-  // Office roles have the Account tab for these links. A driver has no tab
-  // bar, so they stay in this header.
-  const office = showsTabBar(session?.role);
 
   return (
     <div className="mx-auto max-w-md space-y-4 px-4 py-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl">{office ? 'Loads' : 'Your loads'}</h1>
-        {!office && (
-          <div className="flex flex-col items-end gap-0.5">
-            <SwitchAccountLink />
-            <SignOutLink />
-            <DeleteAccountLink />
-          </div>
-        )}
+        <h1 className="text-2xl">Your loads</h1>
+        <div className="flex flex-col items-end gap-0.5">
+          <SwitchAccountLink />
+          <SignOutLink />
+          <DeleteAccountLink />
+        </div>
       </div>
       {session?.orgName && <p className="-mt-2 text-sm text-mute">{session.orgName}</p>}
-
-      {canDispatch(session?.role) && <ManageLinks />}
 
       {loads.isError && <ErrorNote error={loads.error} />}
 
