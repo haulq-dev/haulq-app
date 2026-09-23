@@ -22,6 +22,7 @@ import { STOP_MILESTONES, type StopMilestone } from '@haulq/contracts';
 import { ApiRequestError, request } from '../lib/api.ts';
 import { Card, Empty, ErrorNote, Pill } from '../components/ui.tsx';
 import { successFeedback, tapFeedback } from '../lib/haptics.ts';
+import { Paperwork } from '../components/Paperwork.tsx';
 
 interface LoadStop {
   id: string;
@@ -281,6 +282,8 @@ export function LoadDetailScreen() {
       )}
 
       <PositionControl loadId={loadId} />
+
+      <Paperwork loadId={loadId} forDriver />
     </div>
   );
 }

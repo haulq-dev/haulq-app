@@ -117,7 +117,7 @@ function InactiveScreen({
 // ---------------------------------------------------------------------------
 
 interface Tab {
-  to: '/' | '/account';
+  to: '/' | '/documents' | '/account';
   label: string;
   icon: (props: { active: boolean }) => ReactNode;
   isActive: (pathname: string) => boolean;
@@ -130,6 +130,12 @@ const TABS: readonly Tab[] = [
     label: 'Loads',
     icon: LoadsIcon,
     isActive: (p) => p === '/' || p.startsWith('/loads'),
+  },
+  {
+    to: '/documents',
+    label: 'Documents',
+    icon: DocumentsIcon,
+    isActive: (p) => p.startsWith('/documents'),
   },
   {
     to: '/account',
@@ -192,6 +198,15 @@ function LoadsIcon({ active }: { active: boolean }) {
       <path d="M3 7h11v9H3zM14 10h4l3 3v3h-7z" strokeLinejoin="round" />
       <circle cx="7" cy="17.5" r="1.5" />
       <circle cx="17" cy="17.5" r="1.5" />
+    </svg>
+  );
+}
+
+function DocumentsIcon({ active }: { active: boolean }) {
+  return (
+    <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth={active ? 2.2 : 1.8} aria-hidden>
+      <path d="M7 3h7l4 4v13a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Z" strokeLinejoin="round" />
+      <path d="M14 3v4h4M9 12h6M9 16h6" strokeLinecap="round" />
     </svg>
   );
 }

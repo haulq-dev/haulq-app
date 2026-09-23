@@ -25,7 +25,8 @@ import type {
   LoadsPage,
   LoadTrackingView,
 } from './loads.ts';
-import type { Driver, OrgSummary, Truck } from './types.ts';
+import type { DocumentsPage, DocumentRow } from './documents.ts';
+import type { CarrierProfile, Driver, OrgSummary, Truck } from './types.ts';
 
 const ApiClientContext = createContext<ApiClient | null>(null);
 
@@ -56,6 +57,12 @@ export const queryKeys = {
   drivers: ['drivers'] as const,
   brokerVerification: (id: string) => ['broker-verification', id] as const,
   brokerDocumentHistory: (id: string) => ['broker-document-history', id] as const,
+  /** A prefix: invalidating it refreshes every document list, count and detail. */
+  documents: ['documents'] as const,
+  documentList: (scope: string) => ['documents', 'list', scope] as const,
+  documentCounts: ['documents', 'counts'] as const,
+  document: (id: string) => ['documents', 'one', id] as const,
+  profile: ['profile'] as const,
 };
 
 /**
@@ -151,5 +158,56 @@ export function useBrokerDocumentHistory(brokerId: string) {
   return useQuery({
     queryKey: queryKeys.brokerDocumentHistory(brokerId),
     queryFn: () => client.request<BrokerDocumentHistory>(`/v1/brokers/${brokerId}/document-history`),
+  });
+}
+
+/**
+ * Documents, a page at a time. `view` is the office's inbox (`unattached`) or
+ * everything. `loadId` narrows to one load's paperwork, which is the only
+ * list a driver may read.
+ */
+export function useDocuments(filter: { view: 'inbox' | 'all' } | { loadId: string }, options: { enabled?: boolean } = {}) {
+  const client = useApiClient();
+  const scope = 'loadId' in filter ? `load:${filter.loadId}` : filter.view;
+  return useInfiniteQuery({
+    queryKey: queryKeys.documentList(scope),
+    queryFn: ({ pageParam }: { pageParam: string | undefined }) =>
+      client.request<DocumentsPage>(
+        `/v1/documents?${new URLSearchParams({
+          ...('loadId' in filter ? { loadId: filter.loadId } : filter.view === 'inbox' ? { unattached: 'true' } : {}),
+          ...(pageParam ? { cursor: pageParam } : {}),
+        })}`,
+      ),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (last) => last.nextCursor ?? undefined,
+    enabled: options.enabled ?? true,
+  });
+}
+
+/** Account-wide counts by status. Office roles only; the API refuses drivers. */
+export function useDocumentCounts(options: { enabled?: boolean } = {}) {
+  const client = useApiClient();
+  return useQuery({
+    queryKey: queryKeys.documentCounts,
+    queryFn: () => client.request<{ counts: Record<string, number> }>('/v1/documents/counts'),
+    enabled: options.enabled ?? true,
+  });
+}
+
+export function useDocument(id: string) {
+  const client = useApiClient();
+  return useQuery({
+    queryKey: queryKeys.document(id),
+    queryFn: async () => (await client.request<{ document: DocumentRow }>(`/v1/documents/${id}`)).document,
+  });
+}
+
+/** The carrier's profile. Its `slug` is what the inbound email address is built from. */
+export function useCarrierProfile(options: { enabled?: boolean } = {}) {
+  const client = useApiClient();
+  return useQuery({
+    queryKey: queryKeys.profile,
+    queryFn: () => client.request<CarrierProfile>('/v1/org/profile'),
+    enabled: options.enabled ?? true,
   });
 }

@@ -17,6 +17,7 @@ import { Link, useParams } from '@tanstack/react-router';
 import { canDispatch, laneEnds, LOAD_STATUS_TONE, prettyStatus, useLoad, type Load } from '@haulq/client';
 import { useSession } from '../../components/AuthGate.tsx';
 import { showsTabBar } from '../../components/Shell.tsx';
+import { Paperwork } from '../../components/Paperwork.tsx';
 import { Card, ErrorNote, Money, Pill } from '../../components/ui.tsx';
 import { LoadDetailScreen as DriverLoadDetailScreen } from '../LoadDetail.tsx';
 import { BrokerSection } from './Broker.tsx';
@@ -93,6 +94,7 @@ function Body({ load, canWrite }: { load: Load; canWrite: boolean }) {
 
       <TrackingCard loadId={load.id} />
       <MarginCard loadId={load.id} />
+      <Paperwork loadId={load.id} forDriver={false} />
 
       {canWrite && (
         <>

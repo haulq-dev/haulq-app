@@ -32,6 +32,8 @@ import { ErrorBoundary } from './components/ErrorBoundary.tsx';
 import { showsTabBar, TabBar, TabBarSpacer } from './components/Shell.tsx';
 import { apiClient } from './lib/api.ts';
 import { AccountScreen } from './routes/Account.tsx';
+import { DocumentScreen } from './routes/documents/DocumentScreen.tsx';
+import { DocumentsScreen } from './routes/documents/DocumentsScreen.tsx';
 import { AddTruckScreen } from './routes/AddTruck.tsx';
 import { CheckinScreen, isCheckinRoute } from './routes/Checkin.tsx';
 import { CreateLoadScreen } from './routes/CreateLoad.tsx';
@@ -126,8 +128,21 @@ const accountRoute = createRoute({
   component: AccountScreen,
 });
 
+const documentsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/documents',
+  component: DocumentsScreen,
+});
+const documentRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/documents/$documentId',
+  component: DocumentScreen,
+});
+
 const routeTree = rootRoute.addChildren([
   accountRoute,
+  documentsRoute,
+  documentRoute,
   indexRoute,
   loadDetailRoute,
   inviteRoute,

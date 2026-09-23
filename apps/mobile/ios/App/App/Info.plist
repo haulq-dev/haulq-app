@@ -32,6 +32,8 @@
 	     answered by hand on every future upload. -->
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
+	<key>NSCameraUsageDescription</key>
+	<string>HaulQ uses the camera to photograph paperwork, like a signed BOL or POD, and attach it to the load.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>HaulQ shares your truck's position with the broker while a load is in transit, so nobody has to call for a status update.</string>
 	<key>UILaunchStoryboardName</key>
