@@ -15,7 +15,7 @@
     "push": "drizzle-kit push",
     "studio": "drizzle-kit studio",
     "typecheck": "tsc --noEmit",
-    "test": "node --env-file-if-exists=../../.env --test --test-concurrency=1 --experimental-strip-types \"src/**/*.test.ts\""
+    "test": "node --env-file-if-exists=../../.env --experimental-strip-types src/test-database-guard.ts && node --env-file-if-exists=../../.env --import ./src/test-database-guard.ts --test --test-concurrency=1 --experimental-strip-types \"src/**/*.test.ts\""
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.729.0",
