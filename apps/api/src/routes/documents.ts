@@ -35,6 +35,7 @@ import {
   DocumentError,
   findDocumentBySha,
   getDocument,
+  getLoad,
   key as storageKey,
   listDocuments,
   recordManualFields,
@@ -52,10 +53,11 @@ import {
   type DocumentKind,
   type ExtractedField,
 } from '@haulq/contracts';
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { HttpError, requireRole, requireScope } from '../plugins/request-context.ts';
+import { driverScopeFor } from './loads.ts';
 import { safeFilename, sniff, SUPPORTED_DOCUMENT_TYPES } from '../documents/sniff.ts';
 import { validateDocument } from '../documents/validate.ts';
 
@@ -69,6 +71,33 @@ import { validateDocument } from '../documents/validate.ts';
 const MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 
 const IdParamSchema = z.object({ id: z.string().uuid() });
+
+/**
+ * A driver sees paperwork on their own assigned loads, and nothing else.
+ *
+ * Office roles see the whole account. A driver used to as well: the read
+ * routes below had no role check, so a driver's login could list and
+ * download every rate confirmation in the carrier, rates included. No screen
+ * exposed that until the mobile app put document capture in drivers' hands
+ * (MOBILE_PARITY_PLAN.md M2). Now it's closed.
+ *
+ * The answer to "not yours" is the same 404 as "doesn't exist", the same
+ * phrasing `GET /v1/loads/:id` uses, so probing another driver's ids learns
+ * nothing. `null` for `loadId` means an unattached document, which is an
+ * office-side inbox item and never a driver's.
+ */
+async function assertDriverMaySee(
+  s: Parameters<typeof getLoad>[0],
+  request: FastifyRequest,
+  loadId: string | null,
+  notFound: HttpError,
+): Promise<void> {
+  const driverScope = await driverScopeFor(s, request);
+  if (driverScope === undefined) return;
+  if (driverScope === null || loadId === null) throw notFound;
+  const load = await getLoad(s, loadId);
+  if (!load || load.driverId !== driverScope) throw notFound;
+}
 
 const UploadDocumentQuerySchema = z.object({
   filename: z.string().optional(),
@@ -155,6 +184,12 @@ export async function documentRoutes(app: FastifyInstance) {
       const { filename: filenameParam, loadId, kind } = request.query;
       const filename = safeFilename(filenameParam, 'document.pdf');
 
+      // A driver may send paperwork with no load (it lands in the office's
+      // inbox), or for one of their own loads, never for someone else's.
+      if (loadId) {
+        await assertDriverMaySee(s, request, loadId, new HttpError(404, 'load_not_found', 'That load no longer exists.'));
+      }
+
       const digest = sha256(body);
 
       // The cheap path. A repeat send does not touch the object store at all.
@@ -216,6 +251,14 @@ export async function documentRoutes(app: FastifyInstance) {
       const s = await requireScope(request);
       const q = request.query;
 
+      // A driver lists one of their own loads' paperwork, never the account's.
+      if ((await driverScopeFor(s, request)) !== undefined) {
+        if (!q.loadId) {
+          throw new HttpError(403, 'forbidden', "Drivers can see paperwork on their own loads only. Open a load to see its documents.");
+        }
+        await assertDriverMaySee(s, request, q.loadId, new HttpError(404, 'not_found', 'That load no longer exists.'));
+      }
+
       try {
         const { items, nextCursor } = await listDocuments(s, {
           ...(q.loadId ? { loadId: q.loadId } : {}),
@@ -239,6 +282,7 @@ export async function documentRoutes(app: FastifyInstance) {
     { schema: { tags: ['Documents'], summary: 'Document counts by status' } },
     async (request) => {
       const s = await requireScope(request);
+      requireRole(request, 'owner', 'dispatcher', 'accountant');
       return { counts: await documentCounts(s) };
     },
   );
@@ -250,7 +294,9 @@ export async function documentRoutes(app: FastifyInstance) {
       const s = await requireScope(request);
       const { id } = request.params;
       const found = await getDocument(s, id);
-      if (!found) throw new HttpError(404, 'not_found', 'That document is not in this account.');
+      const notFound = new HttpError(404, 'not_found', 'That document is not in this account.');
+      if (!found) throw notFound;
+      await assertDriverMaySee(s, request, found.loadId, notFound);
       return { document: present(found) };
     },
   );
@@ -272,7 +318,9 @@ export async function documentRoutes(app: FastifyInstance) {
       const { id } = request.params;
 
       const found = await getDocument(s, id);
-      if (!found) throw new HttpError(404, 'not_found', 'That document is not in this account.');
+      const notFound = new HttpError(404, 'not_found', 'That document is not in this account.');
+      if (!found) throw notFound;
+      await assertDriverMaySee(s, request, found.loadId, notFound);
 
       let body: Buffer;
       try {
