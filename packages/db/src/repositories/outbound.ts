@@ -14,7 +14,7 @@ import { and, desc, eq } from 'drizzle-orm';
 import type { Scope } from '../context.ts';
 import { recordEvent } from '../events/record.ts';
 import { mailboxConnections } from '../schema/mailbox.ts';
-import { autonomySettings, outboundMessages } from '../schema/outbound.ts';
+import { autonomySettings, outboundMessages, type StoredOutboundAttachment } from '../schema/outbound.ts';
 import { withTransaction } from '../transaction.ts';
 
 export type OutboundMessageRow = typeof outboundMessages.$inferSelect;
@@ -104,6 +104,7 @@ export interface CreateOutboundInput {
   toAddresses: string[];
   subject: string;
   body: string;
+  attachments?: StoredOutboundAttachment[] | undefined;
   relatedType?: string | undefined;
   relatedId?: string | undefined;
   dedupeKey?: string | undefined;
@@ -140,6 +141,7 @@ export async function createOutbound(
       toAddresses: input.toAddresses,
       subject: input.subject,
       body: input.body,
+      attachments: input.attachments ?? [],
       relatedType: input.relatedType ?? null,
       relatedId: input.relatedId ?? null,
       dedupeKey: input.dedupeKey ?? null,
@@ -165,6 +167,7 @@ export async function createOutbound(
         toAddresses: input.toAddresses,
         subject: input.subject,
         body: input.body,
+        attachments: input.attachments ?? [],
         updatedAt: new Date(),
       })
       .where(and(eq(outboundMessages.id, existing.id), eq(outboundMessages.status, 'shadow')))
@@ -239,11 +242,20 @@ export async function markOutboundSent(
   s: Scope,
   id: string,
   providerMessageId: string | null,
+  /** What actually went out, with sizes and checksums — the record of it, not the draft's guess. */
+  attachments?: StoredOutboundAttachment[],
 ): Promise<OutboundMessageRow> {
   return withTransaction(s, async (tx) => {
     const [row] = await tx.db
       .update(outboundMessages)
-      .set({ status: 'sent', providerMessageId, sentAt: new Date(), error: null, updatedAt: new Date() })
+      .set({
+        status: 'sent',
+        providerMessageId,
+        sentAt: new Date(),
+        error: null,
+        ...(attachments ? { attachments } : {}),
+        updatedAt: new Date(),
+      })
       .where(and(eq(outboundMessages.id, id), eq(outboundMessages.orgId, tx.ctx.orgId)))
       .returning();
     if (!row) throw new OutboundStateError('not_found', `outbound message ${id} not found`);
@@ -299,3 +311,17 @@ export async function rejectOutbound(
     return row;
   });
 }
+
+/**
+ * Attach a note to a message that already succeeded — used when the email
+ * went out but something that should follow it did not. The status stays
+ * `sent`: the email is a fact, and it must not read as a failure a retry
+ * could act on.
+ */
+export async function annotateOutbound(s: Scope, id: string, note: string): Promise<void> {
+  await s.db
+    .update(outboundMessages)
+    .set({ error: note, updatedAt: new Date() })
+    .where(and(eq(outboundMessages.id, id), eq(outboundMessages.orgId, s.ctx.orgId)));
+}
+export type { StoredOutboundAttachment } from '../schema/outbound.ts';

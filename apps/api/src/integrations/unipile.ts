@@ -78,6 +78,8 @@ export interface SendEmailInput {
    * message's own id.
    */
   idempotencyKey: string;
+  /** Files to attach. Sent as multipart, the format Unipile documents for attachments. */
+  attachments?: Array<{ filename: string; contentType: string; body: Buffer }> | undefined;
 }
 
 interface SendEmailResponse {
@@ -164,24 +166,49 @@ export class UnipileHostedClient implements UnipileClient {
   }
 
   async sendEmail(input: SendEmailInput): Promise<{ providerMessageId: string | null }> {
+    const fields = {
+      account_id: input.accountId,
+      to: input.to.map((identifier) => ({ identifier })),
+      subject: input.subject,
+      body: textToHtml(input.body),
+      ...(input.replyToProviderId ? { reply_to: input.replyToProviderId } : {}),
+    };
+
+    let headers: Record<string, string>;
+    let payload: string | FormData;
+    if (input.attachments && input.attachments.length > 0) {
+      // Multipart, per Unipile's "Send attachments" example: scalar fields as
+      // form fields (`to` as a JSON string), each file as an `attachments`
+      // part. The boundary header is set by `fetch` from the FormData — a
+      // hand-set content-type here would drop it and break the request.
+      const form = new FormData();
+      form.append('account_id', fields.account_id);
+      form.append('subject', fields.subject);
+      form.append('body', fields.body);
+      form.append('to', JSON.stringify(fields.to));
+      if (input.replyToProviderId) form.append('reply_to', input.replyToProviderId);
+      for (const file of input.attachments) {
+        form.append('attachments', new Blob([new Uint8Array(file.body)], { type: file.contentType }), file.filename);
+      }
+      payload = form;
+      headers = {
+        'x-api-key': this.apiKey,
+        accept: 'application/json',
+        'idempotency-key': input.idempotencyKey,
+      };
+    } else {
+      payload = JSON.stringify(fields);
+      headers = {
+        'x-api-key': this.apiKey,
+        accept: 'application/json',
+        'content-type': 'application/json',
+        'idempotency-key': input.idempotencyKey,
+      };
+    }
+
     let response: Response;
     try {
-      response = await fetch(`${this.dsn}/api/v1/emails`, {
-        method: 'POST',
-        headers: {
-          'x-api-key': this.apiKey,
-          accept: 'application/json',
-          'content-type': 'application/json',
-          'idempotency-key': input.idempotencyKey,
-        },
-        body: JSON.stringify({
-          account_id: input.accountId,
-          to: input.to.map((identifier) => ({ identifier })),
-          subject: input.subject,
-          body: textToHtml(input.body),
-          ...(input.replyToProviderId ? { reply_to: input.replyToProviderId } : {}),
-        }),
-      });
+      response = await fetch(`${this.dsn}/api/v1/emails`, { method: 'POST', headers, body: payload });
     } catch (err) {
       throw new UnipileApiError(0, `Unipile unreachable: ${err instanceof Error ? err.message : String(err)}`);
     }

@@ -337,24 +337,30 @@ export async function addTestDocument(
   db: Database,
   args: {
     orgId: string;
-    loadId: string;
+    loadId?: string;
     kind: string;
     status?: 'received' | 'validated' | 'rejected' | 'quarantined';
+    /** For a test that stores real bytes: where they are, and their checksum. Random otherwise. */
+    storageKey?: string;
+    sha256?: string;
+    filename?: string;
+    byteSize?: number;
   },
 ): Promise<string> {
   const [row] = await db
     .insert(documents)
     .values({
       orgId: args.orgId,
-      loadId: args.loadId,
+      loadId: args.loadId ?? null,
       kind: args.kind,
       status: args.status ?? 'validated',
+      ...(args.status === 'rejected' ? { rejectionReason: 'test: failed validation' } : {}),
       source: 'upload',
-      storageKey: `test/${randomUUID()}`,
-      filename: `${args.kind}.pdf`,
+      storageKey: args.storageKey ?? `test/${randomUUID()}`,
+      filename: args.filename ?? `${args.kind}.pdf`,
       contentType: 'application/pdf',
-      byteSize: 1024,
-      sha256: randomUUID().replaceAll('-', ''),
+      byteSize: args.byteSize ?? 1024,
+      sha256: args.sha256 ?? randomUUID().replaceAll('-', ''),
     })
     .returning({ id: documents.id });
   if (!row) throw new Error('could not create test document');
@@ -385,4 +391,12 @@ export async function setTestLoadAccessorials(db: Database, loadId: string, amou
     .update(loads)
     .set({ accessorialsAmount: amountCents, accessorialsCurrency: 'USD' })
     .where(eq(loads.id, loadId));
+}
+
+/** Reject a document after the fact — what happens when validation catches something late. */
+export async function rejectTestDocument(db: Database, documentId: string): Promise<void> {
+  await db
+    .update(documents)
+    .set({ status: 'rejected', rejectionReason: 'test: rejected after the fact' })
+    .where(eq(documents.id, documentId));
 }

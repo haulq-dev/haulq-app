@@ -17,6 +17,7 @@
 
 import { and, eq, inArray, isNull, lte, gte, sql } from 'drizzle-orm';
 import type { Database } from '../client.ts';
+import type { Scope } from '../context.ts';
 import { brokers } from '../schema/brokers.ts';
 import { documents } from '../schema/documents.ts';
 import { loadStops, loads } from '../schema/loads.ts';
@@ -210,8 +211,11 @@ export interface DeliveredUninvoicedCandidate {
   rateIsLinehaul: boolean;
   accessorialsCents: number;
   currency: string;
-  /** Kinds of document on file for this load that were not rejected or quarantined. */
-  documentKinds: string[];
+  /**
+   * One document per kind, the earliest received, for documents on file that
+   * were not rejected or quarantined — what an invoice email may attach.
+   */
+  documents: Array<{ id: string; kind: string }>;
 }
 
 /**
@@ -266,7 +270,7 @@ export async function findDeliveredUninvoiced(
     .from(loadStops)
     .where(inArray(loadStops.loadId, loadIds));
   const docs = await db
-    .select({ loadId: documents.loadId, kind: documents.kind })
+    .select({ id: documents.id, loadId: documents.loadId, kind: documents.kind, receivedAt: documents.receivedAt })
     .from(documents)
     .where(
       and(
@@ -296,8 +300,114 @@ export async function findDeliveredUninvoiced(
       rateIsLinehaul: r.rateIsLinehaul,
       accessorialsCents: r.accessorialsCents ?? 0,
       currency: r.currency ?? 'USD',
-      documentKinds: [...new Set(docs.filter((d) => d.loadId === r.loadId).map((d) => d.kind))],
+      documents: firstOfEachKind(docs.filter((d) => d.loadId === r.loadId)),
     });
   }
   return out;
+}
+
+// --- an invoice, as a document ------------------------------------------------
+
+export interface InvoiceRenderFacts {
+  invoiceId: string;
+  reference: number;
+  status: string;
+  createdAt: Date;
+  dueAt: Date | null;
+  lineItems: Array<{ code: string; description: string; amountCents: number; currency: string }>;
+  totalCents: number;
+  currency: string;
+  loadReference: number;
+  brokerLoadNumber: string | null;
+  origin: string;
+  destination: string;
+  deliveredAt: Date | null;
+  brokerName: string | null;
+  brokerEmail: string | null;
+  paymentTermsDays: number | null;
+  carrierName: string;
+  mcNumber: string | null;
+}
+
+/**
+ * Everything an invoice document says, in one read, scoped to the caller's
+ * org — an invoice id from another carrier simply does not resolve.
+ *
+ * Rendered from the invoice's own snapshot (`lineItems`, `totalAmount`),
+ * never re-derived from the load: an invoice is what was billed, and the
+ * load's rate can change after it. Returns undefined rather than throwing,
+ * so a caller can say "that attachment does not exist" in its own words.
+ */
+export async function getInvoiceRenderFacts(s: Scope, invoiceId: string): Promise<InvoiceRenderFacts | undefined> {
+  const [row] = await s.db
+    .select({
+      invoiceId: invoices.id,
+      reference: invoices.reference,
+      status: invoices.status,
+      createdAt: invoices.createdAt,
+      dueAt: invoices.dueAt,
+      lineItems: invoices.lineItems,
+      totalCents: invoices.totalAmount,
+      currency: invoices.totalCurrency,
+      loadId: loads.id,
+      loadReference: loads.reference,
+      brokerLoadNumber: loads.brokerLoadNumber,
+      deliveredAt: loads.deliveredAt,
+      brokerName: brokers.name,
+      brokerEmail: brokers.email,
+      paymentTermsDays: brokers.paymentTermsDays,
+      orgName: orgs.name,
+    })
+    .from(invoices)
+    .innerJoin(loads, eq(loads.id, invoices.loadId))
+    .innerJoin(orgs, eq(orgs.id, invoices.orgId))
+    .leftJoin(brokers, eq(brokers.id, loads.brokerId))
+    .where(and(eq(invoices.id, invoiceId), eq(invoices.orgId, s.ctx.orgId)));
+  if (!row) return undefined;
+
+  const stops = await s.db
+    .select({ seq: loadStops.seq, city: loadStops.city, state: loadStops.state })
+    .from(loadStops)
+    .where(eq(loadStops.loadId, row.loadId));
+  stops.sort((a, b) => a.seq - b.seq);
+
+  const [profile] = await s.db
+    .select({ legalName: carrierProfiles.legalName, dbaName: carrierProfiles.dbaName, mcNumber: carrierProfiles.mcNumber })
+    .from(carrierProfiles)
+    .where(eq(carrierProfiles.orgId, s.ctx.orgId));
+
+  const first = stops[0];
+  const last = stops[stops.length - 1];
+  return {
+    invoiceId: row.invoiceId,
+    reference: row.reference,
+    status: row.status,
+    createdAt: row.createdAt,
+    dueAt: row.dueAt,
+    lineItems: row.lineItems as InvoiceRenderFacts['lineItems'],
+    totalCents: row.totalCents,
+    currency: row.currency,
+    loadReference: row.loadReference,
+    brokerLoadNumber: row.brokerLoadNumber,
+    origin: first ? `${first.city}, ${first.state}` : '',
+    destination: last ? `${last.city}, ${last.state}` : '',
+    deliveredAt: row.deliveredAt,
+    brokerName: row.brokerName,
+    brokerEmail: row.brokerEmail,
+    paymentTermsDays: row.paymentTermsDays,
+    carrierName: profile?.dbaName || profile?.legalName || row.orgName,
+    mcNumber: profile?.mcNumber ?? null,
+  };
+}
+
+/** The earliest-received document of each kind — the original, not a later re-upload of it. */
+function firstOfEachKind(
+  docs: Array<{ id: string; kind: string; receivedAt: Date }>,
+): Array<{ id: string; kind: string }> {
+  const earliest = new Map<string, { id: string; kind: string; receivedAt: Date }>();
+  for (const d of docs) {
+    const known = earliest.get(d.kind);
+    if (!known || d.receivedAt < known.receivedAt) earliest.set(d.kind, d);
+  }
+  return [...earliest.values()].map(({ id, kind }) => ({ id, kind }));
 }

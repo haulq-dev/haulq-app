@@ -202,3 +202,52 @@ describe('UnipileHostedClient.sendEmail', () => {
     );
   });
 });
+
+describe('UnipileHostedClient.sendEmail with attachments', () => {
+  beforeEach(() => {
+    script = { status: 200, body: { provider_id: 'prov-att' } };
+  });
+
+  it('sends multipart, with each file as an attachments part and the scalar fields as form fields', async () => {
+    const client = new UnipileHostedClient({ apiKey: 'test-key', dsn: base });
+    const result = await client.sendEmail({
+      accountId: 'acct-1',
+      to: ['broker@example.com'],
+      subject: 'Invoice 42',
+      body: 'Attached.',
+      idempotencyKey: 'msg-att-1',
+      attachments: [
+        { filename: 'Invoice-42.pdf', contentType: 'application/pdf', body: Buffer.from('%PDF-1.7 invoice bytes') },
+        { filename: 'pod.pdf', contentType: 'application/pdf', body: Buffer.from('%PDF-1.7 pod bytes') },
+      ],
+    });
+
+    assert.equal(result.providerMessageId, 'prov-att');
+    const contentType = String(lastRequest!.headers['content-type']);
+    assert.match(contentType, /^multipart\/form-data; boundary=/, 'fetch must set the boundary itself');
+    assert.equal(lastRequest!.headers['idempotency-key'], 'msg-att-1');
+    assert.equal(lastRequest!.headers['x-api-key'], 'test-key');
+
+    const raw = lastRequest!.body;
+    assert.match(raw, /name="account_id"\r\n\r\nacct-1/);
+    assert.match(raw, /name="subject"\r\n\r\nInvoice 42/);
+    assert.match(raw, /name="to"\r\n\r\n\[\{"identifier":"broker@example.com"\}\]/);
+    assert.match(raw, /name="attachments"; filename="Invoice-42\.pdf"/);
+    assert.match(raw, /name="attachments"; filename="pod\.pdf"/);
+    assert.match(raw, /%PDF-1\.7 invoice bytes/);
+    assert.match(raw, /%PDF-1\.7 pod bytes/);
+  });
+
+  it('stays plain json when there is nothing to attach', async () => {
+    const client = new UnipileHostedClient({ apiKey: 'test-key', dsn: base });
+    await client.sendEmail({
+      accountId: 'acct-1',
+      to: ['broker@example.com'],
+      subject: 's',
+      body: 'b',
+      idempotencyKey: 'k',
+      attachments: [],
+    });
+    assert.equal(lastRequest!.headers['content-type'], 'application/json');
+  });
+});

@@ -95,7 +95,7 @@ export type Derivation =
  * the whole bill either way.
  */
 export function deriveLineItems(c: DeliveredUninvoicedCandidate): Derivation {
-  if (!c.documentKinds.includes('pod')) return { ok: false, reason: 'no_pod' };
+  if (!c.documents.some((d) => d.kind === 'pod')) return { ok: false, reason: 'no_pod' };
   if (c.accessorialsCents > 0) return { ok: false, reason: 'has_accessorials' };
 
   return {
@@ -119,10 +119,12 @@ const KIND_LABEL: Record<string, string> = {
 };
 
 /**
- * The invoice email. Shadow-only for now — `invoice_delivery`'s ceiling in
- * `OUTBOUND_ACTIONS` — because outbound email cannot carry attachments yet
- * and this message says they are attached. **Do not raise that ceiling
- * without also making the attachment line below true.**
+ * The invoice email. The "Attached:" line has to be true: the loop attaches
+ * exactly the kinds listed in `KIND_LABEL` (rate confirmation, POD, BOL)
+ * plus the invoice PDF, and the choke point refuses to send if any of them
+ * cannot be read. In shadow mode nothing is attached because nothing is
+ * sent — and no invoice record exists yet either, so the PDF is only
+ * *described* there.
  */
 export function invoiceDelivery(
   sender: Sender,
@@ -130,7 +132,7 @@ export function invoiceDelivery(
   derived: Extract<Derivation, { ok: true }>,
 ): { subject: string; body: string } {
   const label = c.brokerLoadNumber ? `load ${c.brokerLoadNumber}` : `load ${c.reference}`;
-  const attached = ['invoice', ...c.documentKinds.filter((k) => KIND_LABEL[k]).map((k) => KIND_LABEL[k]!)];
+  const attached = ['invoice', ...c.documents.filter((d) => KIND_LABEL[d.kind]).map((d) => KIND_LABEL[d.kind]!)];
 
   return {
     subject: `Invoice for ${label}: ${c.origin} to ${c.destination}`,

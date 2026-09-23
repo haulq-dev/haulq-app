@@ -38,16 +38,13 @@ export const OUTBOUND_ACTIONS = {
   /**
    * Delivering an invoice for a delivered load with its documents in hand.
    *
-   * Ceiling is `shadow` on purpose, for now: a broker or factor pays against
-   * an invoice *and* the rate confirmation and POD, and outbound email
-   * cannot carry attachments yet. Sending the invoice as body text alone
-   * would put an incomplete submission in the carrier's name, so until
-   * attachments exist the most this can do is show the owner exactly what
-   * it would send — which is also the fastest way to find out whether the
-   * amounts it derives are right. Raise this to `draft`/`act` in the same
-   * change that adds attachments, not before.
+   * Ceiling is `draft`, not `act`: the invoice amount is the highest-stakes
+   * number the loop derives, and an invoice email carries real attachments
+   * now (the invoice PDF, the rate confirmation, the POD), so every one is
+   * held for a person's approval. Raise to `act` only after a carrier has
+   * seen enough approved invoices to trust the amounts it works out.
    */
-  invoice_delivery: { label: 'Send an invoice', maxMode: 'shadow' },
+  invoice_delivery: { label: 'Send an invoice', maxMode: 'draft' },
   /** A reminder on an invoice past due. */
   payment_reminder: { label: 'Payment reminder', maxMode: 'act' },
   /** Anything to a broker that is not routine — a person reads it first. */
@@ -107,6 +104,34 @@ export const UpdateOutboundSettingsSchema = z.object({
 });
 export type UpdateOutboundSettings = z.infer<typeof UpdateOutboundSettingsSchema>;
 
+// --- attachments ------------------------------------------------------------
+//
+// An attachment is a *reference*, resolved to bytes at the moment of sending —
+// never carried on the message itself. That keeps every lookup inside the
+// carrier's own scope (a reference to another carrier's document simply does
+// not resolve) and means an invoice PDF is rendered from the invoice as it is
+// when it goes out, not as it was when the message was drafted.
+
+export const MAX_OUTBOUND_ATTACHMENTS = 5;
+/** Combined size across one message. Gmail and Outlook both stop near 25 MB; this leaves headroom for encoding. */
+export const MAX_OUTBOUND_ATTACHMENT_BYTES = 20 * 1024 * 1024;
+
+export const OutboundAttachmentRefSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('document'), documentId: z.string().uuid() }),
+  z.object({ kind: z.literal('invoice'), invoiceId: z.string().uuid() }),
+]);
+export type OutboundAttachmentRef = z.infer<typeof OutboundAttachmentRefSchema>;
+
+export const OutboundAttachmentInfoSchema = z.object({
+  kind: z.enum(['document', 'invoice']),
+  refId: z.string().uuid(),
+  filename: z.string(),
+  contentType: z.string(),
+  /** Null for an invoice that has not been rendered yet — it is rendered when sent. */
+  byteSize: z.number().int().nullable(),
+});
+export type OutboundAttachmentInfo = z.infer<typeof OutboundAttachmentInfoSchema>;
+
 export const OutboundMessageSchema = z.object({
   id: z.string().uuid(),
   actionType: z.string(),
@@ -116,6 +141,7 @@ export const OutboundMessageSchema = z.object({
   toAddresses: z.array(z.string()),
   subject: z.string(),
   body: z.string(),
+  attachments: z.array(OutboundAttachmentInfoSchema),
   error: z.string().nullable(),
   sentAt: z.string().datetime().nullable(),
   createdAt: z.string().datetime(),

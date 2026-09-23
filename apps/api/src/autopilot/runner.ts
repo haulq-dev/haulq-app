@@ -50,7 +50,7 @@ export function startAutopilotRunner(app: FastifyInstance, options: AutopilotRun
           db: app.db,
           // Read on every pass, not captured once: the client is decorated
           // after this starts, and a test or a redeploy can replace it.
-          deps: { unipile: app.unipileClient },
+          deps: { unipile: app.unipileClient, storage: app.storage, log: app.log },
           log: app.log,
         });
         // Silent when there is nothing to say, same reasoning as the

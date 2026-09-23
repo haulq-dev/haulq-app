@@ -10,15 +10,18 @@
  *
  * Two stages today:
  *
- *  - **Delivered, not invoiced** → the invoice email. Shadow-only: the
- *    action's ceiling is `shadow` until outbound email can carry
- *    attachments. It still runs, because a week of "here is the invoice I
- *    would have sent" is the fastest way to learn whether the amounts it
- *    derives are right, before anything is allowed to bill.
+ *  - **Delivered, not invoiced** → the invoice email, with the invoice PDF,
+ *    the rate confirmation and the POD attached. The action's ceiling is
+ *    `draft`: a person approves every one. In **shadow** it drafts the
+ *    email and creates nothing — no invoice record — so a week of "here is
+ *    what I would have sent" costs the carrier nothing to review. Only when
+ *    the email will actually be held for approval or sent does it create the
+ *    draft invoice that the email carries, and sending the email is what
+ *    marks that invoice sent (see `afterSent` in `outbound/dispatch.ts`).
  *  - **Sent, past due** → a payment reminder, one per broker per week.
  *
- * What it will not do, by design: it never creates or sends an invoice
- * record, and never retries a failed send. A failed message stays failed on
+ * What it will not do, by design: it never sends an invoice record on its
+ * own, and never retries a failed send. A failed message stays failed on
  * the record until a person looks — a loop that quietly retries an email in
  * a carrier's name is how a broker ends up with it four times.
  */
@@ -27,17 +30,29 @@ import { randomUUID } from 'node:crypto';
 import {
   findDeliveredUninvoiced,
   findOverdueInvoices,
+  generateInvoice,
   listAutopilotOrgs,
+  PayError,
   scope,
   type AutopilotOrg,
   type Database,
 } from '@haulq/db';
+import type { OutboundAttachmentRef } from '@haulq/contracts';
 import type { RuntimeLog } from '../runtime.ts';
-import { OutboundError, sendAsCarrier, type OutboundDeps } from '../outbound/dispatch.ts';
+import {
+  isDeliverableAddress,
+  OutboundError,
+  resolveOutboundMode,
+  sendAsCarrier,
+  type OutboundDeps,
+} from '../outbound/dispatch.ts';
 import { deriveLineItems, invoiceDelivery, paymentReminder } from './messages.ts';
 
 const DAY_MS = 86_400_000;
 const WEEK_MS = 7 * DAY_MS;
+
+/** What a payer needs alongside an invoice. Matches the kinds `invoiceDelivery`'s "Attached:" line names. */
+const ATTACHABLE_KINDS = new Set(['rate_confirmation', 'pod', 'bol']);
 
 export interface DeliveredToPaidOptions {
   db: Database;
@@ -128,18 +143,54 @@ async function runOrg(
       now,
       options.invoiceGraceHours ?? 24,
     );
+    // Asked once per org, before anything with a side effect: whether this
+    // email will be shadow decides whether an invoice record gets created.
+    const { mode } = candidates.length > 0
+      ? await resolveOutboundMode(options.deps, s, 'invoice_delivery')
+      : { mode: 'shadow' as const };
+
     for (const c of candidates) {
       const derived = deriveLineItems(c);
       if (!derived.ok) {
         skip(`invoice_${derived.reason}`);
         continue;
       }
+      // Before the invoice is created, not after: an invoice made for an
+      // email that then cannot be built would sit as an orphan draft that no
+      // later pass would ever revisit.
+      if (!isDeliverableAddress(c.brokerEmail)) {
+        skip('invalid_message');
+        continue;
+      }
+
+      const attachDocs = c.documents.filter((d) => ATTACHABLE_KINDS.has(d.kind));
+      const attachments: OutboundAttachmentRef[] = attachDocs.map((d) => ({ kind: 'document', documentId: d.id }));
+
+      if (mode !== 'shadow') {
+        try {
+          const invoice = await generateInvoice(s, {
+            loadId: c.loadId,
+            lineItems: derived.lineItems,
+            sourceDocumentId: c.documents.find((d) => d.kind === 'pod')?.id,
+          });
+          attachments.unshift({ kind: 'invoice', invoiceId: invoice.id });
+        } catch (err) {
+          // Someone invoiced it by hand between the query and here.
+          if (err instanceof PayError && err.code === 'already_invoiced') {
+            skip('already_invoiced');
+            continue;
+          }
+          throw err;
+        }
+      }
+
       const message = invoiceDelivery(sender, c, derived);
       await record({
         actionType: 'invoice_delivery',
         to: [c.brokerEmail],
         subject: message.subject,
         body: message.body,
+        attachments,
         relatedType: 'load',
         relatedId: c.loadId,
         // One invoice email per load, ever. A promoted shadow draft reuses

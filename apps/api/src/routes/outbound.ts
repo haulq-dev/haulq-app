@@ -50,6 +50,14 @@ function toMessage(row: OutboundMessageRow): OutboundMessage {
     toAddresses: row.toAddresses,
     subject: row.subject,
     body: row.body,
+    // Checksums stay server-side; the carrier sees what was attached, not how it was verified.
+    attachments: row.attachments.map((a) => ({
+      kind: a.kind,
+      refId: a.refId,
+      filename: a.filename,
+      contentType: a.contentType,
+      byteSize: a.byteSize,
+    })),
     error: row.error,
     sentAt: row.sentAt?.toISOString() ?? null,
     createdAt: row.createdAt.toISOString(),
@@ -161,7 +169,7 @@ export async function outboundRoutes(app: FastifyInstance) {
         throw new HttpError(403, 'forbidden', 'Only a person can approve a message.');
       }
       try {
-        return toMessage(await approveOutbound({ unipile: app.unipileClient }, s, request.params.id, s.ctx.actor.id));
+        return toMessage(await approveOutbound({ unipile: app.unipileClient, storage: app.storage, log: app.log }, s, request.params.id, s.ctx.actor.id));
       } catch (err) {
         rethrow(err);
       }
@@ -203,7 +211,7 @@ export async function outboundRoutes(app: FastifyInstance) {
       }
 
       try {
-        const result = await sendAsCarrier({ unipile: app.unipileClient }, s, {
+        const result = await sendAsCarrier({ unipile: app.unipileClient, storage: app.storage, log: app.log }, s, {
           actionType: 'test',
           to: [me.email],
           subject: 'HaulQ test message',

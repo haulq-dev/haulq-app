@@ -20,6 +20,21 @@ import { index, jsonb, pgTable, text, timestamp, uniqueIndex, uuid } from 'drizz
 import { pk, timestamps } from './_shared.ts';
 import { orgs, users } from './tenancy.ts';
 
+/**
+ * What a message carries, recorded at draft time and refined when it is
+ * sent. References, not bytes — see `OutboundAttachmentRefSchema` in
+ * `@haulq/contracts`. `byteSize` and `sha256` are null until the bytes have
+ * been read, which for an invoice is the moment it is rendered.
+ */
+export interface StoredOutboundAttachment {
+  kind: 'document' | 'invoice';
+  refId: string;
+  filename: string;
+  contentType: string;
+  byteSize: number | null;
+  sha256: string | null;
+}
+
 export const outboundMessages = pgTable(
   'outbound_messages',
   {
@@ -41,6 +56,10 @@ export const outboundMessages = pgTable(
     toAddresses: jsonb('to_addresses').notNull().$type<string[]>(),
     subject: text('subject').notNull(),
     body: text('body').notNull(),
+    attachments: jsonb('attachments')
+      .notNull()
+      .default(sql`'[]'::jsonb`)
+      .$type<StoredOutboundAttachment[]>(),
 
     /** What this message is about — usually a load or an invoice. Loose on purpose: no FK, the way `event_log.subject_id` is loose. */
     relatedType: text('related_type'),

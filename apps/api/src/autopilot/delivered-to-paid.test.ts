@@ -9,8 +9,9 @@
  *    inside the grace window, not past the collections window, not an
  *    invoice a factor holds, not a paid balance, not a broker with no email
  *  - one broker gets one email listing everything, once a week
- *  - it drafts an invoice only where the amount is unambiguous, never
- *    creates one, and cannot be configured past shadow
+ *  - it drafts an invoice only where the amount is unambiguous, creates a
+ *    real one only when a person will approve the email, and can never be
+ *    made fully automatic
  *  - shadow drafts are promoted — not blocked — once a carrier turns an
  *    action on
  *  - one carrier's data never reaches another's messages
@@ -26,8 +27,10 @@ import {
   destroyTestOrg,
   destroyTestUser,
   markMailboxConnected,
+  MemoryObjectStore,
   requestMailboxConnection,
   scope,
+  sha256,
   setTestBrokerContact,
   setTestLoadAccessorials,
 } from '@haulq/db';
@@ -96,12 +99,26 @@ async function truckFor(orgId: string): Promise<string> {
   return id;
 }
 
+const storedKeys: string[] = [];
+
+/** A document whose bytes are really in storage, with a matching checksum. */
+async function storedDoc(orgId: string, loadId: string, kind: string, bytes?: Buffer): Promise<Buffer> {
+  const body = bytes ?? Buffer.from('%PDF-1.7 ' + kind + ' ' + randomUUID());
+  const key = 'test/' + randomUUID();
+  storedKeys.push(key);
+  await app.storage.put(key, body, 'application/pdf');
+  await addTestDocument(app.db, { orgId, loadId, kind, storageKey: key, sha256: sha256(body), filename: kind + '.pdf', byteSize: body.byteLength });
+  return body;
+}
+
 interface LoadOpts {
   broker?: string;
   email?: string | null;
   rate?: number;
   pod?: boolean;
   accessorials?: number;
+  /** Put real bytes in storage for the POD and rate confirmation, so an email can actually attach them. */
+  storedDocs?: boolean;
 }
 
 /** A delivered load with a broker that has an email — the loop's raw material. */
@@ -130,9 +147,14 @@ async function aDeliveredLoad(orgId: string, opts: LoadOpts = {}) {
       paymentTermsDays: 30,
     });
   }
-  if (opts.pod !== false) await addTestDocument(app.db, { orgId, loadId: load.id, kind: 'pod' });
+  const bytes: Record<string, Buffer> = {};
+  if (opts.pod !== false) {
+    if (opts.storedDocs) bytes['pod'] = await storedDoc(orgId, load.id, 'pod');
+    else await addTestDocument(app.db, { orgId, loadId: load.id, kind: 'pod' });
+  }
+  if (opts.storedDocs) bytes['rate_confirmation'] = await storedDoc(orgId, load.id, 'rate_confirmation');
   if (opts.accessorials) await setTestLoadAccessorials(app.db, load.id, opts.accessorials);
-  return load;
+  return { ...load, bytes };
 }
 
 /** A sent invoice, `daysOverdue` past its due date. */
@@ -157,7 +179,7 @@ async function anOverdueInvoice(orgId: string, load: { id: string }, daysOverdue
 const pass = (over: Partial<Parameters<typeof runDeliveredToPaidPass>[0]> = {}) =>
   runDeliveredToPaidPass({
     db: app.db,
-    deps: { unipile },
+    deps: { unipile, storage: app.storage },
     log: { info() {}, warn() {}, error() {} },
     invoiceGraceHours: 0,
     ...over,
@@ -181,6 +203,7 @@ suite('delivered-to-paid loop', () => {
     unipile = new FakeUnipileClient();
     app = await buildServer(loadEnv({ ...process.env, NODE_ENV: 'test', DATABASE_URL: url! }), {
       unipileClient: unipile,
+      storage: new MemoryObjectStore(),
     });
     userId = (await createTestUser(app.db)).id;
   });
@@ -401,11 +424,131 @@ suite('delivered-to-paid loop', () => {
     assert.equal(after.json().status, 'delivered');
   });
 
-  it('cannot be configured past shadow, because outbound email cannot carry attachments yet', async () => {
+  it('can be held for approval, but never made fully automatic', async () => {
     const orgId = await newOrg('Autopilot Invoice Ceiling Co');
-    const res = await putSettings(orgId, { modes: { invoice_delivery: 'act' } });
-    assert.equal(res.statusCode, 422);
-    assert.equal(res.json().code, 'above_ceiling');
+    const act = await putSettings(orgId, { modes: { invoice_delivery: 'act' } });
+    assert.equal(act.statusCode, 422);
+    assert.equal(act.json().code, 'above_ceiling');
+
+    const draft = await putSettings(orgId, { modes: { invoice_delivery: 'draft' } });
+    assert.equal(draft.statusCode, 200);
+  });
+
+  // --- the invoice, for real, once a person approves ------------------------------------
+
+  /** An org that is connected, sending, and holding invoice emails for approval. */
+  async function invoicingOrg(name: string): Promise<string> {
+    const orgId = await newOrg(name);
+    await connectMailbox(orgId);
+    await putSettings(orgId, { sendingEnabled: true, modes: { invoice_delivery: 'draft' } });
+    unipile.sent = [];
+    return orgId;
+  }
+
+  const invoicesOf = async (orgId: string) =>
+    (await app.inject({ method: 'GET', url: '/v1/invoices', headers: as(orgId) })).json().items as Array<{
+      id: string;
+      status: string;
+    }>;
+
+  it('creates the draft invoice and holds the email, with the invoice, rate confirmation and POD attached', async () => {
+    const orgId = await invoicingOrg('Autopilot Invoice Attach Co');
+    await aDeliveredLoad(orgId, { email: 'ap@bill.example.com', storedDocs: true });
+
+    await pass();
+
+    const [invoice] = await invoicesOf(orgId);
+    assert.equal(invoice!.status, 'draft', 'the invoice exists, but nothing has gone to the broker');
+    const [m] = await messages(orgId);
+    assert.equal(m!.status, 'pending_approval');
+    assert.equal(unipile.sent.length, 0);
+
+    const full = (await app.inject({ method: 'GET', url: '/v1/outbound/messages', headers: as(orgId) })).json()
+      .messages[0] as { attachments: Array<{ kind: string; filename: string }> };
+    assert.deepEqual(full.attachments.map((a) => a.kind).sort(), ['document', 'document', 'invoice']);
+  });
+
+  it('on approval sends the real files, then marks the invoice sent and the load invoiced', async () => {
+    const orgId = await invoicingOrg('Autopilot Approve Invoice Co');
+    const load = await aDeliveredLoad(orgId, { email: 'ap@bill.example.com', storedDocs: true });
+    await pass();
+    const [m] = await messages(orgId);
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/outbound/messages/' + m!.id + '/approve',
+      headers: as(orgId),
+    });
+
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.json().status, 'sent');
+    assert.equal(unipile.sent.length, 1);
+    const files = unipile.sent[0]!.attachments!;
+    assert.equal(files.length, 3);
+    const pdf = files.find((f) => f.filename.startsWith('Invoice-'))!;
+    assert.equal(pdf.body.subarray(0, 5).toString('latin1'), '%PDF-', 'a real invoice PDF, rendered at send time');
+    assert.ok(files.some((f) => f.body.equals(load.bytes['pod']!)), 'the POD bytes are the stored ones');
+    assert.ok(files.some((f) => f.body.equals(load.bytes['rate_confirmation']!)));
+
+    const [invoice] = await invoicesOf(orgId);
+    assert.equal(invoice!.status, 'sent');
+    const after = await app.inject({ method: 'GET', url: '/v1/loads/' + load.id, headers: as(orgId) });
+    assert.equal(after.json().status, 'invoiced');
+  });
+
+  it('creates no invoice while the email would only be shadow — sending off, or not configured', async () => {
+    const orgId = await newOrg('Autopilot Held Invoice Co');
+    await connectMailbox(orgId);
+    // Configured for approval, but the kill switch is off: held to shadow.
+    await putSettings(orgId, { modes: { invoice_delivery: 'draft' } });
+    await aDeliveredLoad(orgId, { storedDocs: true });
+
+    await pass();
+
+    const [m] = await messages(orgId);
+    assert.equal(m!.status, 'shadow');
+    assert.equal(m!.holdReason, 'sending_disabled');
+    assert.equal((await invoicesOf(orgId)).length, 0, 'a held draft must not leave an invoice behind');
+  });
+
+  it('promotes the held draft when sending is turned on, creating the invoice then', async () => {
+    const orgId = await newOrg('Autopilot Promote Invoice Co');
+    await connectMailbox(orgId);
+    await putSettings(orgId, { modes: { invoice_delivery: 'draft' } });
+    await aDeliveredLoad(orgId, { storedDocs: true });
+    await pass();
+    const [held] = await messages(orgId);
+    assert.equal(held!.status, 'shadow');
+
+    await putSettings(orgId, { sendingEnabled: true });
+    await pass();
+
+    const list = await messages(orgId);
+    assert.equal(list.length, 1, 'the same row, promoted');
+    assert.equal(list[0]!.id, held!.id);
+    assert.equal(list[0]!.status, 'pending_approval');
+    assert.equal((await invoicesOf(orgId)).length, 1);
+  });
+
+  it('does not send, and leaves the invoice a draft, if a stored document no longer matches its checksum', async () => {
+    const orgId = await invoicingOrg('Autopilot Tampered Invoice Co');
+    await aDeliveredLoad(orgId, { storedDocs: true });
+    await pass();
+    const [m] = await messages(orgId);
+    // Someone overwrites the stored files after the draft was made.
+    for (const key of storedKeys) await app.storage.put(key, Buffer.from('%PDF-1.7 tampered'), 'application/pdf');
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/v1/outbound/messages/' + m!.id + '/approve',
+      headers: as(orgId),
+    });
+
+    assert.equal(res.json().status, 'failed');
+    assert.match(res.json().error, /checksum/);
+    assert.equal(unipile.sent.length, 0);
+    const [invoice] = await invoicesOf(orgId);
+    assert.equal(invoice!.status, 'draft', 'a failed send must not mark the invoice sent');
   });
 
   it('refuses to guess an amount: no proof of delivery, or accessorials, means no draft', async () => {

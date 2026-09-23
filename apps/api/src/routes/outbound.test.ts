@@ -19,13 +19,17 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { after, before, describe, it } from 'node:test';
 import {
+  addTestDocument,
   addTestMembership,
   createTestUser,
   destroyTestOrg,
   destroyTestUser,
   markMailboxConnected,
+  MemoryObjectStore,
+  rejectTestDocument,
   requestMailboxConnection,
   scope,
+  sha256,
   type Scope,
 } from '@haulq/db';
 import type { FastifyInstance } from 'fastify';
@@ -97,7 +101,7 @@ async function getSettings(orgId: string) {
 }
 
 const send = (orgId: string, over: Partial<Parameters<typeof sendAsCarrier>[2]> = {}) =>
-  sendAsCarrier({ unipile }, systemScope(orgId), {
+  sendAsCarrier({ unipile, storage: app.storage }, systemScope(orgId), {
     actionType: 'broker_message',
     to: ['broker@example.com'],
     subject: 'Load 1042',
@@ -110,6 +114,7 @@ suite('outbound', () => {
     unipile = new FakeUnipileClient();
     app = await buildServer(loadEnv({ ...process.env, NODE_ENV: 'test', DATABASE_URL: url! }), {
       unipileClient: unipile,
+      storage: new MemoryObjectStore(),
     });
     userId = (await createTestUser(app.db)).id;
   });
@@ -405,6 +410,158 @@ suite('outbound', () => {
     assert.equal(test.statusCode, 403);
 
     await destroyTestUser(app.db, dispatcher.id);
+  });
+
+  // --- attachments ---------------------------------------------------------------------
+
+  /** A document with real bytes in storage and a matching checksum — unless the test says otherwise. */
+  async function storedDoc(
+    orgId: string,
+    kind: string,
+    over: { bytes?: Buffer; recordedSha?: string; status?: 'validated' | 'rejected'; skipStorage?: boolean } = {},
+  ): Promise<{ id: string; bytes: Buffer }> {
+    const bytes = over.bytes ?? Buffer.from('%PDF-1.7 ' + kind + ' ' + randomUUID());
+    const key = 'test/' + randomUUID();
+    if (!over.skipStorage) await app.storage.put(key, bytes, 'application/pdf');
+    const id = await addTestDocument(app.db, {
+      orgId,
+      kind,
+      storageKey: key,
+      sha256: over.recordedSha ?? sha256(bytes),
+      byteSize: bytes.byteLength,
+      ...(over.status ? { status: over.status } : {}),
+    });
+    return { id, bytes };
+  }
+
+  /** An org that is connected, sending, and drafting broker messages. */
+  async function draftingOrg(name: string): Promise<string> {
+    const orgId = await newOrg(name);
+    await connectMailbox(orgId);
+    await putSettings(orgId, { sendingEnabled: true, modes: { broker_message: 'draft' } });
+    unipile.sent = [];
+    return orgId;
+  }
+
+  const approve = (orgId: string, id: string) =>
+    app.inject({ method: 'POST', url: '/v1/outbound/messages/' + id + '/approve', headers: as(orgId) });
+
+  it('attaches a stored document — the exact bytes, read at the moment of sending', async () => {
+    const orgId = await draftingOrg('Outbound Attach Co');
+    const pod = await storedDoc(orgId, 'pod');
+
+    const drafted = await send(orgId, { attachments: [{ kind: 'document', documentId: pod.id }] });
+    assert.equal(drafted.message.status, 'pending_approval');
+    assert.equal(drafted.message.attachments.length, 1);
+    assert.equal(drafted.message.attachments[0]!.byteSize, pod.bytes.byteLength);
+    assert.equal(unipile.sent.length, 0, 'drafting reads no bytes and sends nothing');
+
+    const res = await approve(orgId, drafted.message.id);
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.json().status, 'sent');
+    assert.equal(unipile.sent.length, 1);
+    const [file] = unipile.sent[0]!.attachments!;
+    assert.ok(file!.body.equals(pod.bytes));
+    assert.equal(file!.contentType, 'application/pdf');
+    assert.match(file!.filename, /\.pdf$/);
+  });
+
+  it('records what actually went out, with a checksum, once it has been sent', async () => {
+    const orgId = await draftingOrg('Outbound Sent Record Co');
+    const pod = await storedDoc(orgId, 'pod');
+    const drafted = await send(orgId, { attachments: [{ kind: 'document', documentId: pod.id }] });
+
+    const res = await approve(orgId, drafted.message.id);
+
+    assert.equal(res.json().attachments[0].byteSize, pod.bytes.byteLength);
+    assert.equal(res.json().attachments[0].sha256, undefined, 'checksums stay server-side');
+  });
+
+  it('never sends an email whose attachment does not match the checksum on record', async () => {
+    const orgId = await draftingOrg('Outbound Tamper Co');
+    const tampered = await storedDoc(orgId, 'pod', { recordedSha: sha256(Buffer.from('some other bytes')) });
+    const drafted = await send(orgId, { attachments: [{ kind: 'document', documentId: tampered.id }] });
+
+    const res = await approve(orgId, drafted.message.id);
+
+    assert.equal(res.json().status, 'failed');
+    assert.match(res.json().error, /checksum/);
+    assert.equal(unipile.sent.length, 0);
+  });
+
+  it('never sends an email whose attachment cannot be read from storage', async () => {
+    const orgId = await draftingOrg('Outbound Missing File Co');
+    const gone = await storedDoc(orgId, 'pod', { skipStorage: true });
+    const drafted = await send(orgId, { attachments: [{ kind: 'document', documentId: gone.id }] });
+
+    const res = await approve(orgId, drafted.message.id);
+
+    assert.equal(res.json().status, 'failed');
+    assert.match(res.json().error, /could not be read/);
+    assert.equal(unipile.sent.length, 0);
+  });
+
+  it('refuses to attach a document that does not exist, or belongs to another carrier', async () => {
+    const mine = await draftingOrg('Outbound Mine Co');
+    const theirs = await newOrg('Outbound Theirs Co');
+    const foreign = await storedDoc(theirs, 'pod');
+
+    await assert.rejects(
+      () => send(mine, { attachments: [{ kind: 'document', documentId: foreign.id }] }),
+      (err: unknown) => err instanceof OutboundError && err.code === 'invalid_attachment',
+    );
+    await assert.rejects(
+      () => send(mine, { attachments: [{ kind: 'document', documentId: randomUUID() }] }),
+      (err: unknown) => err instanceof OutboundError && err.code === 'invalid_attachment',
+    );
+  });
+
+  it('refuses to attach a rejected document, and notices one rejected after it was drafted', async () => {
+    const orgId = await draftingOrg('Outbound Rejected Doc Co');
+    const bad = await storedDoc(orgId, 'pod', { status: 'rejected' });
+    await assert.rejects(
+      () => send(orgId, { attachments: [{ kind: 'document', documentId: bad.id }] }),
+      (err: unknown) => err instanceof OutboundError && err.code === 'invalid_attachment',
+    );
+
+    // And one rejected *after* the draft was made must not go out at approval time.
+    const later = await storedDoc(orgId, 'pod');
+    const drafted = await send(orgId, { attachments: [{ kind: 'document', documentId: later.id }] });
+    await rejectTestDocument(app.db, later.id);
+
+    const res = await approve(orgId, drafted.message.id);
+
+    assert.equal(res.json().status, 'failed');
+    assert.match(res.json().error, /no longer available/);
+    assert.equal(unipile.sent.length, 0);
+  });
+
+  it('limits how many files one message can carry, and collapses a repeated reference', async () => {
+    const orgId = await draftingOrg('Outbound Limits Co');
+    const kinds = ['rate_confirmation', 'bol', 'pod', 'lumper_receipt', 'scale_ticket', 'weight_ticket'];
+    const docs = await Promise.all(kinds.map((kind) => storedDoc(orgId, kind)));
+
+    await assert.rejects(
+      () => send(orgId, { attachments: docs.map((d) => ({ kind: 'document' as const, documentId: d.id })) }),
+      (err: unknown) => err instanceof OutboundError && err.code === 'invalid_attachment',
+    );
+
+    const once = await send(orgId, {
+      subject: 'Repeated reference',
+      attachments: [
+        { kind: 'document', documentId: docs[0]!.id },
+        { kind: 'document', documentId: docs[0]!.id },
+      ],
+    });
+    assert.equal(once.message.attachments.length, 1);
+  });
+
+  it('refuses to attach an invoice from another carrier', async () => {
+    const mine = await draftingOrg('Outbound Foreign Invoice Co');
+    await assert.rejects(
+      () => send(mine, { attachments: [{ kind: 'invoice', invoiceId: randomUUID() }] }),
+      (err: unknown) => err instanceof OutboundError && err.code === 'invalid_attachment',
+    );
   });
 
   it('keeps two orgs apart', async () => {
