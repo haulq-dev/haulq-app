@@ -114,6 +114,16 @@ export interface CreateOutboundInput {
  * key returns the first row and `created: false`, so a loop that
  * re-evaluates the same load every pass cannot chase twice. The caller
  * must not send when `created` is false.
+ *
+ * One exception, and it matters: an earlier **shadow** row does not use up
+ * the key against a message that is now allowed to go further. A draft that
+ * was only held (sending was off, or the mode was still shadow) is
+ * promoted in place — same row, refreshed content, new status — and comes
+ * back `created: true`. Without this, a carrier who watched a week of
+ * shadow drafts and then turned an action on would find the loop silently
+ * refusing to send the very things they had just approved of, because each
+ * was already "recorded". The status guard on the update keeps two racing
+ * callers from both promoting the same row.
  */
 export async function createOutbound(
   s: Scope,
@@ -144,6 +154,26 @@ export async function createOutbound(
     .from(outboundMessages)
     .where(and(eq(outboundMessages.orgId, s.ctx.orgId), eq(outboundMessages.dedupeKey, input.dedupeKey)));
   if (!existing) throw new Error('outbound dedupe conflict but no existing row');
+
+  if (existing.status === 'shadow' && input.status !== 'shadow') {
+    const [promoted] = await s.db
+      .update(outboundMessages)
+      .set({
+        mode: input.mode,
+        status: input.status,
+        holdReason: input.holdReason,
+        toAddresses: input.toAddresses,
+        subject: input.subject,
+        body: input.body,
+        updatedAt: new Date(),
+      })
+      .where(and(eq(outboundMessages.id, existing.id), eq(outboundMessages.status, 'shadow')))
+      .returning();
+    if (promoted) return { message: promoted, created: true };
+
+    const [current] = await s.db.select().from(outboundMessages).where(eq(outboundMessages.id, existing.id));
+    return { message: current ?? existing, created: false };
+  }
   return { message: existing, created: false };
 }
 

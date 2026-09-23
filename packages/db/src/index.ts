@@ -11,6 +11,7 @@ export * from './events/record.ts';
 export * from './pagination.ts';
 export * from './storage.ts';
 export * from './storage-r2.ts';
+export * from './repositories/autopilot.ts';
 export * from './repositories/board-credentials.ts';
 export * from './repositories/brokers.ts';
 export * from './repositories/documents.ts';

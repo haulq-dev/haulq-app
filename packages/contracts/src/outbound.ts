@@ -35,8 +35,19 @@ export const OUTBOUND_ACTIONS = {
   test: { label: 'Test message', maxMode: 'act' },
   /** Chasing a broker for a missing POD/BOL on a delivered load. */
   pod_chase: { label: 'Chase a missing POD', maxMode: 'act' },
-  /** Delivering an invoice for a delivered load with its documents in hand. */
-  invoice_delivery: { label: 'Send an invoice', maxMode: 'act' },
+  /**
+   * Delivering an invoice for a delivered load with its documents in hand.
+   *
+   * Ceiling is `shadow` on purpose, for now: a broker or factor pays against
+   * an invoice *and* the rate confirmation and POD, and outbound email
+   * cannot carry attachments yet. Sending the invoice as body text alone
+   * would put an incomplete submission in the carrier's name, so until
+   * attachments exist the most this can do is show the owner exactly what
+   * it would send — which is also the fastest way to find out whether the
+   * amounts it derives are right. Raise this to `draft`/`act` in the same
+   * change that adds attachments, not before.
+   */
+  invoice_delivery: { label: 'Send an invoice', maxMode: 'shadow' },
   /** A reminder on an invoice past due. */
   payment_reminder: { label: 'Payment reminder', maxMode: 'act' },
   /** Anything to a broker that is not routine — a person reads it first. */

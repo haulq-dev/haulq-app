@@ -131,6 +131,17 @@ const EnvSchema = z.object({
   DETENTION_SCAN_POLL_MS: z.coerce.number().int().min(0).default(0),
 
   /**
+   * How often the autopilot loop (`autopilot/runner.ts`) sweeps, in
+   * milliseconds. 0 is off — the default, and the outermost of three locks
+   * on a loop that composes messages to real brokers: this switch, the
+   * carrier explicitly setting an action type (an org that never has is
+   * never visited), and the per-mailbox sending kill switch. A
+   * recommended value once enabled is an hour; nothing here is
+   * time-sensitive to the minute. `FEATURE_REQUESTS_PLAN.md` section 8.
+   */
+  AUTOPILOT_POLL_MS: z.coerce.number().int().min(0).default(0),
+
+  /**
    * How often the nightly broker re-check sweeps for stale FMCSA checks, in
    * milliseconds. 0 is off, same reasoning and same default as
    * `EXCEPTION_SCAN_POLL_MS` — see `verify/recheck-runner.ts`. Set well

@@ -18,7 +18,10 @@ import { and, eq, isNull, sql } from 'drizzle-orm';
 import type { Database } from './client.ts';
 import { scope, type Actor, type Scope } from './context.ts';
 import { eventLog, eventOutbox } from './schema/events.ts';
+import { brokers } from './schema/brokers.ts';
+import { documents } from './schema/documents.ts';
 import { loads } from './schema/loads.ts';
+import { factoringCompanies, factoringPackets } from './schema/pay.ts';
 import { orgInvitations, orgMemberships, orgs, users } from './schema/tenancy.ts';
 import { brokerVerifications } from './schema/verify.ts';
 
@@ -303,4 +306,83 @@ export async function setTestUserEmail(
   email: string,
 ): Promise<void> {
   await db.update(users).set({ email }).where(eq(users.id, id));
+}
+
+// ---------------------------------------------------------------------------
+// Autopilot fixtures — `FEATURE_REQUESTS_PLAN.md` section 8, piece 3
+// ---------------------------------------------------------------------------
+//
+// The delivered-to-paid loop reads facts that no route lets a test set
+// directly: a broker's email, a document on a load, a factor holding an
+// invoice. Direct, like the helpers above, so test files stay free of
+// `drizzle-orm`.
+
+/** A broker's contact and terms. `resolveBroker` only ever learns a name from a load. */
+export async function setTestBrokerContact(
+  db: Database,
+  brokerId: string,
+  contact: { email: string | null; paymentTermsDays?: number | null },
+): Promise<void> {
+  await db
+    .update(brokers)
+    .set({
+      email: contact.email,
+      ...(contact.paymentTermsDays !== undefined ? { paymentTermsDays: contact.paymentTermsDays } : {}),
+    })
+    .where(eq(brokers.id, brokerId));
+}
+
+/** A document already attached to a load, in whatever state the test needs. */
+export async function addTestDocument(
+  db: Database,
+  args: {
+    orgId: string;
+    loadId: string;
+    kind: string;
+    status?: 'received' | 'validated' | 'rejected' | 'quarantined';
+  },
+): Promise<string> {
+  const [row] = await db
+    .insert(documents)
+    .values({
+      orgId: args.orgId,
+      loadId: args.loadId,
+      kind: args.kind,
+      status: args.status ?? 'validated',
+      source: 'upload',
+      storageKey: `test/${randomUUID()}`,
+      filename: `${args.kind}.pdf`,
+      contentType: 'application/pdf',
+      byteSize: 1024,
+      sha256: randomUUID().replaceAll('-', ''),
+    })
+    .returning({ id: documents.id });
+  if (!row) throw new Error('could not create test document');
+  return row.id;
+}
+
+/** A factor holding an invoice — what makes it the factor's to chase, not the carrier's. */
+export async function addTestFactoringPacket(
+  db: Database,
+  args: { orgId: string; invoiceId: string; status: 'assembling' | 'submitted' | 'accepted' | 'rejected' | 'funded' },
+): Promise<void> {
+  const [company] = await db
+    .insert(factoringCompanies)
+    .values({ orgId: args.orgId, name: `Test Factor ${randomUUID().slice(0, 6)}` })
+    .returning({ id: factoringCompanies.id });
+  if (!company) throw new Error('could not create test factoring company');
+  await db.insert(factoringPackets).values({
+    orgId: args.orgId,
+    invoiceId: args.invoiceId,
+    factoringCompanyId: company.id,
+    status: args.status,
+  });
+}
+
+/** Accessorials on a load — no route sets these directly; they arrive from extraction. */
+export async function setTestLoadAccessorials(db: Database, loadId: string, amountCents: number): Promise<void> {
+  await db
+    .update(loads)
+    .set({ accessorialsAmount: amountCents, accessorialsCurrency: 'USD' })
+    .where(eq(loads.id, loadId));
 }
