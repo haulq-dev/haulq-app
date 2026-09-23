@@ -23,9 +23,9 @@ import {
   useAuth,
   useClerk,
 } from '@clerk/clerk-react';
-import { useQuery } from '@tanstack/react-query';
+import { useOrgs as useSharedOrgs, type OrgSummary } from '@haulq/client';
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
-import { readSession, request, writeSession, type Session } from '../lib/api.ts';
+import { readSession, writeSession, type Session } from '../lib/api.ts';
 import {
   CLERK_PUBLISHABLE_KEY,
   clerkFrontendApiHost,
@@ -33,6 +33,7 @@ import {
   registerTokenGetter,
 } from '../lib/auth.ts';
 import { Logo } from './Logo.tsx';
+import { SubscriptionGate } from './Shell.tsx';
 
 /**
  * Paths that render for a signed-out visitor — same reasoning as
@@ -99,19 +100,13 @@ export function useSession(): Session | null {
   return session;
 }
 
-interface OrgSummary {
-  id: string;
-  name: string;
-  role: string;
-}
-
-/** The accounts this login can act in — what `OrgGate` below reads to decide whether it needs to ask. */
+/**
+ * The accounts this login can act in, each with its subscription status.
+ * `OrgGate` below reads it to decide whether it needs to ask, and
+ * `SubscriptionGate` reads it to decide whether the chosen one has paid.
+ */
 export function useOrgs() {
-  return useQuery({
-    queryKey: ['orgs'],
-    queryFn: () => request<{ items: OrgSummary[] }>('/v1/orgs'),
-    enabled: useSignedIn(),
-  });
+  return useSharedOrgs({ enabled: useSignedIn() });
 }
 
 /** Hands Clerk's token to the plain-function API client. Renders nothing. */
@@ -307,7 +302,7 @@ function OrgGate({ children }: { children: ReactNode }) {
   // below just having run) — the common path on every screen after the
   // first, so this returns immediately rather than waiting on `useOrgs()`
   // again.
-  if (session?.orgId) return children;
+  if (session?.orgId) return <SubscriptionGate>{children}</SubscriptionGate>;
 
   if (orgs.isLoading) {
     return <p className="p-8 text-mute">Loading your accounts…</p>;

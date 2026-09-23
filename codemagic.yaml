@@ -58,7 +58,7 @@ workflows:
         XCODE_WORKSPACE: "ios/App/App.xcworkspace"
         XCODE_SCHEME: "App"
         APP_STORE_APP_ID: 6804486951
-        # apps/driver/src/lib/api.ts falls back to the *relative* path '/api'
+        # apps/mobile/src/lib/api.ts falls back to the *relative* path '/api'
         # when this is unset. That works for apps/web, which is served from
         # an origin something can rewrite /api/* against — it does nothing
         # for a Capacitor build, which has no origin at all
@@ -74,7 +74,7 @@ workflows:
       xcode: latest
       cocoapods: default
 
-    # Everything below runs with `apps/driver` as the working directory
+    # Everything below runs with `apps/mobile` as the working directory
     # except the first step, which needs the monorepo root to see the
     # pnpm workspace and `@haulq/contracts`.
     scripts:
@@ -83,15 +83,15 @@ workflows:
           corepack enable
           pnpm install --frozen-lockfile
 
-      - name: Build the driver web bundle
-        script: pnpm --filter @haulq/driver build
+      - name: Build the mobile web bundle
+        script: pnpm --filter @haulq/mobile build
 
       - name: Sync the built bundle into the native iOS project
-        working_directory: apps/driver
+        working_directory: apps/mobile
         script: npx cap sync ios
 
       - name: Install CocoaPods dependencies
-        working_directory: apps/driver/ios/App
+        working_directory: apps/mobile/ios/App
         script: pod install
 
       - name: Initialize the build keychain
@@ -119,15 +119,15 @@ workflows:
             --certificate "$HOME/Library/Developer/Xcode/UserData/Certificates/*.p12"
 
       - name: Set up code signing
-        working_directory: apps/driver
+        working_directory: apps/mobile
         script: xcode-project use-profiles
 
       - name: Increment the build number
-        # Not apps/driver — agvtool takes no path argument, it operates on
+        # Not apps/mobile — agvtool takes no path argument, it operates on
         # whatever directory it's run from, and that has to actually
         # contain the .xcodeproj. Everything else in this file references
         # the project by path ($XCODE_WORKSPACE etc.) and can run from
-        # apps/driver; this step is the one exception.
+        # apps/mobile; this step is the one exception.
         #
         # get-latest-*app-store*-build-number reads the App Store release
         # track, which is empty — this app has only ever gone to TestFlight,
@@ -139,20 +139,20 @@ workflows:
         # actually land on. Revisit if this app ever also ships an App
         # Store release — at that point the real latest is whichever of
         # the two tracks is higher, not just TestFlight's.
-        working_directory: apps/driver/ios/App
+        working_directory: apps/mobile/ios/App
         script: |
           LATEST=$(app-store-connect get-latest-testflight-build-number "$APP_STORE_APP_ID")
           agvtool new-version -all $(($LATEST + 1))
 
       - name: Build the .ipa
-        working_directory: apps/driver
+        working_directory: apps/mobile
         script: |
           xcode-project build-ipa \
             --workspace "$XCODE_WORKSPACE" \
             --scheme "$XCODE_SCHEME"
 
     artifacts:
-      - apps/driver/build/ios/ipa/*.ipa
+      - apps/mobile/build/ios/ipa/*.ipa
       - /tmp/xcodebuild_logs/*.log
 
     publishing:

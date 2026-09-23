@@ -1,9 +1,9 @@
 {
-  "name": "@haulq/driver",
+  "name": "@haulq/mobile",
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "The driver check-in app. React + Vite, wrapped in Capacitor for iOS/Android. PHASE_2_PLAN.md section 4.",
+  "description": "The HaulQ mobile app (iOS/Android). React + Vite, wrapped in Capacitor. Driver check-in plus web-parity screens for owners, dispatchers and accountants; see MOBILE_PARITY_PLAN.md.",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
@@ -20,6 +20,7 @@
     "@capacitor/haptics": "^6.0.0",
     "@clerk/clerk-react": "^5.61.9",
     "@fontsource-variable/jetbrains-mono": "^5.3.0",
+    "@haulq/client": "workspace:*",
     "@haulq/contracts": "workspace:*",
     "@tanstack/react-query": "^5.62.0",
     "@tanstack/react-router": "^1.87.0",

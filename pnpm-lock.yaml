@@ -67,7 +67,7 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
-  apps/driver:
+  apps/mobile:
     dependencies:
       '@capacitor/app':
         specifier: ^6.0.0
@@ -90,6 +90,9 @@ importers:
       '@fontsource-variable/jetbrains-mono':
         specifier: ^5.3.0
         version: 5.3.0
+      '@haulq/client':
+        specifier: workspace:*
+        version: link:../../packages/client
       '@haulq/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
@@ -166,6 +169,9 @@ importers:
       '@fontsource-variable/jetbrains-mono':
         specifier: ^5.3.0
         version: 5.3.0
+      '@haulq/client':
+        specifier: workspace:*
+        version: link:../../packages/client
       '@haulq/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
@@ -218,6 +224,28 @@ importers:
       vitest:
         specifier: ^4.1.11
         version: 4.1.11(@types/node@22.20.1)(jsdom@30.0.1)(vite@6.4.3(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.32.0)(yaml@2.9.0))
+
+  packages/client:
+    dependencies:
+      '@haulq/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+    devDependencies:
+      '@tanstack/react-query':
+        specifier: ^5.62.0
+        version: 5.101.4(react@19.2.8)
+      '@types/node':
+        specifier: ^22.10.0
+        version: 22.20.1
+      '@types/react':
+        specifier: ^19.0.0
+        version: 19.2.18
+      react:
+        specifier: ^19.0.0
+        version: 19.2.8
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
 
   packages/contracts:
     dependencies:
@@ -1544,6 +1572,7 @@ packages:
   '@xmldom/xmldom@0.9.11':
     resolution: {integrity: sha512-tW8bcK3hsG0/uqSnNz6TK4BkcuZSezoU7DlnYssILmZDktPnSHHuDJJFM0AJv+13gz2r0iGdrj6qqKeUnxXEDg==}
     engines: {node: '>=14.6'}
+    deprecated: this version has critical issues, please update to the latest version
 
   abstract-logging@2.0.1:
     resolution: {integrity: sha512-2BjRTZxTPvheOvGbBslFSYOUkr+SjPtOnrLP33f+VIWLzezQpZcqVg7ja3L4dBXmzzgwT+a029jRx5PCi3JuiA==}

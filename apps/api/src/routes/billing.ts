@@ -48,7 +48,7 @@ export async function billingRoutes(app: FastifyInstance) {
       },
     },
     async (request) => {
-      const s = await requireScope(request);
+      const s = await requireScope(request, { allowInactiveSubscription: true });
       requireRole(request, 'owner');
 
       if (!app.billing) {
@@ -102,7 +102,7 @@ export async function billingRoutes(app: FastifyInstance) {
       },
     },
     async (request) => {
-      const s = await requireScope(request);
+      const s = await requireScope(request, { allowInactiveSubscription: true });
       requireRole(request, 'owner');
 
       if (!app.billing) {

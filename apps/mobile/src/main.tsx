@@ -8,13 +8,16 @@
  *    reachable with no sign-in at all, for a driver not yet linked to an
  *    account (see that file's own module note).
  *  - **Everything else** — `AuthGate` wrapping a small router: accepting an
- *    invite, a driver's own assigned loads, and one load's stop milestones.
- *    Code-based routes, same reasoning `apps/web/src/main.tsx` gives: three
- *    screens do not justify a codegen step.
+ *    invite, the loads list, one load's stop milestones, the owner shortcuts
+ *    and the Account tab. Office roles get a tab bar, drivers don't (see
+ *    `components/Shell.tsx`). Code-based routes, same reasoning
+ *    `apps/web/src/main.tsx` gives. Revisit file-based routing once the
+ *    MOBILE_PARITY_PLAN.md phases push this past a dozen screens.
  */
 
 import { App as CapacitorApp } from '@capacitor/app';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { ApiClientProvider, isSubscriptionInactive, queryKeys } from '@haulq/client';
+import { QueryCache, QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import {
   createRootRoute,
   createRoute,
@@ -24,8 +27,11 @@ import {
 } from '@tanstack/react-router';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
-import { AuthGate } from './components/AuthGate.tsx';
+import { AuthGate, useSession } from './components/AuthGate.tsx';
 import { ErrorBoundary } from './components/ErrorBoundary.tsx';
+import { showsTabBar, TabBar, TabBarSpacer } from './components/Shell.tsx';
+import { apiClient } from './lib/api.ts';
+import { AccountScreen } from './routes/Account.tsx';
 import { AddTruckScreen } from './routes/AddTruck.tsx';
 import { CheckinScreen, isCheckinRoute } from './routes/Checkin.tsx';
 import { CreateLoadScreen } from './routes/CreateLoad.tsx';
@@ -35,7 +41,19 @@ import { LoadDetailScreen } from './routes/LoadDetail.tsx';
 import { MyLoadsScreen } from './routes/MyLoads.tsx';
 import './styles.css';
 
-const queryClient = new QueryClient({
+const queryClient: QueryClient = new QueryClient({
+  /**
+   * The API's own paywall (`REQUIRE_ACTIVE_SUBSCRIPTION`) can refuse
+   * mid-session, when a subscription lapses while the app is open. Refetching
+   * the org list lets `SubscriptionGate` see the new status and swap the
+   * whole app for its "not active" screen, instead of every screen showing
+   * the same refusal one query at a time.
+   */
+  queryCache: new QueryCache({
+    onError: (error) => {
+      if (isSubscriptionInactive(error)) void queryClient.invalidateQueries({ queryKey: queryKeys.orgs });
+    },
+  }),
   defaultOptions: {
     queries: {
       // Same reasoning apps/web's client carries: cab connectivity is
@@ -58,9 +76,18 @@ const queryClient = new QueryClient({
  * rather than patched into each screen's own wrapper `div`.
  */
 function RootLayout() {
+  // The tab bar is for office roles only (see `Shell.tsx`). A signed-out
+  // visitor on an invite link has no session, so no role and no tab bar.
+  const tabs = showsTabBar(useSession()?.role);
   return (
     <div className="pt-[env(safe-area-inset-top)]">
       <Outlet />
+      {tabs && (
+        <>
+          <TabBarSpacer />
+          <TabBar />
+        </>
+      )}
     </div>
   );
 }
@@ -93,7 +120,14 @@ const createLoadRoute = createRoute({
   component: CreateLoadScreen,
 });
 
+const accountRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/account',
+  component: AccountScreen,
+});
+
 const routeTree = rootRoute.addChildren([
+  accountRoute,
   indexRoute,
   loadDetailRoute,
   inviteRoute,
@@ -174,16 +208,18 @@ createRoot(root).render(
   <StrictMode>
     <ErrorBoundary>
       <QueryClientProvider client={queryClient}>
-        {isCheckinRoute() ? (
-          <CheckinScreen />
-        ) : (
-          // AuthGate is outside the router — see its own module note on the
-          // one path (`/invite/`) it still renders the router for while
-          // signed out.
-          <AuthGate>
-            <RouterProvider router={router} />
-          </AuthGate>
-        )}
+        <ApiClientProvider client={apiClient}>
+          {isCheckinRoute() ? (
+            <CheckinScreen />
+          ) : (
+            // AuthGate is outside the router — see its own module note on the
+            // one path (`/invite/`) it still renders the router for while
+            // signed out.
+            <AuthGate>
+              <RouterProvider router={router} />
+            </AuthGate>
+          )}
+        </ApiClientProvider>
       </QueryClientProvider>
     </ErrorBoundary>
   </StrictMode>,

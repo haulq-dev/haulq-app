@@ -13,7 +13,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { scope, type RequestContext, type Scope } from '@haulq/db';
+import { getOrg, scope, type RequestContext, type Scope } from '@haulq/db';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import fp from 'fastify-plugin';
 import {
@@ -102,13 +102,25 @@ export const requestContextPlugin = fp(async (app: FastifyInstance) => {
   });
 });
 
+export interface ScopeOptions {
+  /**
+   * Let an org with no active subscription through. Only for routes an unpaid
+   * org must reach in order to pay. An opt-out rather than an opt-in, so a
+   * new route is gated unless its author decides otherwise.
+   */
+  allowInactiveSubscription?: boolean;
+}
+
 /**
  * Authenticate, then build the scope.
  *
  * Throws rather than returning null, so a route that forgets to check cannot
  * proceed with an undefined tenant.
  */
-export async function requireScope(request: FastifyRequest): Promise<Scope> {
+export async function requireScope(
+  request: FastifyRequest,
+  options: ScopeOptions = {},
+): Promise<Scope> {
   const app = request.server;
   const authenticated = await app.authenticator.authenticate(request.headers);
 
@@ -134,7 +146,23 @@ export async function requireScope(request: FastifyRequest): Promise<Scope> {
       : {}),
   };
 
-  return scope(app.db, ctx);
+  const s = scope(app.db, ctx);
+
+  // The same rule `apps/web`'s `Shell.tsx` applies: only a positive `active`
+  // passes. `past_due` and `trialing` are blocked too. See
+  // `REQUIRE_ACTIVE_SUBSCRIPTION` in env.ts for why this is behind a flag.
+  if (app.env.REQUIRE_ACTIVE_SUBSCRIPTION && !options.allowInactiveSubscription) {
+    const org = await getOrg(s);
+    if (org?.status !== 'active') {
+      throw new HttpError(
+        402,
+        'subscription_inactive',
+        "This carrier's HaulQ subscription isn't active. The account owner can sort it out at haulq.ai.",
+      );
+    }
+  }
+
+  return s;
 }
 
 /**

@@ -15,20 +15,20 @@
  *    too — those routes read only the token and ignore anything else.
  */
 
-import type { ApiError } from '@haulq/contracts';
+import { createApiClient, type RequestOptions, type Session } from '@haulq/client';
 import { currentToken } from './auth.ts';
+
+// Request/error handling, the shared response shapes and the role/plan rules
+// live in `@haulq/client`, shared with `apps/web`. What stays here is only
+// what is specific to this app: where the session is stored, and the
+// check-in shapes nothing else uses.
+export { ApiRequestError } from '@haulq/client';
+export type { RequestOptions, Session };
 
 const BASE = import.meta.env['VITE_API_URL'] ?? '/api';
 
-export interface Session {
-  userId: string;
-  /** `?: string | undefined`, not `?: string` — `exactOptionalPropertyTypes` is on, and clearing the org means assigning `undefined`, not deleting the key. */
-  orgId?: string | undefined;
-  orgName?: string | undefined;
-  /** This login's role in `orgId` — owner/dispatcher/driver/accountant. Lets the UI hide owner/dispatcher-only actions from a driver; the API's own `requireRole` is what actually enforces it. */
-  role?: string | undefined;
-}
-
+// Kept as `haulq.driver.session` after the rename to apps/mobile, on purpose:
+// changing it would sign every installed user out on the next update.
 const SESSION_KEY = 'haulq.driver.session';
 
 export function readSession(): Session | null {
@@ -58,62 +58,15 @@ async function authHeaders(session: Session | null): Promise<Record<string, stri
   return { ...org, ...(token ? { Authorization: `Bearer ${token}` } : {}) };
 }
 
-export class ApiRequestError extends Error {
-  readonly status: number;
-  readonly code: string;
-  readonly explanation: string;
+export const apiClient = createApiClient({
+  baseUrl: BASE,
+  readSession,
+  authHeaders,
+  onOrgUnresolved: (session) => writeSession({ userId: session.userId }),
+});
 
-  constructor(status: number, body: Partial<ApiError>) {
-    const explanation = body.explanation ?? 'Something went wrong. Please try again.';
-    super(explanation);
-    this.name = 'ApiRequestError';
-    this.status = status;
-    this.code = body.code ?? 'unknown';
-    this.explanation = explanation;
-  }
-}
-
-export interface RequestOptions {
-  method?: string;
-  body?: unknown;
-}
-
-export async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
-  const session = readSession();
-  const headers: Record<string, string> = { ...(await authHeaders(session)) };
-  let body: BodyInit | undefined;
-
-  if (options.body !== undefined) {
-    headers['Content-Type'] = 'application/json';
-    body = JSON.stringify(options.body);
-  }
-
-  const response = await fetch(`${BASE}${path}`, {
-    method: options.method ?? (body ? 'POST' : 'GET'),
-    headers,
-    ...(body !== undefined ? { body } : {}),
-  });
-
-  if (response.status === 204) return undefined as T;
-
-  const text = await response.text();
-  const parsed = text ? (JSON.parse(text) as unknown) : undefined;
-
-  if (!response.ok) {
-    const errorBody = (parsed ?? {}) as Partial<ApiError>;
-
-    // Same self-heal web's client does: an org that no longer resolves for
-    // this login drops just the org, not the whole session, so the next
-    // render can recover rather than 401ing forever.
-    if (errorBody.code === 'unauthenticated' && session?.orgId) {
-      writeSession({ userId: session.userId });
-    }
-
-    throw new ApiRequestError(response.status, errorBody);
-  }
-
-  return parsed as T;
-}
+export const request = apiClient.request;
+export const requestBlob = apiClient.requestBlob;
 
 // ---------------------------------------------------------------------------
 // Shapes the API returns

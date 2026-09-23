@@ -11,7 +11,9 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
+import { canDispatch } from '@haulq/client';
 import { DeleteAccountLink, SignOutLink, SwitchAccountLink, useSession } from '../components/AuthGate.tsx';
+import { showsTabBar } from '../components/Shell.tsx';
 import { Card, Empty, ErrorNote, Pill } from '../components/ui.tsx';
 import { request } from '../lib/api.ts';
 
@@ -68,20 +70,25 @@ export function MyLoadsScreen() {
   });
 
   const items = loads.data?.items ?? [];
+  // Office roles have the Account tab for these links. A driver has no tab
+  // bar, so they stay in this header.
+  const office = showsTabBar(session?.role);
 
   return (
     <div className="mx-auto max-w-md space-y-4 px-4 py-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl">Your loads</h1>
-        <div className="flex flex-col items-end gap-0.5">
-          <SwitchAccountLink />
-          <SignOutLink />
-          <DeleteAccountLink />
-        </div>
+        <h1 className="text-2xl">{office ? 'Loads' : 'Your loads'}</h1>
+        {!office && (
+          <div className="flex flex-col items-end gap-0.5">
+            <SwitchAccountLink />
+            <SignOutLink />
+            <DeleteAccountLink />
+          </div>
+        )}
       </div>
       {session?.orgName && <p className="-mt-2 text-sm text-mute">{session.orgName}</p>}
 
-      {(session?.role === 'owner' || session?.role === 'dispatcher') && <ManageLinks />}
+      {canDispatch(session?.role) && <ManageLinks />}
 
       {loads.isError && <ErrorNote error={loads.error} />}
 

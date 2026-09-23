@@ -1,0 +1,28 @@
+{
+  "name": "@haulq/client",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The API client both front ends share: request/error handling, response shapes, role and plan rules, and the React Query hooks. No UI. MOBILE_PARITY_PLAN.md section 3.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --test --experimental-strip-types \"src/**/*.test.ts\""
+  },
+  "dependencies": {
+    "@haulq/contracts": "workspace:*"
+  },
+  "peerDependencies": {
+    "@tanstack/react-query": "^5.62.0",
+    "react": "^19.0.0"
+  },
+  "devDependencies": {
+    "@tanstack/react-query": "^5.62.0",
+    "@types/node": "^22.10.0",
+    "@types/react": "^19.0.0",
+    "react": "^19.0.0",
+    "typescript": "^5.7.0"
+  }
+}

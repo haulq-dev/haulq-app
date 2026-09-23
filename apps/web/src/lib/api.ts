@@ -20,21 +20,20 @@
  * switching modes touches this file and nothing else.
  */
 
-import type { ApiError } from '@haulq/contracts';
+import {
+  createApiClient,
+  type RequestOptions,
+  type Session,
+} from '@haulq/client';
 import { currentToken, usingClerk } from './auth.ts';
 
-const BASE = import.meta.env['VITE_API_URL'] ?? '/api';
+// Request/error handling, the response shapes and the role/plan rules live in
+// `@haulq/client`, shared with `apps/mobile`. What stays here is only what is
+// specific to web: where the session is stored, and the dev-header auth mode.
+export { ApiRequestError } from '@haulq/client';
+export type { RequestOptions, Session };
 
-export interface Session {
-  userId: string;
-  /**
-   * Written `?: string | undefined` rather than `?: string` because the
-   * workspace runs with `exactOptionalPropertyTypes`, and clearing the selected
-   * carrier means assigning undefined rather than deleting the key.
-   */
-  orgId?: string | undefined;
-  orgName?: string | undefined;
-}
+const BASE = import.meta.env['VITE_API_URL'] ?? '/api';
 
 const SESSION_KEY = 'haulq.devSession';
 
@@ -65,320 +64,46 @@ async function authHeaders(session: Session | null): Promise<Record<string, stri
   return { 'X-HaulQ-User-Id': session.userId, ...org };
 }
 
-/**
- * A failed request, carrying the API's own explanation.
- *
- * The API guarantees an `explanation` on every error — guardrail 6 applies to
- * failures too. So the UI never has to invent prose from a status code, and
- * this class exists to make that guarantee reach the component that renders it.
- */
-export class ApiRequestError extends Error {
-  readonly status: number;
-  readonly code: string;
-  readonly explanation: string;
+export const apiClient = createApiClient({
+  baseUrl: BASE,
+  readSession,
+  authHeaders,
+  // Drop just the org, never the whole session: dev mode's `userId` still has
+  // to survive this. See `ApiClientConfig.onOrgUnresolved`.
+  onOrgUnresolved: (session) => writeSession({ userId: session.userId }),
+});
 
-  constructor(status: number, body: Partial<ApiError>) {
-    const explanation =
-      body.explanation ?? 'Something went wrong. Please try again.';
-    super(explanation);
-    this.name = 'ApiRequestError';
-    this.status = status;
-    this.code = body.code ?? 'unknown';
-    this.explanation = explanation;
-  }
-}
-
-export interface RequestOptions {
-  method?: string;
-  body?: unknown;
-  /** Sent as-is with the given content type, for the CSV upload. */
-  raw?: { body: BodyInit; contentType: string };
-  session?: Session | null;
-}
-
-export async function request<T>(
-  path: string,
-  options: RequestOptions = {},
-): Promise<T> {
-  const session = options.session !== undefined ? options.session : readSession();
-
-  const headers: Record<string, string> = { ...(await authHeaders(session)) };
-  let body: BodyInit | undefined;
-
-  if (options.raw) {
-    headers['Content-Type'] = options.raw.contentType;
-    body = options.raw.body;
-  } else if (options.body !== undefined) {
-    headers['Content-Type'] = 'application/json';
-    body = JSON.stringify(options.body);
-  }
-
-  const response = await fetch(`${BASE}${path}`, {
-    method: options.method ?? (body ? 'POST' : 'GET'),
-    headers,
-    // Spread rather than `body,` — under exactOptionalPropertyTypes an explicit
-    // `body: undefined` is not the same as omitting it, and RequestInit says
-    // omitted.
-    ...(body !== undefined ? { body } : {}),
-  });
-
-  if (response.status === 204) return undefined as T;
-
-  const text = await response.text();
-  const parsed = text ? (JSON.parse(text) as unknown) : undefined;
-
-  if (!response.ok) {
-    const errorBody = (parsed ?? {}) as Partial<ApiError>;
-
-    // The API answers "no active membership in this org" the same way it
-    // answers "your token is bad" — both are `code: 'unauthenticated'`, see
-    // `request-context.ts`. Either way, the org this session was pointed at
-    // no longer resolves for whoever is signed in: a Clerk account got
-    // deleted and recreated with a new id, an owner reassigned, whatever the
-    // cause. Left alone, every screen keeps sending the same stale org id
-    // and showing the same refusal forever, with no way out short of
-    // clearing localStorage by hand. Dropping just the org (never the whole
-    // session — dev mode's `userId` still has to survive this) sends the
-    // next render back to the account picker instead.
-    if (errorBody.code === 'unauthenticated' && session?.orgId) {
-      writeSession({ userId: session.userId });
-    }
-
-    throw new ApiRequestError(response.status, errorBody);
-  }
-
-  return parsed as T;
-}
-
-/**
- * Fetch bytes rather than JSON.
- *
- * A document preview cannot be an `<img src>` pointing at the API: the request
- * needs the tenant header and, under Clerk, a bearer token, and neither travels
- * on a plain element load. So the bytes come through here and the caller turns
- * them into an object URL.
- *
- * Errors still arrive as JSON — the API's envelope applies to failures on this
- * endpoint too — so a non-OK response is parsed as one rather than handed back
- * as a blob nobody can read.
- */
-export async function requestBlob(
-  path: string,
-  options: { session?: Session | null } = {},
-): Promise<Blob> {
-  const session = options.session !== undefined ? options.session : readSession();
-  const response = await fetch(`${BASE}${path}`, {
-    headers: await authHeaders(session),
-  });
-
-  if (!response.ok) {
-    const text = await response.text();
-    const parsed = text ? (JSON.parse(text) as Partial<ApiError>) : {};
-    throw new ApiRequestError(response.status, parsed);
-  }
-
-  return response.blob();
-}
+export const request = apiClient.request;
+export const requestBlob = apiClient.requestBlob;
 
 // ---------------------------------------------------------------------------
-// Shapes the API returns
+// Shapes the API returns. They live in `@haulq/client` now and are re-exported
+// so that no screen's import had to change.
 // ---------------------------------------------------------------------------
 
-export interface OnboardingStep {
-  id: string;
-  title: string;
-  done: boolean;
-  required: boolean;
-  unlocks: string;
-  consequence?: string;
-}
-
-export interface OnboardingStatus {
-  steps: OnboardingStep[];
-  completedRequired: number;
-  totalRequired: number;
-  ready: boolean;
-  factsReconciled: boolean;
-}
-
-export interface Truck {
-  id: string;
-  label: string;
-  equipment: string;
-  maxWeightLbs: number | null;
-  maxLengthFt: number | null;
-  boxHeightIn: number | null;
-  boxWidthIn: number | null;
-  capabilities: Record<string, boolean>;
-  shortHaulExempt: boolean;
-  /** Set once a carrier matches this truck to a vehicle in Motive. Null until then. */
-  motiveVehicleId: number | null;
-  /** False once taken out of service — see `setTruckActive`. Still referenced by its history. */
-  active: boolean;
-}
-
-export interface MotiveVehicle {
-  id: number;
-  /** The fleet's own identifier — "12", "Unit 12" — not Motive's internal id. */
-  number: string;
-  vin: string | null;
-}
-
-export interface MotiveMatchSuggestion {
-  truckId: string;
-  truckLabel: string;
-  motiveVehicleId: number;
-  motiveVehicleNumber: string;
-}
-
-export interface MotiveVehiclesResponse {
-  vehicles: MotiveVehicle[];
-  suggestions: MotiveMatchSuggestion[];
-}
-
-export interface CarrierProfile {
-  legalName: string;
-  dbaName: string | null;
-  mcNumber: string | null;
-  usdotNumber: string | null;
-  city: string | null;
-  state: string | null;
-  operatingFactsReconciledAt: string | null;
-  /** From `orgs.slug`. `docs+{slug}@docs.haulq.ai` is this org's inbound address. */
-  slug: string | null;
-  /** What the carrier hands out to brokers instead, forwarding into the address above. */
-  customDocsEmail: string | null;
-}
-
-export interface FactIssue {
-  field: string;
-  severity: 'error' | 'warning';
-  message: string;
-}
-
-export interface OperatingFactsResponse {
-  facts: Record<string, number>;
-  issues: FactIssue[];
-  completeForScoring: boolean;
-  reconciledAt: string | null;
-}
-
-export interface ImportBatch {
-  id: string;
-  status: string;
-  filename: string;
-  totalRows: number;
-  validRows: number;
-  invalidRows: number;
-  committedRows: number;
-}
-
-export interface MappingGuess {
-  header: string;
-  field: string | null;
-  confidence: number;
-}
-
-export interface UploadResponse {
-  batch: ImportBatch;
-  headers: string[];
-  suggestedMapping: MappingGuess[];
-  /** True when `suggestedMapping` came from a prior confirmed import with this exact header set, not a fresh guess. */
-  rememberedMapping: boolean;
-  sampleRows: Record<string, string>[];
-}
-
-export interface ImportRow {
-  rowNumber: number;
-  status: string;
-  raw: Record<string, string>;
-  errors: Array<{ field: string; severity: string; message: string }>;
-}
-
-export interface HistorySummary {
-  loadCount: number;
-  periodDays: number;
-  earliest: string | null;
-  latest: string | null;
-  totalRevenueCents: number;
-  totalMiles: number;
-  revenuePerMileCents: number | null;
-}
-
-/**
- * Roles, in the order they are offered.
- *
- * The repository enforces two rules this UI can only reflect, never replace:
- * an org always keeps at least one owner, and only an owner can create one.
- * Disabling a control is a courtesy; the API is what actually refuses.
- */
-export const ROLES = ['owner', 'dispatcher', 'driver', 'accountant'] as const;
-export type Role = (typeof ROLES)[number];
-
-export interface Member {
-  userId: string;
-  email: string;
-  fullName: string | null;
-  role: Role;
-  acceptedAt: string | null;
-}
-
-export interface Invitation {
-  id: string;
-  email: string;
-  role: Role;
-  driverId: string | null;
-  expiresAt: string;
-  createdAt: string;
-  invitedByUserId: string | null;
-}
-
-/**
- * True for an address the API minted rather than received.
- *
- * Duplicated from `identity.ts` rather than imported: `@haulq/db` is a server
- * package and must not reach the browser bundle. Fourteen characters of
- * duplication is a better trade than a dependency edge from web to db.
- */
-export function isPlaceholderEmail(email: string): boolean {
-  return email.endsWith('@users.clerk.invalid');
-}
-
-export const ENDORSEMENTS = [
-  'hazmat',
-  'tanker',
-  'doubles_triples',
-  'twic',
-  'passenger',
-] as const;
-export type Endorsement = (typeof ENDORSEMENTS)[number];
-
-export interface Driver {
-  id: string;
-  fullName: string;
-  phone: string | null;
-  email: string | null;
-  cdlNumber: string | null;
-  cdlState: string | null;
-  /** ISO 8601. Null when the carrier has not recorded one. */
-  cdlExpiresAt: string | null;
-  medicalCardExpiresAt: string | null;
-  endorsements: string[];
-  defaultTruckId: string | null;
-}
-
-export interface ExpiringCredential {
-  driverId: string;
-  driverName: string;
-  what: 'cdl' | 'medical_card';
-  expiresAt: string;
-}
-export interface TimelineEntry {
-  seq: string;
-  occurredAt: string;
-  verb: string;
-  subjectType: string;
-  explanation: string;
-  actorType: string;
-  actorId: string | null;
-}
+export {
+  ENDORSEMENTS,
+  ROLES,
+  isPlaceholderEmail,
+  type CarrierProfile,
+  type Driver,
+  type Endorsement,
+  type ExpiringCredential,
+  type FactIssue,
+  type HistorySummary,
+  type ImportBatch,
+  type ImportRow,
+  type Invitation,
+  type MappingGuess,
+  type Member,
+  type MotiveMatchSuggestion,
+  type MotiveVehicle,
+  type MotiveVehiclesResponse,
+  type OnboardingStatus,
+  type OnboardingStep,
+  type OperatingFactsResponse,
+  type Role,
+  type TimelineEntry,
+  type Truck,
+  type UploadResponse,
+} from '@haulq/client';

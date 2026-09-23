@@ -187,6 +187,26 @@ const EnvSchema = z.object({
   STRIPE_PRICE_FLEET_PER_TRUCK_MONTHLY: z.string().optional(),
 
   /**
+   * The paywall, enforced by the API itself. When `true`, `requireScope`
+   * refuses every tenant route with 402 `subscription_inactive` unless
+   * `orgs.status` is `active`. The only exceptions are routes that opt out
+   * because an unpaid org has to reach them to pay (`routes/billing.ts`).
+   *
+   * Before this existed, only `apps/web`'s `Shell.tsx` enforced the paywall.
+   * The mobile app and any direct API client never did. It defaults to off
+   * so that deploying it changes nothing on its own. Migration 0010 never
+   * backfilled `orgs.status`, so any org created before Billing still sits at
+   * the default `trialing` unless someone set it by hand. Turning this on
+   * without checking would cut off those orgs' drivers mid-load. Check first:
+   * `select id, name, status from orgs where status <> 'active' and deleted_at is null;`
+   * See MOBILE_PARITY_PLAN.md, M0.
+   */
+  REQUIRE_ACTIVE_SUBSCRIPTION: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
+
+  /**
    * `credential-crypto.ts`'s sealed-box keypair. Both optional together —
    * without them Motive's OAuth callback has nowhere safe to put the token
    * it just received, so it refuses rather than storing one unsealed.

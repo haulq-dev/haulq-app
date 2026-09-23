@@ -166,6 +166,18 @@ export async function setTestOrgPlan(
   await db.update(orgs).set({ plan: args.plan }).where(eq(orgs.id, args.orgId));
 }
 
+/**
+ * Set an org's subscription status directly, bypassing Stripe. This is the
+ * status counterpart to `setTestOrgPlan`, for the `REQUIRE_ACTIVE_SUBSCRIPTION`
+ * gate in `requireScope`.
+ */
+export async function setTestOrgStatus(
+  db: Database,
+  args: { orgId: string; status: 'trialing' | 'active' | 'past_due' | 'paused' | 'cancelled' },
+): Promise<void> {
+  await db.update(orgs).set({ status: args.status }).where(eq(orgs.id, args.orgId));
+}
+
 export async function getTestUser(
   db: Database,
   id: string,
