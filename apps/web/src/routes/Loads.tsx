@@ -583,18 +583,29 @@ function AddLoad({ trucks, onDone }: { trucks: Truck[]; onDone: () => void }) {
   );
 }
 
+/** Typing pause before a search re-queries the list, so it runs once after a dispatcher stops typing, not once per keystroke. */
+const SEARCH_DEBOUNCE_MS = 400;
+
 export function LoadsScreen() {
   const [adding, setAdding] = useState(false);
   const [filter, setFilter] = useState<LoadStatus | ''>('');
+  const [searchInput, setSearchInput] = useState('');
+  const [search, setSearch] = useState('');
   const session = useSession();
   const orgs = useOrgs();
 
+  useEffect(() => {
+    const id = setTimeout(() => setSearch(searchInput.trim()), SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(id);
+  }, [searchInput]);
+
   const loads = useInfiniteQuery({
-    queryKey: ['loads', filter],
+    queryKey: ['loads', filter, search],
     queryFn: ({ pageParam }: { pageParam: string | undefined }) =>
       request<LoadsResponse>(
         `/v1/loads?${new URLSearchParams({
           ...(filter ? { status: filter } : {}),
+          ...(search ? { search } : {}),
           ...(pageParam ? { cursor: pageParam } : {}),
         })}`,
       ),
@@ -632,22 +643,32 @@ export function LoadsScreen() {
         )}
       </div>
 
-      <div className="flex flex-wrap gap-1.5">
-        <button
-          className={`field-label border px-3 py-2 ${filter === '' ? 'border-ink bg-wash text-ink' : 'border-line text-mute hover:text-ink'}`}
-          onClick={() => setFilter('')}
-        >
-          All <Num value={Object.values(counts).reduce((a, b) => a + b, 0)} />
-        </button>
-        {LOAD_STATUSES.filter((s) => counts[s]).map((s) => (
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap gap-1.5">
           <button
-            key={s}
-            className={`field-label border px-3 py-2 ${filter === s ? 'border-ink bg-wash text-ink' : 'border-line text-mute hover:text-ink'}`}
-            onClick={() => setFilter(s)}
+            className={`field-label border px-3 py-2 ${filter === '' ? 'border-ink bg-wash text-ink' : 'border-line text-mute hover:text-ink'}`}
+            onClick={() => setFilter('')}
           >
-            {pretty(s)} <Num value={counts[s] ?? 0} />
+            All <Num value={Object.values(counts).reduce((a, b) => a + b, 0)} />
           </button>
-        ))}
+          {LOAD_STATUSES.filter((s) => counts[s]).map((s) => (
+            <button
+              key={s}
+              className={`field-label border px-3 py-2 ${filter === s ? 'border-ink bg-wash text-ink' : 'border-line text-mute hover:text-ink'}`}
+              onClick={() => setFilter(s)}
+            >
+              {pretty(s)} <Num value={counts[s] ?? 0} />
+            </button>
+          ))}
+        </div>
+
+        <input
+          type="search"
+          className="hq-input w-auto max-w-64"
+          placeholder="Search broker, load #, or reference"
+          value={searchInput}
+          onChange={(e) => setSearchInput(e.target.value)}
+        />
       </div>
 
       {adding && (
@@ -656,9 +677,14 @@ export function LoadsScreen() {
 
       <Card>
         {loads.isError && <ErrorNote error={loads.error} />}
+        {loads.isLoading && <Empty>Loading…</Empty>}
         {loads.data && items.length === 0 && (
           <Empty>
-            {filter ? `Nothing at ${pretty(filter)}.` : 'No loads yet.'}
+            {search
+              ? `Nothing matches "${search}".`
+              : filter
+                ? `Nothing at ${pretty(filter)}.`
+                : 'No loads yet.'}
           </Empty>
         )}
 

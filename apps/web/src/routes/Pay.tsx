@@ -878,6 +878,7 @@ export function PayScreen() {
 
       <Card>
         {invoices.isError && <ErrorNote error={invoices.error} />}
+        {invoices.isLoading && <Empty>Loading…</Empty>}
         {invoices.data && items.length === 0 && (
           <Empty>{filter ? `Nothing at ${pretty(filter)}.` : 'No invoices yet.'}</Empty>
         )}

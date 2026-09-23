@@ -299,6 +299,28 @@ suite('loads repository', () => {
       assert.ok(!ids.includes(offTruck.id));
     });
 
+    it('searches by broker name, broker load number, or reference', async () => {
+      const load = await createLoad(s, {
+        brokerName: 'Searchable Freight LLC',
+        brokerLoadNumber: 'BL-4471',
+        stops: wichitaToDenver,
+      });
+      const other = await createLoad(s, { brokerName: 'Unrelated Co', stops: wichitaToDenver });
+
+      const byBroker = await listLoads(s, { search: 'searchable' });
+      assert.ok(byBroker.items.some((l) => l.id === load.id));
+      assert.ok(!byBroker.items.some((l) => l.id === other.id));
+
+      const byLoadNumber = await listLoads(s, { search: 'bl-4471' });
+      assert.ok(byLoadNumber.items.some((l) => l.id === load.id));
+
+      const byReference = await listLoads(s, { search: String(load.reference) });
+      assert.ok(byReference.items.some((l) => l.id === load.id));
+
+      const noMatch = await listLoads(s, { search: 'no such thing anywhere' });
+      assert.ok(!noMatch.items.some((l) => l.id === load.id));
+    });
+
     it('never returns another tenant\'s loads', async () => {
       const mine = await createLoad(s, { brokerName: 'Isolation Co', stops: wichitaToDenver });
       await createLoad(other, { brokerName: 'Other Tenant Co', stops: wichitaToDenver });

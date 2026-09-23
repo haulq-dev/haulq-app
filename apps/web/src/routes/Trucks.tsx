@@ -634,6 +634,7 @@ export function TrucksScreen() {
 
       <Card>
         {trucks.isError && <ErrorNote error={trucks.error} />}
+        {trucks.isLoading && <Empty>Loading…</Empty>}
         {trucks.data && truckItems.length === 0 && (
           <Empty>No trucks yet. Nothing can be matched or assigned until one exists.</Empty>
         )}

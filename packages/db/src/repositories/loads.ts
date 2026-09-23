@@ -21,7 +21,7 @@
  * constraint fires and the carrier reads a constraint name.
  */
 
-import { and, asc, desc, eq, inArray, isNull, lt, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, ilike, inArray, isNull, lt, or, sql } from 'drizzle-orm';
 import { brokerMatchKey } from '@haulq/contracts';
 import type { Scope } from '../context.ts';
 import { recordEvent } from '../events/record.ts';
@@ -345,6 +345,8 @@ export interface ListLoadsQuery {
   truckId?: string | undefined;
   /** A driver-role caller's own loads. The route resolves and forces this — never trust one supplied by the client. */
   driverId?: string | undefined;
+  /** Matched against the broker's name, the broker's own load number, and the load's reference — whichever a dispatcher is holding when they go looking for it. */
+  search?: string | undefined;
   limit?: number | undefined;
   /** Opaque, from a previous call's `nextCursor`. Omit for the first page. */
   cursor?: string | undefined;
@@ -368,6 +370,16 @@ export async function listLoads(s: Scope, q: ListLoadsQuery = {}): Promise<Curso
   if (q.status?.length) conditions.push(inArray(loads.status, q.status));
   if (q.truckId) conditions.push(eq(loads.truckId, q.truckId));
   if (q.driverId) conditions.push(eq(loads.driverId, q.driverId));
+  if (q.search?.trim()) {
+    const term = `%${q.search.trim()}%`;
+    conditions.push(
+      or(
+        ilike(brokers.name, term),
+        ilike(loads.brokerLoadNumber, term),
+        sql`${loads.reference}::text ilike ${term}`,
+      )!,
+    );
+  }
   if (q.cursor) {
     const cursor = decodeCursor(q.cursor);
     const cursorDate = new Date(cursor.v);

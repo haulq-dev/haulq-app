@@ -352,6 +352,7 @@ export function DriversScreen() {
 
       <Card>
         {drivers.isError && <ErrorNote error={drivers.error} />}
+        {drivers.isLoading && <Empty>Loading…</Empty>}
         {drivers.data && list.length === 0 && (
           <Empty>
             No drivers yet. A load cannot be assigned until one exists.

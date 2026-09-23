@@ -407,6 +407,7 @@ export function MembersScreen() {
 
       <Card title="Members">
         {members.isError && <ErrorNote error={members.error} />}
+        {members.isLoading && <Empty>Loading…</Empty>}
         {members.data && list.length === 0 && <Empty>Nobody here yet.</Empty>}
 
         {list.length > 0 && (
@@ -444,6 +445,7 @@ export function MembersScreen() {
 
       <Card title="Invited, not yet joined">
         {invitationsQuery.isError && <ErrorNote error={invitationsQuery.error} />}
+        {invitationsQuery.isLoading && <Empty>Loading…</Empty>}
         {invitationsQuery.data && invitations.length === 0 && (
           <Empty>No invitations outstanding.</Empty>
         )}

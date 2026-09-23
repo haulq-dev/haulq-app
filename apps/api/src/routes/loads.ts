@@ -160,6 +160,7 @@ export async function driverScopeFor(s: Scope, request: FastifyRequest): Promise
 const ListLoadsQuerySchema = PageQuerySchema.extend({
   status: z.string().optional(),
   truckId: z.string().optional(),
+  search: z.string().optional(),
 });
 
 export async function loadRoutes(app: FastifyInstance) {
@@ -170,7 +171,7 @@ export async function loadRoutes(app: FastifyInstance) {
     { schema: { tags: ['Loads'], summary: 'List loads', querystring: ListLoadsQuerySchema } },
     async (request) => {
       const s = await requireScope(request);
-      const { status: statusParam, truckId, cursor, limit } = request.query;
+      const { status: statusParam, truckId, search, cursor, limit } = request.query;
 
       // Repeatable as `?status=booked&status=dispatched` or comma-separated —
       // both are what a hand-written link tends to contain.
@@ -190,6 +191,7 @@ export async function loadRoutes(app: FastifyInstance) {
           ...(status?.length ? { status } : {}),
           ...(truckId ? { truckId } : {}),
           ...(driverScope ? { driverId: driverScope } : {}),
+          ...(search ? { search } : {}),
           limit,
           ...(cursor ? { cursor } : {}),
         });
