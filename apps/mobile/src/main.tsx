@@ -30,7 +30,7 @@ import { createRoot } from 'react-dom/client';
 import { AuthGate, useSession } from './components/AuthGate.tsx';
 import { ErrorBoundary } from './components/ErrorBoundary.tsx';
 import { showsTabBar, TabBar, TabBarSpacer } from './components/Shell.tsx';
-import { apiClient } from './lib/api.ts';
+import { apiClient, readSession } from './lib/api.ts';
 import { AccountScreen } from './routes/Account.tsx';
 import { AutopilotScreen } from './routes/autopilot/AutopilotScreen.tsx';
 import { MessageScreen } from './routes/autopilot/MessageScreen.tsx';
@@ -181,6 +181,33 @@ declare module '@tanstack/react-router' {
  */
 CapacitorApp.addListener('appStateChange', ({ isActive }) => {
   if (isActive) void queryClient.invalidateQueries({ queryKey: queryKeys.outbound });
+});
+
+/**
+ * Query keys aren't org-scoped (`['loads', …]`, not `[orgId, 'loads', …]`),
+ * so a cached list from the previous carrier would otherwise keep rendering
+ * after "Switch account" or the picker writes a new `orgId` — and with
+ * `staleTime` above, wouldn't even refetch for a while. One listener here
+ * covers every writer (`OrgGate`, `SwitchAccountLink`, sign-out, invite
+ * accept) instead of each remembering to do it. The org list itself survives
+ * a switch — it's per-login, not per-org, and the picker needs it — but not a
+ * sign-out, since the next login may be someone else.
+ */
+let lastOrgId = readSession()?.orgId;
+window.addEventListener('haulq:session', () => {
+  const session = readSession();
+  if (!session) {
+    lastOrgId = undefined;
+    queryClient.clear();
+    return;
+  }
+  if (session.orgId === lastOrgId) return;
+  const switched = lastOrgId !== undefined;
+  lastOrgId = session.orgId;
+  queryClient.removeQueries({ predicate: (q) => q.queryKey[0] !== queryKeys.orgs[0] });
+  // A load or document open from the old carrier would 404 once refetched.
+  // Not on a first pick, which may be landing on a deep-linked screen.
+  if (switched) void router.navigate({ to: '/' });
 });
 
 /**
