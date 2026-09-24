@@ -236,10 +236,34 @@ export function OrgPicker() {
  */
 export function AccountMenu() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const session = useSession();
+  const orgs = useOrgs();
   if (!usingClerk) return null;
+
+  // "Switch account" drops the cached org without signing out, and `Shell`
+  // falls back to `OrgPicker`. It's hidden for a login with only one org,
+  // because for that login the picker would just offer the same org again.
+  const canSwitch = Boolean(session?.orgId) && (orgs.data?.items.length ?? 0) > 1;
+
   return (
     <UserButton afterSignOutUrl="/">
       <UserButton.MenuItems>
+        {canSwitch ? (
+          <UserButton.Action
+            label="Switch account"
+            labelIcon={
+              <svg viewBox="0 0 16 16" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden>
+                <path d="M3 5h9.5M10 2.5 12.5 5 10 7.5M13 11H3.5M6 8.5 3.5 11 6 13.5" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            }
+            onClick={() => {
+              writeSession({ userId: session!.userId });
+              void queryClient.invalidateQueries();
+              void navigate({ to: '/' });
+            }}
+          />
+        ) : null}
         <UserButton.Action
           label="Delete account"
           labelIcon={
