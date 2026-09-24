@@ -4,7 +4,8 @@
  * The claims worth a server for — things a repository test cannot reach
  * because they live in HTTP status codes, headers and the role gate:
  *
- *  - a driver is refused from every money-touching route
+ *  - a driver is refused from every money-touching route, reads included —
+ *    an invoice is what a load pays, and only the money roles see that
  *  - a malformed body comes back as 400 with a field-level message, not a
  *    500 or a raw Zod dump
  *  - the whole invoice → send → pay → factoring lifecycle works through real
@@ -22,6 +23,7 @@ import {
   destroyTestOrg,
   destroyTestUser,
   testScope,
+  type TestRole,
 } from '@haulq/db';
 import type { FastifyInstance } from 'fastify';
 import { loadEnv } from '../env.ts';
@@ -33,6 +35,8 @@ const suite = url ? describe : describe.skip;
 let app: FastifyInstance;
 let userId: string;
 let driverId: string;
+let dispatcherId: string;
+let accountantId: string;
 const createdOrgs: string[] = [];
 
 const as = (orgId: string, actingUserId = userId) => ({
@@ -55,6 +59,11 @@ async function newOrg(name: string): Promise<string> {
 async function asDriver(orgId: string) {
   await addTestMembership(app.db, { orgId, userId: driverId, role: 'driver' });
   return as(orgId, driverId);
+}
+
+async function asRole(orgId: string, actingUserId: string, role: TestRole) {
+  await addTestMembership(app.db, { orgId, userId: actingUserId, role });
+  return as(orgId, actingUserId);
 }
 
 /** A truck and a delivered load, direct through the db package — the route
@@ -97,12 +106,16 @@ suite('pay routes', () => {
     app = await buildServer(loadEnv({ ...process.env, NODE_ENV: 'test', DATABASE_URL: url! }));
     userId = (await createTestUser(app.db)).id;
     driverId = (await createTestUser(app.db)).id;
+    dispatcherId = (await createTestUser(app.db)).id;
+    accountantId = (await createTestUser(app.db)).id;
   });
 
   after(async () => {
     for (const id of createdOrgs) await destroyTestOrg(app.db, id);
     await destroyTestUser(app.db, userId);
     await destroyTestUser(app.db, driverId);
+    await destroyTestUser(app.db, dispatcherId);
+    await destroyTestUser(app.db, accountantId);
     await app.close();
   });
 
@@ -159,6 +172,65 @@ suite('pay routes', () => {
       payload: { loadId: load.id, lineItems },
     });
     assert.equal(attempt.statusCode, 403);
+  });
+
+  it('refuses every invoice and factoring read to a driver, and still serves the money roles', async () => {
+    const orgId = await newOrg('Pay Reads Carrier');
+    const load = await aDeliveredLoad(orgId);
+
+    const factor = (
+      await app.inject({
+        method: 'POST',
+        url: '/v1/factoring-companies',
+        headers: as(orgId),
+        payload: { name: 'Read Gate Capital' },
+      })
+    ).json();
+    const invoice = (
+      await app.inject({
+        method: 'POST',
+        url: '/v1/invoices',
+        headers: as(orgId),
+        payload: { loadId: load.id, lineItems },
+      })
+    ).json();
+    await app.inject({ method: 'POST', url: `/v1/invoices/${invoice.id}/send`, headers: as(orgId) });
+    const packet = (
+      await app.inject({
+        method: 'POST',
+        url: '/v1/factoring-packets',
+        headers: as(orgId),
+        payload: { invoiceId: invoice.id, factoringCompanyId: factor.id, documentIds: [] },
+      })
+    ).json();
+
+    const reads = [
+      '/v1/invoices',
+      '/v1/invoices/receivables-aging',
+      `/v1/invoices/${invoice.id}`,
+      `/v1/invoices/${invoice.id}/payments`,
+      '/v1/factoring-companies',
+      '/v1/factoring-packets',
+      `/v1/factoring-packets/${packet.id}`,
+    ];
+
+    const driverHeaders = await asDriver(orgId);
+    for (const url of reads) {
+      const res = await app.inject({ method: 'GET', url, headers: driverHeaders });
+      assert.equal(res.statusCode, 403, `driver GET ${url}`);
+    }
+
+    const roles = [
+      ['owner', as(orgId)],
+      ['dispatcher', await asRole(orgId, dispatcherId, 'dispatcher')],
+      ['accountant', await asRole(orgId, accountantId, 'accountant')],
+    ] as const;
+    for (const [role, headers] of roles) {
+      for (const url of reads) {
+        const res = await app.inject({ method: 'GET', url, headers });
+        assert.equal(res.statusCode, 200, `${role} GET ${url}`);
+      }
+    }
   });
 
   it('returns 400 with a field-level message for a malformed body', async () => {

@@ -148,6 +148,7 @@ export async function payRoutes(app: FastifyInstance) {
     { schema: { tags: ['Pay'], summary: 'List invoices', querystring: InvoicesQuerySchema } },
     async (request) => {
       const s = await requireScope(request);
+      requireRole(request, 'owner', 'dispatcher', 'accountant');
       const { status: statusParam, loadId, cursor, limit } = request.query;
 
       const status = statusParam
@@ -175,6 +176,7 @@ export async function payRoutes(app: FastifyInstance) {
     { schema: { tags: ['Pay'], summary: 'Receivables aging buckets' } },
     async (request) => {
       const s = await requireScope(request);
+      requireRole(request, 'owner', 'dispatcher', 'accountant');
       return { buckets: await receivablesAging(s) };
     },
   );
@@ -184,6 +186,7 @@ export async function payRoutes(app: FastifyInstance) {
     { schema: { tags: ['Pay'], summary: 'Get an invoice', params: IdParamSchema } },
     async (request) => {
       const s = await requireScope(request);
+      requireRole(request, 'owner', 'dispatcher', 'accountant');
       const { id } = request.params;
       const invoice = await getInvoice(s, id);
       if (!invoice) throw new HttpError(404, 'not_found', 'That invoice is not in this account.');
@@ -196,6 +199,7 @@ export async function payRoutes(app: FastifyInstance) {
     { schema: { tags: ['Pay'], summary: "An invoice's payments", params: IdParamSchema } },
     async (request) => {
       const s = await requireScope(request);
+      requireRole(request, 'owner', 'dispatcher', 'accountant');
       const { id } = request.params;
       return { items: await listPayments(s, id) };
     },
@@ -296,6 +300,7 @@ export async function payRoutes(app: FastifyInstance) {
     { schema: { tags: ['Pay'], summary: 'List factoring companies', querystring: PageQuerySchema } },
     async (request) => {
       const s = await requireScope(request);
+      requireRole(request, 'owner', 'dispatcher', 'accountant');
       const { cursor, limit } = request.query;
       try {
         return await listFactoringCompanies(s, { ...(cursor ? { cursor } : {}), limit });
@@ -327,6 +332,7 @@ export async function payRoutes(app: FastifyInstance) {
     { schema: { tags: ['Pay'], summary: 'List factoring packets', querystring: FactoringPacketsQuerySchema } },
     async (request) => {
       const s = await requireScope(request);
+      requireRole(request, 'owner', 'dispatcher', 'accountant');
       const { invoiceId, status: statusParam, cursor, limit } = request.query;
 
       const status = statusParam
@@ -351,6 +357,7 @@ export async function payRoutes(app: FastifyInstance) {
     { schema: { tags: ['Pay'], summary: 'Get a factoring packet', params: IdParamSchema } },
     async (request) => {
       const s = await requireScope(request);
+      requireRole(request, 'owner', 'dispatcher', 'accountant');
       const { id } = request.params;
       const packet = await getFactoringPacket(s, id);
       if (!packet) throw new HttpError(404, 'not_found', 'That factoring packet is not in this account.');
