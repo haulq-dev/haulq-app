@@ -180,9 +180,11 @@ export function OrgPicker() {
         {items.length ? 'Which account?' : 'Set up your carrier'}
       </h1>
       <p className="mb-8 max-w-prose text-slate">
-        {items.length
+        {items.length > 1
           ? 'You have access to more than one. Pick the one you are working in.'
-          : 'You are signed in but not on any account yet. Create one, or ask whoever invited you to send the link again.'}
+          : items.length === 1
+            ? 'Pick the account to work in.'
+            :'You are signed in but not on any account yet. Create one, or ask whoever invited you to send the link again.'}
       </p>
 
       <div className="space-y-2">

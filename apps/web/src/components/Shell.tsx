@@ -10,11 +10,12 @@
 import { Link, useRouterState } from '@tanstack/react-router';
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { request, writeSession } from '../lib/api.ts';
+import { readSession, request, writeSession } from '../lib/api.ts';
 import { usingClerk } from '../lib/auth.ts';
 import { AccountMenu, OrgPicker, useOrgs, useSession } from './AuthGate.tsx';
 import { Logo } from './Logo.tsx';
 import { PlansScreen } from './PlansScreen.tsx';
+import { ErrorNote } from './ui.tsx';
 
 /**
  * Grouped, not one flat list.
@@ -254,6 +255,7 @@ function NavDropdown({ label, items, pathname }: { label: string; items: readonl
 export function Shell({ children }: { children: ReactNode }) {
   const session = useSession();
   const orgs = useOrgs();
+  const queryClient = useQueryClient();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const [menuOpen, setMenuOpen] = useState(false);
 
@@ -263,6 +265,42 @@ export function Shell({ children }: { children: ReactNode }) {
    * picker above; reading the same query here costs nothing extra.
    */
   const currentOrg = orgs.data?.items.find((o) => o.id === session?.orgId);
+
+  /**
+   * The saved org isn't one this login belongs to. That happens when a
+   * different login signs in on the same browser, because sign-out doesn't
+   * clear the saved org, or when a membership was removed. Without this the
+   * `!currentOrg` branch below shows "Loading…" forever. A login with exactly
+   * one org goes straight into it, which is then the Plans screen if the org
+   * isn't paid. Otherwise the saved org is cleared and `OrgPicker` asks.
+   * The mobile app's `SubscriptionGate` handles the same case.
+   *
+   * It decides from a fresh fetch, not the cached list. Right after "Create
+   * a carrier account" the cache doesn't have the new org yet, and acting
+   * on it would throw the person out of the org they just made.
+   */
+  const orgGone = Boolean(session?.orgId) && orgs.isSuccess && !currentOrg;
+  const refetchOrgs = orgs.refetch;
+  useEffect(() => {
+    if (!orgGone) return;
+    let cancelled = false;
+    void refetchOrgs().then((res) => {
+      const latest = readSession();
+      if (cancelled || !res.isSuccess || !latest?.orgId) return;
+      const items = res.data.items;
+      if (items.some((o) => o.id === latest.orgId)) return;
+      const only = items.length === 1 ? items[0] : undefined;
+      writeSession(
+        only
+          ? { userId: latest.userId, orgId: only.id, orgName: only.name }
+          : { userId: latest.userId },
+      );
+      void queryClient.invalidateQueries();
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [orgGone, refetchOrgs, queryClient]);
 
   /**
    * Close on navigation.
@@ -358,6 +396,13 @@ export function Shell({ children }: { children: ReactNode }) {
       <main className="mx-auto max-w-6xl px-4 py-6 sm:px-6 sm:py-8">
         {!session?.orgId ? (
           <OrgPicker />
+        ) : !currentOrg && orgs.isError ? (
+          <div className="space-y-3">
+            <ErrorNote error={orgs.error} />
+            <button type="button" className="hq-btn hq-btn-ghost" onClick={() => void orgs.refetch()}>
+              Try again
+            </button>
+          </div>
         ) : !currentOrg ? (
           // Covers both "still loading" and "just created, `orgs` hasn't
           // refetched yet" — either way this org's status is unknown, and
