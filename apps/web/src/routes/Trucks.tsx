@@ -581,7 +581,7 @@ export function TrucksScreen() {
   const [adding, setAdding] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const trucks = useInfiniteQuery({
-    queryKey: ['trucks'],
+    queryKey: ['trucks', 'list'],
     queryFn: ({ pageParam }: { pageParam: string | undefined }) =>
       request<{ items: Truck[]; nextCursor: string | null }>(
         `/v1/trucks${pageParam ? `?cursor=${encodeURIComponent(pageParam)}` : ''}`,

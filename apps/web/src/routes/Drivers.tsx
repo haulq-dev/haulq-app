@@ -304,7 +304,7 @@ export function DriversScreen() {
   const orgs = useOrgs();
 
   const drivers = useInfiniteQuery({
-    queryKey: ['drivers'],
+    queryKey: ['drivers', 'list'],
     queryFn: ({ pageParam }: { pageParam: string | undefined }) =>
       request<{ items: Driver[]; nextCursor: string | null }>(
         `/v1/drivers${pageParam ? `?cursor=${encodeURIComponent(pageParam)}` : ''}`,
@@ -313,8 +313,8 @@ export function DriversScreen() {
     getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
   });
 
-  // Needed for the "usual truck" select, and cheap — the same query the Trucks
-  // screen uses, so react-query serves it from cache when arriving from there.
+  // Needed for the "usual truck" select. Keyed apart from the Trucks screen's
+  // paged ['trucks', 'list'] — the two cache entries have different shapes.
   const trucks = useQuery({
     queryKey: ['trucks'],
     queryFn: () => request<{ items: Truck[] }>('/v1/trucks'),
