@@ -410,6 +410,25 @@ export function Shell({ children }: { children: ReactNode }) {
           // 'active'` below renders the real app; every other outcome,
           // including this one, blocks it.
           <p className="text-mute">Loading…</p>
+        ) : currentOrg.status !== 'active' && currentOrg.role !== 'owner' ? (
+          // Only an owner can subscribe (the checkout route requires it), so
+          // showing plans to anyone else offers a button that can't work.
+          // Same screen as the mobile app's `InactiveScreen`.
+          <div className="mx-auto max-w-md space-y-4 py-10">
+            <h1 className="text-2xl">Account not active</h1>
+            <p className="text-slate">
+              {currentOrg.name}'s HaulQ account isn't active right now. Check with your
+              carrier's owner.
+            </p>
+            <button
+              type="button"
+              className="hq-btn hq-btn-ghost"
+              disabled={orgs.isFetching}
+              onClick={() => void orgs.refetch()}
+            >
+              {orgs.isFetching ? 'Checking…' : 'Check again'}
+            </button>
+          </div>
         ) : currentOrg.status !== 'active' ? (
           <PlansScreen pastDue={currentOrg.status === 'past_due'} />
         ) : (
