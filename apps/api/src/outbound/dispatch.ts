@@ -36,6 +36,7 @@ import {
   annotateOutbound,
   claimForSending,
   createOutbound,
+  expireOutboundIfPending,
   getDocument,
   getInvoiceRenderFacts,
   getMailboxConnection,
@@ -54,6 +55,7 @@ import {
 } from '@haulq/db';
 import {
   clampMode,
+  expiryDaysFor,
   isOutboundAction,
   MAX_OUTBOUND_ATTACHMENT_BYTES,
   MAX_OUTBOUND_ATTACHMENTS,
@@ -75,7 +77,8 @@ export class OutboundError extends Error {
     | 'invalid_attachment'
     | 'sending_disabled'
     | 'not_found'
-    | 'wrong_state';
+    | 'wrong_state'
+    | 'expired';
   constructor(code: OutboundError['code'], message: string) {
     super(message);
     this.name = 'OutboundError';
@@ -303,6 +306,18 @@ export async function approveOutbound(
   if (!existing) throw new OutboundError('not_found', 'That message no longer exists.');
   if (existing.status !== 'pending_approval') {
     throw new OutboundError('wrong_state', `That message is ${existing.status}, not waiting for approval.`);
+  }
+
+  // A draft that has outlived its usefulness is withdrawn rather than sent:
+  // a reminder approved a month late describes an invoice that no longer
+  // looks like that. The row is marked expired, so it also stops appearing
+  // as something waiting.
+  if (isOutboundAction(existing.actionType)) {
+    const days = expiryDaysFor(existing.actionType);
+    if (days !== null && Date.now() - existing.createdAt.getTime() > days * 86_400_000) {
+      await expireOutboundIfPending(s, id);
+      throw new OutboundError('expired', 'That message is too old to send — the situation it describes has likely changed.');
+    }
   }
 
   // The kill switch is checked again here: an approval a day later must not

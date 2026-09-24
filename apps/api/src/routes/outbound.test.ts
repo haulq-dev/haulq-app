@@ -412,6 +412,165 @@ suite('outbound', () => {
     await destroyTestUser(app.db, dispatcher.id);
   });
 
+  // --- what the review screen needs ---------------------------------------------------
+
+  type SettingsBody = {
+    sendingEnabled: boolean;
+    autopilotRunning: boolean;
+    modes: Record<string, string>;
+    configured: Record<string, string>;
+    actions: Array<{ type: string; available: boolean; maxMode: string }>;
+  };
+  const settingsOf = async (orgId: string) =>
+    (await app.inject({ method: 'GET', url: '/v1/outbound/settings', headers: as(orgId) })).json() as SettingsBody;
+
+  it('says which actions are real today, and whether the loop is running at all', async () => {
+    const orgId = await newOrg('Outbound Settings Shape Co');
+
+    const body = await settingsOf(orgId);
+
+    const real = body.actions.filter((a) => a.available).map((a) => a.type).sort();
+    assert.deepEqual(real, ['invoice_delivery', 'payment_reminder']);
+    assert.equal(body.autopilotRunning, false, 'AUTOPILOT_POLL_MS is 0 unless the server sets it');
+  });
+
+  it('tells "off" apart from "preview": modes reads shadow either way, configured does not', async () => {
+    const orgId = await newOrg('Outbound Off Versus Shadow Co');
+    await putSettings(orgId, { modes: { payment_reminder: 'shadow' } });
+
+    const body = await settingsOf(orgId);
+
+    assert.equal(body.modes['payment_reminder'], 'shadow');
+    assert.equal(body.modes['invoice_delivery'], 'shadow');
+    assert.deepEqual(body.configured, { payment_reminder: 'shadow' });
+  });
+
+  it('turns an action off by removing its setting — and records that it was turned off', async () => {
+    const orgId = await newOrg('Outbound Clear Setting Co');
+    await putSettings(orgId, { modes: { payment_reminder: 'draft', invoice_delivery: 'shadow' } });
+
+    const res = await app.inject({ method: 'DELETE', url: '/v1/outbound/settings/payment_reminder', headers: as(orgId) });
+
+    assert.equal(res.statusCode, 204);
+    const body = await settingsOf(orgId);
+    assert.deepEqual(body.configured, { invoice_delivery: 'shadow' }, 'only the one asked for is cleared');
+    const timeline = (await app.inject({ method: 'GET', url: '/v1/timeline', headers: as(orgId) })).json().items as Array<{
+      verb: string;
+      explanation: string;
+    }>;
+    assert.ok(timeline.some((e) => e.verb === 'outbound.mode_changed' && /off/i.test(e.explanation)));
+
+    // Clearing what is already off is not an error: the screen can be a beat behind.
+    const again = await app.inject({ method: 'DELETE', url: '/v1/outbound/settings/payment_reminder', headers: as(orgId) });
+    assert.equal(again.statusCode, 204);
+  });
+
+  it('only lets the owner turn an action off, and refuses an action that is not registered', async () => {
+    const orgId = await newOrg('Outbound Clear Roles Co');
+    await putSettings(orgId, { modes: { payment_reminder: 'shadow' } });
+    const dispatcher = await createTestUser(app.db);
+    await addTestMembership(app.db, { orgId, userId: dispatcher.id, role: 'dispatcher' });
+
+    const denied = await app.inject({
+      method: 'DELETE',
+      url: '/v1/outbound/settings/payment_reminder',
+      headers: as(orgId, dispatcher.id),
+    });
+    const unknown = await app.inject({ method: 'DELETE', url: '/v1/outbound/settings/wire_transfer', headers: as(orgId) });
+
+    assert.equal(denied.statusCode, 403);
+    assert.equal(unknown.statusCode, 400);
+    assert.deepEqual((await settingsOf(orgId)).configured, { payment_reminder: 'shadow' });
+    await destroyTestUser(app.db, dispatcher.id);
+  });
+
+  it("does not let one carrier clear another carrier's setting", async () => {
+    const a = await newOrg('Outbound Clear Tenant A');
+    const b = await newOrg('Outbound Clear Tenant B');
+    await putSettings(a, { modes: { payment_reminder: 'shadow' } });
+
+    await app.inject({ method: 'DELETE', url: '/v1/outbound/settings/payment_reminder', headers: as(b) });
+
+    assert.deepEqual((await settingsOf(a)).configured, { payment_reminder: 'shadow' });
+  });
+
+  it('returns what a message is about, so a card can link to it', async () => {
+    const orgId = await newOrg('Outbound Related Co');
+    const loadId = randomUUID();
+    await send(orgId, { relatedType: 'load', relatedId: loadId });
+    await send(orgId, { subject: 'Nothing in particular', dedupeKey: 'unrelated' });
+
+    const list = (await app.inject({ method: 'GET', url: '/v1/outbound/messages', headers: as(orgId) })).json()
+      .messages as Array<{ subject: string; relatedType: string | null; relatedId: string | null }>;
+
+    const linked = list.find((m) => m.subject === 'Load 1042')!;
+    assert.equal(linked.relatedType, 'load');
+    assert.equal(linked.relatedId, loadId);
+    const plain = list.find((m) => m.subject === 'Nothing in particular')!;
+    assert.equal(plain.relatedType, null);
+    assert.equal(plain.relatedId, null);
+  });
+
+  // --- the invoice preview ----------------------------------------------------------------
+
+  async function anInvoice(orgId: string): Promise<{ id: string; reference: number }> {
+    const truck = await app.inject({ method: 'POST', url: '/v1/trucks', headers: as(orgId), payload: { label: 'Truck 1' } });
+    const load = await app.inject({
+      method: 'POST',
+      url: '/v1/loads',
+      headers: as(orgId),
+      payload: {
+        status: 'delivered',
+        truckId: truck.json().id,
+        brokerName: 'Prairie Freight',
+        rate: { amount: 240_000, currency: 'USD' },
+        stops: [
+          { type: 'pickup', city: 'Wichita', state: 'KS' },
+          { type: 'delivery', city: 'Denver', state: 'CO' },
+        ],
+      },
+    });
+    assert.equal(load.statusCode, 201);
+    const inv = await app.inject({
+      method: 'POST',
+      url: '/v1/invoices',
+      headers: as(orgId),
+      payload: {
+        loadId: load.json().id,
+        lineItems: [{ code: 'linehaul', description: 'Linehaul', amountCents: 240_000 }],
+      },
+    });
+    assert.equal(inv.statusCode, 201);
+    return inv.json();
+  }
+
+  it('serves the invoice as a PDF — the same renderer the email attaches', async () => {
+    const orgId = await newOrg('Outbound Invoice Pdf Co');
+    const invoice = await anInvoice(orgId);
+
+    const res = await app.inject({ method: 'GET', url: `/v1/invoices/${invoice.id}/pdf`, headers: as(orgId) });
+
+    assert.equal(res.statusCode, 200);
+    assert.equal(res.headers['content-type'], 'application/pdf');
+    assert.ok(String(res.headers['content-disposition']).includes(`Invoice-${invoice.reference}.pdf`));
+    assert.equal(res.rawPayload.subarray(0, 5).toString('latin1'), '%PDF-');
+  });
+
+  it("does not serve another carrier's invoice PDF, or one to a role that may not see money", async () => {
+    const mine = await newOrg('Outbound Invoice Pdf Mine Co');
+    const theirs = await newOrg('Outbound Invoice Pdf Theirs Co');
+    const invoice = await anInvoice(theirs);
+    const driver = await createTestUser(app.db);
+    await addTestMembership(app.db, { orgId: theirs, userId: driver.id, role: 'driver' });
+
+    const foreign = await app.inject({ method: 'GET', url: `/v1/invoices/${invoice.id}/pdf`, headers: as(mine) });
+    const asDriver = await app.inject({ method: 'GET', url: `/v1/invoices/${invoice.id}/pdf`, headers: as(theirs, driver.id) });
+
+    assert.equal(foreign.statusCode, 404);
+    assert.equal(asDriver.statusCode, 403);
+    await destroyTestUser(app.db, driver.id);
+  });
+
   // --- attachments ---------------------------------------------------------------------
 
   /** A document with real bytes in storage and a matching checksum — unless the test says otherwise. */

@@ -22,6 +22,7 @@ import {
   type OutboxMessage,
 } from '@haulq/db';
 import { detentionAlertEmail } from '../email/detention-alert-email.ts';
+import { awaitingApprovalEmail } from '../email/awaiting-approval-email.ts';
 import { exceptionAlertEmail } from '../email/exception-alert-email.ts';
 import { inviteEmail, type InvitePayload } from '../email/invite-email.ts';
 import { MailerError, type Mailer } from '../email/postmark.ts';
@@ -295,6 +296,70 @@ function exceptionAlertHandler(deps: HandlerDeps): OutboxHandler {
   };
 }
 
+/** Enough of the payload to notify on, or nothing. */
+function asAwaitingApproval(message: OutboxMessage): { count: number; waiting: number } | null {
+  const p = message.payload as Partial<{ count: number; waiting: number }>;
+  if (typeof p.count !== 'number' || typeof p.waiting !== 'number') return null;
+  return { count: p.count, waiting: p.waiting };
+}
+
+/**
+ * Tell whoever can approve that autopilot drafted something. One event per
+ * organisation per pass (see `raiseAwaitingApproval`), so this is one email
+ * per person per pass however many drafts there were. Sent to owners and
+ * dispatchers — the same two roles that can approve.
+ *
+ * The event is raised only when something is *newly* waiting, and the loop
+ * never re-announces a draft it already announced, so a backlog does not
+ * become a daily nag; the count in the email carries the backlog instead.
+ */
+function awaitingApprovalHandler(deps: HandlerDeps): OutboxHandler {
+  return async (message) => {
+    const notice = asAwaitingApproval(message);
+    if (!notice) {
+      deps.log.warn(
+        { seq: message.seq.toString(), topic: message.topic },
+        'awaiting-approval notice skipped: payload missing fields',
+      );
+      return;
+    }
+
+    const s = scope(deps.db, {
+      orgId: message.orgId,
+      actor: { type: 'system', name: 'outbox-consumer' },
+      correlationId: randomUUID(),
+    });
+
+    const [org, members] = await Promise.all([getOrg(s), listAllMembers(s)]);
+    const recipients = members.filter((m) => m.role === 'owner' || m.role === 'dispatcher');
+    if (recipients.length === 0) {
+      deps.log.warn({ seq: message.seq.toString(), orgId: message.orgId }, 'awaiting-approval notice has nobody to send to');
+      return;
+    }
+
+    for (const recipient of recipients) {
+      const email = awaitingApprovalEmail(
+        { to: recipient.email, orgName: org?.name ?? 'your carrier', count: notice.count, waiting: notice.waiting },
+        deps.webOrigin,
+      );
+      try {
+        await deps.mailer.send({ ...email, metadata: { outboxSeq: message.seq.toString(), orgId: message.orgId } });
+      } catch (error) {
+        if (error instanceof MailerError && !error.retryable) {
+          deps.log.warn(
+            { seq: message.seq.toString(), to: recipient.email, status: error.status },
+            'awaiting-approval notice permanently rejected for this recipient — not retrying',
+          );
+          continue;
+        }
+        throw error;
+      }
+    }
+
+    deps.log.info({ seq: message.seq.toString(), recipients: recipients.length }, 'awaiting-approval notice sent');
+  };
+}
+
 /** Enough of the payload to alert on, or nothing. */
 function asDetentionAlert(
   message: OutboxMessage,
@@ -504,6 +569,7 @@ export function buildOutboxHandlers(deps: HandlerDeps): Record<string, OutboxHan
     'track.exception_alerted': exceptionAlertHandler(deps),
     'track.detention_alerted': detentionAlertHandler(deps),
     'broker.verification_changed': verificationChangedHandler(deps),
+    'outbound.awaiting_approval': awaitingApprovalHandler(deps),
   };
 }
 
@@ -558,6 +624,7 @@ export function buildOutboxGroups(deps: HandlerDeps): OutboxGroup[] {
         'track.exception_alerted': exceptionAlertHandler(deps),
         'track.detention_alerted': detentionAlertHandler(deps),
         'broker.verification_changed': verificationChangedHandler(deps),
+        'outbound.awaiting_approval': awaitingApprovalHandler(deps),
       },
       batchSize: 20,
       leaseSeconds: 300,

@@ -21,7 +21,7 @@ import {
   type OutboxMessage,
 } from '@haulq/db';
 import type { Email, Mailer } from '../email/postmark.ts';
-import { buildOutboxHandlers, type HandlerDeps } from './handlers.ts';
+import { buildOutboxGroups, buildOutboxHandlers, type HandlerDeps } from './handlers.ts';
 
 const url = process.env['DATABASE_URL'];
 const suite = url ? describe : describe.skip;
@@ -211,6 +211,97 @@ suite('detentionAlertHandler', () => {
   it('skips a message missing a required field rather than throwing', async () => {
     const { mailer, handle } = handler();
     await handle(detentionMessage({ payload: { reference: 42, stopSeq: 1 } }));
+    assert.equal(mailer.sent.length, 0);
+  });
+});
+
+suite('awaitingApprovalHandler', () => {
+  before(async () => {
+    db = createDatabase({ url: url! });
+    const org = await createTestOrg(db, 'Awaiting Approval Test Carrier');
+    orgId = org.id;
+    const owner = await createTestUser(db);
+    ownerId = owner.id;
+    ownerEmail = owner.email;
+    const dispatcher = await createTestUser(db);
+    dispatcherId = dispatcher.id;
+    dispatcherEmail = dispatcher.email;
+    const driver = await createTestUser(db);
+    driverId = driver.id;
+    driverEmail = driver.email;
+    await addTestMembership(db, { orgId, userId: ownerId, role: 'owner' });
+    await addTestMembership(db, { orgId, userId: dispatcherId, role: 'dispatcher' });
+    await addTestMembership(db, { orgId, userId: driverId, role: 'driver' });
+  });
+
+  after(async () => {
+    await destroyTestOrg(db, orgId);
+    await destroyTestUser(db, ownerId);
+    await destroyTestUser(db, dispatcherId);
+    await destroyTestUser(db, driverId);
+    await closeDatabase(db);
+  });
+
+  const notice = (payload: Record<string, unknown> = { count: 2, waiting: 5 }): OutboxMessage => ({
+    seq: 1n,
+    orgId,
+    eventSeq: null,
+    topic: 'outbound.awaiting_approval',
+    attempts: 1,
+    payload,
+  });
+
+  function deps(mailer: FakeMailer): HandlerDeps {
+    return {
+      mailer,
+      webOrigin: 'http://localhost:5173',
+      db,
+      storage: {} as never,
+      reader: {} as never,
+      log: { info: () => {}, warn: () => {} },
+    };
+  }
+
+  function handler() {
+    const mailer = new FakeMailer();
+    return { mailer, handle: buildOutboxHandlers(deps(mailer))['outbound.awaiting_approval']! };
+  }
+
+  it('emails every owner and dispatcher once, and not the driver', async () => {
+    const { mailer, handle } = handler();
+    await handle(notice());
+
+    const recipients = mailer.sent.map((e) => e.to).sort();
+    assert.deepEqual(recipients, [dispatcherEmail, ownerEmail].sort());
+    assert.ok(!recipients.includes(driverEmail));
+  });
+
+  it('says how many, links to the Autopilot screen, and names no amount or broker', async () => {
+    const { mailer, handle } = handler();
+    await handle(notice());
+
+    const email = mailer.sent[0]!;
+    assert.match(email.subject, /5 messages waiting/);
+    assert.match(email.text, /2 messages/);
+    assert.match(email.text, /3 from before/);
+    assert.match(email.text, /http:\/\/localhost:5173\/autopilot/);
+    assert.doesNotMatch(email.text + email.html, /\$\d/);
+  });
+
+  it('reads singular when there is exactly one', async () => {
+    const { mailer, handle } = handler();
+    await handle(notice({ count: 1, waiting: 1 }));
+    assert.match(mailer.sent[0]!.subject, /^1 message waiting/);
+  });
+
+  it('is registered in the fast group, so it is not stuck behind document reading', () => {
+    const fast = buildOutboxGroups(deps(new FakeMailer())).find((g) => g.name === 'fast')!;
+    assert.ok('outbound.awaiting_approval' in fast.handlers);
+  });
+
+  it('skips a message missing its counts rather than throwing', async () => {
+    const { mailer, handle } = handler();
+    await handle(notice({}));
     assert.equal(mailer.sent.length, 0);
   });
 });

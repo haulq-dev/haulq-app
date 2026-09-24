@@ -726,6 +726,27 @@ export const eventCatalog = {
     describe: (p) => `Rejected a drafted message to ${p.to}.`,
   }),
 
+  /**
+   * One per org per autopilot pass, not one per draft: the loop can prepare
+   * a dozen messages in one sweep, and a dozen emails is how a notification
+   * gets muted. `waiting` is the whole queue as it stands, so the email says
+   * what is actually there rather than only what this pass added. The topic
+   * is what makes an approval queue something a person hears about instead
+   * of a place they have to remember to look.
+   */
+  'outbound.awaiting_approval': define<{ count: number; waiting: number }>({
+    subjectType: 'org',
+    describe: (p) =>
+      `Autopilot prepared ${p.count} message${p.count === 1 ? '' : 's'} for your approval ` +
+      `(${p.waiting} waiting in all).`,
+    topic: 'outbound.awaiting_approval',
+  }),
+
+  'outbound.expired': define<{ actionType: string; to: string; subject: string }>({
+    subjectType: 'outbound_message',
+    describe: (p) => `Withdrew the drafted message to ${p.to} ("${p.subject}") — it went out of date before anyone approved it.`,
+  }),
+
   'outbound.sending_changed': define<{ enabled: boolean }>({
     subjectType: 'mailbox_connection',
     describe: (p) =>

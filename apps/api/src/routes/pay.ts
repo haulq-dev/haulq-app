@@ -30,6 +30,7 @@ import {
   generateInvoice,
   getFactoringPacket,
   getInvoice,
+  getInvoiceRenderFacts,
   invoiceCounts,
   listFactoringCompanies,
   listFactoringPackets,
@@ -48,6 +49,7 @@ import {
 import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { renderInvoicePdf } from '../invoices/pdf.ts';
 import { HttpError, requireRole, requireScope } from '../plugins/request-context.ts';
 
 /** Postgres SQLSTATEs this route knows how to explain. Same as `loads.ts`. */
@@ -191,6 +193,32 @@ export async function payRoutes(app: FastifyInstance) {
       const invoice = await getInvoice(s, id);
       if (!invoice) throw new HttpError(404, 'not_found', 'That invoice is not in this account.');
       return { invoice };
+    },
+  );
+
+  /**
+   * The invoice as the PDF a broker receives. The same renderer the outbound
+   * choke point uses at send time, so what a reviewer previews is what gets
+   * attached — nothing else produces an invoice PDF. Rendered fresh on every
+   * request from the invoice as it stands, never stored.
+   *
+   * Money roles only: an invoice is a rate, and the driver and viewer roles
+   * are not meant to see what a load pays.
+   */
+  server.get(
+    '/v1/invoices/:id/pdf',
+    { schema: { tags: ['Pay'], summary: 'The invoice as a PDF', params: IdParamSchema } },
+    async (request, reply) => {
+      const s = await requireScope(request);
+      requireRole(request, 'owner', 'dispatcher', 'accountant');
+      const facts = await getInvoiceRenderFacts(s, request.params.id);
+      if (!facts) throw new HttpError(404, 'not_found', 'That invoice is not in this account.');
+      const body = await renderInvoicePdf(facts);
+      return reply
+        .header('content-type', 'application/pdf')
+        .header('content-disposition', `inline; filename="Invoice-${facts.reference}.pdf"`)
+        .header('cache-control', 'private, no-store')
+        .send(body);
     },
   );
 

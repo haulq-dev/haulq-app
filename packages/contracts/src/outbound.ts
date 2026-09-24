@@ -32,9 +32,9 @@ const MODE_RANK: Record<OutboundMode, number> = { shadow: 0, draft: 1, act: 2 };
 
 export const OUTBOUND_ACTIONS = {
   /** The owner sending themselves a message to prove the connection works. */
-  test: { label: 'Test message', maxMode: 'act' },
+  test: { label: 'Test message', maxMode: 'act', available: false },
   /** Chasing a broker for a missing POD/BOL on a delivered load. */
-  pod_chase: { label: 'Chase a missing POD', maxMode: 'act' },
+  pod_chase: { label: 'Chase a missing POD', maxMode: 'act', available: false },
   /**
    * Delivering an invoice for a delivered load with its documents in hand.
    *
@@ -44,14 +44,17 @@ export const OUTBOUND_ACTIONS = {
    * held for a person's approval. Raise to `act` only after a carrier has
    * seen enough approved invoices to trust the amounts it works out.
    */
-  invoice_delivery: { label: 'Send an invoice', maxMode: 'draft' },
+  invoice_delivery: { label: 'Send an invoice', maxMode: 'draft', available: true },
   /** A reminder on an invoice past due. */
-  payment_reminder: { label: 'Payment reminder', maxMode: 'act' },
+  payment_reminder: { label: 'Payment reminder', maxMode: 'act', available: true, expiresAfterDays: 7 },
   /** Anything to a broker that is not routine — a person reads it first. */
-  broker_message: { label: 'Message to a broker', maxMode: 'draft' },
+  broker_message: { label: 'Message to a broker', maxMode: 'draft', available: false },
   /** A detention claim: it asserts money owed, so it is never unattended. */
-  detention_claim: { label: 'Detention claim', maxMode: 'draft' },
-} as const satisfies Record<string, { label: string; maxMode: OutboundMode }>;
+  detention_claim: { label: 'Detention claim', maxMode: 'draft', available: false },
+} as const satisfies Record<
+  string,
+  { label: string; maxMode: OutboundMode; available: boolean; expiresAfterDays?: number }
+>;
 
 export type OutboundActionType = keyof typeof OUTBOUND_ACTIONS;
 
@@ -63,6 +66,17 @@ export const OutboundModeSchema = z.enum(OUTBOUND_MODES);
 
 export function isOutboundAction(value: string): value is OutboundActionType {
   return Object.hasOwn(OUTBOUND_ACTIONS, value);
+}
+
+/**
+ * How long a drafted message stays worth approving, or null if it never
+ * goes stale. A payment reminder says "10 days overdue"; approved a month
+ * later it would be wrong about a different invoice state entirely, so it
+ * expires. An invoice for a delivered load does not — what it bills is a
+ * snapshot that stays true.
+ */
+export function expiryDaysFor(action: OutboundActionType): number | null {
+  return (OUTBOUND_ACTIONS[action] as { expiresAfterDays?: number }).expiresAfterDays ?? null;
 }
 
 /** The most autonomous mode an action type may ever run in. */
@@ -83,6 +97,7 @@ export const OUTBOUND_STATUSES = [
   'sent',
   'failed',
   'rejected',
+  'expired',
 ] as const;
 export type OutboundStatus = (typeof OUTBOUND_STATUSES)[number];
 
@@ -142,6 +157,9 @@ export const OutboundMessageSchema = z.object({
   subject: z.string(),
   body: z.string(),
   attachments: z.array(OutboundAttachmentInfoSchema),
+  /** What this is about — 'load', 'broker' — so a screen can link to it. Null if nothing in particular. */
+  relatedType: z.string().nullable(),
+  relatedId: z.string().uuid().nullable(),
   error: z.string().nullable(),
   sentAt: z.string().datetime().nullable(),
   createdAt: z.string().datetime(),
@@ -151,3 +169,36 @@ export type OutboundMessage = z.infer<typeof OutboundMessageSchema>;
 export const ListOutboundQuerySchema = z.object({
   status: z.enum(OUTBOUND_STATUSES).optional(),
 });
+
+// --- the settings response --------------------------------------------------
+
+export const OutboundActionInfoSchema = z.object({
+  type: OutboundActionTypeSchema,
+  label: z.string(),
+  maxMode: OutboundModeSchema,
+  /** True only if a loop actually drives this today — the screen shows nothing else. */
+  available: z.boolean(),
+});
+export type OutboundActionInfo = z.infer<typeof OutboundActionInfoSchema>;
+
+export const OutboundSettingsResponseSchema = z.object({
+  /** The kill switch, as it stands. False means every message is held. */
+  sendingEnabled: z.boolean(),
+  /**
+   * Whether the loop that produces messages is running on this deployment at
+   * all. It is off unless the server sets `AUTOPILOT_POLL_MS`; without this a
+   * carrier could configure everything perfectly and nothing would happen.
+   */
+  autopilotRunning: z.boolean(),
+  /** What each action *effectively* runs as: unset reads as `shadow`, and a stored value above the ceiling reads as the ceiling. */
+  modes: z.record(OutboundActionTypeSchema, OutboundModeSchema),
+  /**
+   * Only the actions the carrier has explicitly set. An action absent here is
+   * **off** — the loop does not visit a carrier for it at all, which is not
+   * the same as `shadow` (recorded, never sent). `modes` cannot tell those two
+   * apart; this can.
+   */
+  configured: z.record(OutboundActionTypeSchema, OutboundModeSchema),
+  actions: z.array(OutboundActionInfoSchema),
+});
+export type OutboundSettingsResponse = z.infer<typeof OutboundSettingsResponseSchema>;

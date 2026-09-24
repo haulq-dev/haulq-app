@@ -17,13 +17,16 @@
 import {
   ListOutboundQuerySchema,
   OUTBOUND_ACTIONS,
+  OutboundActionTypeSchema,
   OutboundMessageSchema,
   UpdateOutboundSettingsSchema,
   clampMode,
   type OutboundMessage,
-  type OutboundSettings,
+  type OutboundMode,
+  type OutboundSettingsResponse,
 } from '@haulq/contracts';
 import {
+  clearAutonomyMode,
   getOutboundSettings,
   listAllMembers,
   listOutbound,
@@ -39,6 +42,7 @@ import { approveOutbound, OutboundError, rejectDraft, sendAsCarrier } from '../o
 import { HttpError, requireRole, requireScope } from '../plugins/request-context.ts';
 
 const IdParamSchema = z.object({ id: z.string().uuid() });
+const ActionParamSchema = z.object({ actionType: OutboundActionTypeSchema });
 
 function toMessage(row: OutboundMessageRow): OutboundMessage {
   return OutboundMessageSchema.parse({
@@ -58,6 +62,8 @@ function toMessage(row: OutboundMessageRow): OutboundMessage {
       contentType: a.contentType,
       byteSize: a.byteSize,
     })),
+    relatedType: row.relatedType,
+    relatedId: row.relatedId,
     error: row.error,
     sentAt: row.sentAt?.toISOString() ?? null,
     createdAt: row.createdAt.toISOString(),
@@ -66,7 +72,7 @@ function toMessage(row: OutboundMessageRow): OutboundMessage {
 
 function rethrow(err: unknown): never {
   if (err instanceof OutboundError) {
-    const status = err.code === 'not_found' ? 404 : err.code === 'sending_disabled' ? 409 : err.code === 'wrong_state' ? 409 : 422;
+    const status = err.code === 'not_found' ? 404 : err.code === 'sending_disabled' ? 409 : err.code === 'wrong_state' || err.code === 'expired' ? 409 : 422;
     throw new HttpError(status, err.code, err.message);
   }
   if (err instanceof OutboundStateError) {
@@ -88,22 +94,29 @@ export async function outboundRoutes(app: FastifyInstance) {
 
       // Every registered action appears, with its effective mode: unset is
       // shadow, and a stored mode above the ceiling reads as the ceiling.
+      // `configured` is what the carrier actually set — an action missing
+      // from it is off, which `modes` cannot say (it reads as shadow).
+      const keys = Object.keys(OUTBOUND_ACTIONS) as Array<keyof typeof OUTBOUND_ACTIONS>;
       const modes = Object.fromEntries(
-        (Object.keys(OUTBOUND_ACTIONS) as Array<keyof typeof OUTBOUND_ACTIONS>).map((action) => [
-          action,
-          clampMode(action, (stored.modes[action] as 'shadow' | 'draft' | 'act' | undefined) ?? 'shadow'),
-        ]),
-      ) as OutboundSettings['modes'];
+        keys.map((action) => [action, clampMode(action, (stored.modes[action] as OutboundMode | undefined) ?? 'shadow')]),
+      ) as OutboundSettingsResponse['modes'];
+      const configured = Object.fromEntries(
+        keys.filter((action) => stored.modes[action] !== undefined).map((action) => [action, modes[action]]),
+      ) as OutboundSettingsResponse['configured'];
 
-      return {
+      const response: OutboundSettingsResponse = {
         sendingEnabled: stored.sendingEnabled,
+        autopilotRunning: app.env.AUTOPILOT_POLL_MS > 0,
         modes,
-        actions: Object.entries(OUTBOUND_ACTIONS).map(([type, a]) => ({
+        configured,
+        actions: keys.map((type) => ({
           type,
-          label: a.label,
-          maxMode: a.maxMode,
+          label: OUTBOUND_ACTIONS[type].label,
+          maxMode: OUTBOUND_ACTIONS[type].maxMode,
+          available: OUTBOUND_ACTIONS[type].available,
         })),
       };
+      return response;
     },
   );
 
@@ -139,6 +152,23 @@ export async function outboundRoutes(app: FastifyInstance) {
         rethrow(err);
       }
       return { ok: true };
+    },
+  );
+
+  server.delete(
+    '/v1/outbound/settings/:actionType',
+    {
+      schema: {
+        tags: ['Outbound'],
+        summary: 'Turn an action off — the system stops preparing it at all',
+        params: ActionParamSchema,
+      },
+    },
+    async (request, reply) => {
+      const s = await requireScope(request);
+      requireRole(request, 'owner');
+      await clearAutonomyMode(s, request.params.actionType);
+      return reply.code(204).send();
     },
   );
 

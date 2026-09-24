@@ -23,6 +23,7 @@ import { after, before, describe, it } from 'node:test';
 import {
   addTestDocument,
   addTestFactoringPacket,
+  backdateTestOutbound,
   createTestUser,
   destroyTestOrg,
   destroyTestUser,
@@ -573,6 +574,110 @@ suite('delivered-to-paid loop', () => {
     await pass({ invoiceGraceHours: 24 });
 
     assert.equal((await messages(orgId)).length, 0);
+  });
+
+  // --- telling the carrier, and not letting drafts go stale ---------------------------
+
+  const timeline = async (orgId: string, verb: string) =>
+    ((await app.inject({ method: 'GET', url: '/v1/timeline?limit=200', headers: as(orgId) })).json().items as Array<{
+      verb: string;
+      explanation: string;
+    }>).filter((e) => e.verb === verb);
+
+  it('raises one "awaiting approval" event per pass, however many drafts it made', async () => {
+    const orgId = await invoicingOrg('Autopilot Awaiting Once Co');
+    await aDeliveredLoad(orgId, { email: 'ap@one.example.com' });
+    await aDeliveredLoad(orgId, { email: 'ap@two.example.com' });
+    await aDeliveredLoad(orgId, { email: 'ap@three.example.com' });
+
+    const first = await pass();
+
+    assert.equal(first.awaiting, 3);
+    const events = await timeline(orgId, 'outbound.awaiting_approval');
+    assert.equal(events.length, 1, 'three drafts, one notification');
+    assert.match(events[0]!.explanation, /3 messages/);
+
+    // Nothing new, nothing announced: a backlog is not re-announced every pass.
+    const second = await pass();
+    assert.equal(second.awaiting, 0);
+    assert.equal((await timeline(orgId, 'outbound.awaiting_approval')).length, 1);
+  });
+
+  it('does not raise the event for a shadow preview, which needs no approval', async () => {
+    const orgId = await newOrg('Autopilot No Awaiting For Shadow Co');
+    await putSettings(orgId, { modes: { payment_reminder: 'shadow' } });
+    const load = await aDeliveredLoad(orgId, { email: 'ap@shadow.example.com' });
+    await anOverdueInvoice(orgId, load, 10);
+
+    const summary = await pass();
+
+    assert.equal(summary.recorded, 1);
+    assert.equal(summary.awaiting, 0);
+    assert.equal((await timeline(orgId, 'outbound.awaiting_approval')).length, 0);
+  });
+
+  it('withdraws a reminder nobody approved within a week, and drafts a current one in its place', async () => {
+    const orgId = await newOrg('Autopilot Reminder Expiry Co');
+    await connectMailbox(orgId);
+    await putSettings(orgId, { sendingEnabled: true, modes: { payment_reminder: 'draft' } });
+    const load = await aDeliveredLoad(orgId, { email: 'ap@stale.example.com' });
+    await anOverdueInvoice(orgId, load, 10);
+
+    await pass();
+    const [old] = await messages(orgId);
+    assert.equal(old!.status, 'pending_approval');
+
+    const later = await pass({ now: new Date(Date.now() + 8 * DAY) });
+
+    assert.equal(later.expired, 1);
+    const all = await messages(orgId);
+    assert.equal(all.find((m) => m.id === old!.id)!.status, 'expired');
+    assert.equal(all.filter((m) => m.status === 'pending_approval').length, 1, 'a fresh one replaces it');
+    assert.equal((await timeline(orgId, 'outbound.expired')).length, 1);
+  });
+
+  it('leaves an unapproved invoice email alone however old — an invoice does not go stale', async () => {
+    const orgId = await invoicingOrg('Autopilot Invoice No Expiry Co');
+    await aDeliveredLoad(orgId, { email: 'ap@keep.example.com' });
+    await pass();
+
+    // The pass visits every opted-in carrier in the database, so its totals
+    // include other tests' reminders; only this carrier's message is asserted.
+    await pass({ now: new Date(Date.now() + 30 * DAY) });
+
+    assert.equal((await messages(orgId))[0]!.status, 'pending_approval');
+  });
+
+  it('refuses to approve a reminder past its week, and marks it expired', async () => {
+    const orgId = await newOrg('Autopilot Approve Stale Co');
+    await connectMailbox(orgId);
+    await putSettings(orgId, { sendingEnabled: true, modes: { payment_reminder: 'draft' } });
+    const load = await aDeliveredLoad(orgId, { email: 'ap@late.example.com' });
+    await anOverdueInvoice(orgId, load, 10);
+    await pass();
+    const [m] = await messages(orgId);
+    unipile.sent = [];
+    await backdateTestOutbound(app.db, m!.id, 8);
+
+    const res = await app.inject({ method: 'POST', url: '/v1/outbound/messages/' + m!.id + '/approve', headers: as(orgId) });
+
+    assert.equal(res.statusCode, 409);
+    assert.equal(res.json().error?.code ?? res.json().code, 'expired');
+    assert.equal(unipile.sent.length, 0, 'nothing went out');
+    assert.equal((await messages(orgId))[0]!.status, 'expired');
+  });
+
+  it('skips an action the carrier has cleared, and drafts nothing for it', async () => {
+    const orgId = await newOrg('Autopilot Cleared Action Co');
+    await putSettings(orgId, { modes: { payment_reminder: 'shadow' } });
+    const load = await aDeliveredLoad(orgId, { email: 'ap@cleared.example.com' });
+    await anOverdueInvoice(orgId, load, 10);
+    const del = await app.inject({ method: 'DELETE', url: '/v1/outbound/settings/payment_reminder', headers: as(orgId) });
+    assert.equal(del.statusCode, 204);
+
+    await pass();
+
+    assert.equal((await messages(orgId)).length, 0, 'off means the carrier is not visited for it at all');
   });
 
   // --- tenancy -----------------------------------------------------------------------

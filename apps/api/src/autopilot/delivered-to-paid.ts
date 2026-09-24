@@ -28,16 +28,18 @@
 
 import { randomUUID } from 'node:crypto';
 import {
+  expirePendingOutbound,
   findDeliveredUninvoiced,
   findOverdueInvoices,
   generateInvoice,
   listAutopilotOrgs,
   PayError,
+  raiseAwaitingApproval,
   scope,
   type AutopilotOrg,
   type Database,
 } from '@haulq/db';
-import type { OutboundAttachmentRef } from '@haulq/contracts';
+import { expiryDaysFor, type OutboundAttachmentRef } from '@haulq/contracts';
 import type { RuntimeLog } from '../runtime.ts';
 import {
   isDeliverableAddress,
@@ -73,6 +75,10 @@ export interface PassSummary {
   recorded: number;
   /** Of those, how many actually left. */
   sent: number;
+  /** Drafts newly waiting on a person — what the carrier is told about. */
+  awaiting: number;
+  /** Drafts withdrawn because they went stale before anyone approved them. */
+  expired: number;
   /** Why something was left alone — the count is how a carrier finds out what the loop declined to guess at. */
   skipped: Record<string, number>;
 }
@@ -82,7 +88,7 @@ export const DELIVERED_TO_PAID_ACTIONS = ['invoice_delivery', 'payment_reminder'
 
 export async function runDeliveredToPaidPass(options: DeliveredToPaidOptions): Promise<PassSummary> {
   const now = options.now ?? new Date();
-  const summary: PassSummary = { orgs: 0, recorded: 0, sent: 0, skipped: {} };
+  const summary: PassSummary = { orgs: 0, recorded: 0, sent: 0, awaiting: 0, expired: 0, skipped: {} };
   const skip = (reason: string) => {
     summary.skipped[reason] = (summary.skipped[reason] ?? 0) + 1;
   };
@@ -116,6 +122,32 @@ async function runOrg(
     actor: { type: 'system', name: 'autopilot' },
     correlationId: randomUUID(),
   });
+
+  // Counted per org, then announced once at the end of the org's pass: three
+  // drafts from one pass is one email to the owner, not three. In a
+  // `finally` because a pass that fails halfway has still left drafts
+  // behind, and the next pass would find them already handled and never
+  // announce them.
+  const counter = { awaiting: 0 };
+  try {
+    await draftForOrg(options, org, s, now, summary, skip, counter);
+  } finally {
+    if (counter.awaiting > 0) {
+      summary.awaiting += counter.awaiting;
+      await raiseAwaitingApproval(s, counter.awaiting);
+    }
+  }
+}
+
+async function draftForOrg(
+  options: DeliveredToPaidOptions,
+  org: AutopilotOrg,
+  s: ReturnType<typeof scope>,
+  now: Date,
+  summary: PassSummary,
+  skip: (reason: string) => void,
+  counter: { awaiting: number },
+): Promise<void> {
   const sender = { carrierName: org.carrierName, mcNumber: org.mcNumber };
 
   const record = async (input: Parameters<typeof sendAsCarrier>[2]) => {
@@ -123,6 +155,7 @@ async function runOrg(
       const result = await sendAsCarrier(options.deps, s, input);
       if (result.created) summary.recorded += 1;
       if (result.sent) summary.sent += 1;
+      if (result.created && result.message.status === 'pending_approval') counter.awaiting += 1;
       if (!result.created) skip('already_handled');
     } catch (err) {
       // A message that should never have been built — most often a broker
@@ -203,6 +236,17 @@ async function runOrg(
 
   // --- past due --------------------------------------------------------------------
   if (org.modes['payment_reminder']) {
+    // Before drafting this week's, withdraw the ones nobody acted on: last
+    // week's "3 days overdue" must not sit beside this week's "10 days".
+    const days = expiryDaysFor('payment_reminder');
+    if (days !== null) {
+      summary.expired += await expirePendingOutbound(
+        s,
+        'payment_reminder',
+        new Date(now.getTime() - days * DAY_MS),
+      );
+    }
+
     const overdue = await findOverdueInvoices(options.db, org.orgId, now, {
       minDaysOverdue: options.reminderAfterDays ?? 3,
       maxDaysOverdue: options.reminderStopsAfterDays ?? 60,

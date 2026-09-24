@@ -21,6 +21,7 @@ import { eventLog, eventOutbox } from './schema/events.ts';
 import { brokers } from './schema/brokers.ts';
 import { documents } from './schema/documents.ts';
 import { loads } from './schema/loads.ts';
+import { outboundMessages } from './schema/outbound.ts';
 import { factoringCompanies, factoringPackets } from './schema/pay.ts';
 import { orgInvitations, orgMemberships, orgs, users } from './schema/tenancy.ts';
 import { brokerVerifications } from './schema/verify.ts';
@@ -399,4 +400,12 @@ export async function rejectTestDocument(db: Database, documentId: string): Prom
     .update(documents)
     .set({ status: 'rejected', rejectionReason: 'test: rejected after the fact' })
     .where(eq(documents.id, documentId));
+}
+
+/** Age an outbound message — what a draft ignored for days looks like, without waiting. */
+export async function backdateTestOutbound(db: Database, messageId: string, daysAgo: number): Promise<void> {
+  await db
+    .update(outboundMessages)
+    .set({ createdAt: new Date(Date.now() - daysAgo * 86_400_000) })
+    .where(eq(outboundMessages.id, messageId));
 }
