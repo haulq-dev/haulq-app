@@ -14,7 +14,7 @@
  */
 
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { NearbyStopsResponse } from '@haulq/contracts';
+import type { NearbyMechanicsResponse, NearbyStopsResponse } from '@haulq/contracts';
 import { createContext, createElement, useContext, type ReactNode } from 'react';
 import type { ApiClient } from './client.ts';
 import type {
@@ -26,6 +26,7 @@ import type {
   LoadTrackingView,
 } from './loads.ts';
 import type { DocumentsPage, DocumentRow } from './documents.ts';
+import type { MechanicSearch } from './places.ts';
 import { modeForPosition, type ActionPosition, type MailboxStatus, type OutboundEvidenceResponse, type OutboundMessage, type OutboundSettingsResponse } from './outbound.ts';
 import type { CarrierProfile, Driver, OrgSummary, Truck } from './types.ts';
 
@@ -53,7 +54,8 @@ export const queryKeys = {
   load: (id: string) => ['load', id] as const,
   loadMargin: (id: string) => ['load-margin', id] as const,
   loadTracking: (id: string) => ['load-tracking', id] as const,
-  nearbyStops: (id: string) => ['nearby-stops', id] as const,
+  nearbyStops: (id: string, radiusMiles?: number) => ['nearby-stops', id, radiusMiles ?? null] as const,
+  mechanics: (search: MechanicSearch | null) => ['mechanics', search] as const,
   trucks: ['trucks'] as const,
   drivers: ['drivers'] as const,
   brokerVerification: (id: string) => ['broker-verification', id] as const,
@@ -132,12 +134,40 @@ export function useLoadTracking(id: string) {
   });
 }
 
-/** On demand only (`enabled`), because each call is a live HERE lookup per stop. */
-export function useNearbyStops(id: string, enabled: boolean) {
+/**
+ * Repair shops near a point, live from Yelp. Idle until there is a search:
+ * each one is a Yelp call, so it runs when someone asks, not as they type.
+ */
+export function useNearbyMechanics(search: MechanicSearch | null) {
   const client = useApiClient();
   return useQuery({
-    queryKey: queryKeys.nearbyStops(id),
-    queryFn: () => client.request<NearbyStopsResponse>(`/v1/loads/${id}/nearby-stops`),
+    queryKey: queryKeys.mechanics(search),
+    queryFn: () => {
+      const s = search!;
+      return client.request<NearbyMechanicsResponse>(
+        `/v1/mechanics/nearby?${new URLSearchParams({
+          lat: String(s.lat),
+          lng: String(s.lng),
+          radiusMiles: String(s.radiusMiles),
+          query: s.query,
+          ...(s.categories ? { categories: s.categories } : {}),
+        })}`,
+      );
+    },
+    enabled: search !== null,
+    staleTime: 10 * 60_000,
+  });
+}
+
+/** On demand only (`enabled`), because each call is a live HERE lookup per stop. */
+export function useNearbyStops(id: string, enabled: boolean, radiusMiles?: number) {
+  const client = useApiClient();
+  return useQuery({
+    queryKey: queryKeys.nearbyStops(id, radiusMiles),
+    queryFn: () =>
+      client.request<NearbyStopsResponse>(
+        `/v1/loads/${id}/nearby-stops${radiusMiles ? `?radiusMiles=${radiusMiles}` : ''}`,
+      ),
     enabled,
     staleTime: 10 * 60_000,
   });

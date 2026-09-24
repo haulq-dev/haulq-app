@@ -15,6 +15,7 @@ import { ApiRequestError, request, type Driver, type Truck } from '../lib/api.ts
 import { useOrgs, useSession } from '../components/AuthGate.tsx';
 import { Card, Empty, ErrorNote, Field, Label, Money, Num, Pill } from '../components/ui.tsx';
 import { pretty, STATUS_TONE, CoordinateLookup, type Load } from './Loads.tsx';
+import { NearbyMechanicsCard, NearbyStopsCard } from './LoadPlaces.tsx';
 import type { LoadFeasibilityResponse } from '@haulq/contracts';
 
 interface LoadMargin {
@@ -1017,6 +1018,8 @@ export function LoadDetailScreen() {
       )}
       {canWrite && <EditLoadStops key={l.id} load={l} />}
       {canWrite && <CheckFeasibility load={l} trucks={trucks.data?.items ?? []} />}
+      {canWrite && <NearbyStopsCard key={`stops-${l.id}`} load={l} />}
+      {canWrite && <NearbyMechanicsCard key={`shops-${l.id}`} load={l} />}
       {canWrite && l.brokerId && l.brokerName && (
         <>
           <VerifyBroker key={`verify-${l.brokerId}`} brokerId={l.brokerId} brokerName={l.brokerName} />
