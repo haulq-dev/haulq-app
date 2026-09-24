@@ -167,6 +167,9 @@ export const OutboundMessageSchema = z.object({
   /** What this is about — 'load', 'broker' — so a screen can link to it. Null if nothing in particular. */
   relatedType: z.string().nullable(),
   relatedId: z.string().uuid().nullable(),
+  /** A person's verdict on a preview: was this what they would have wanted sent? Null until someone looks. */
+  verdict: z.enum(['right', 'wrong']).nullable(),
+  verdictNote: z.string().nullable(),
   error: z.string().nullable(),
   sentAt: z.string().datetime().nullable(),
   createdAt: z.string().datetime(),
@@ -209,3 +212,53 @@ export const OutboundSettingsResponseSchema = z.object({
   actions: z.array(OutboundActionInfoSchema),
 });
 export type OutboundSettingsResponse = z.infer<typeof OutboundSettingsResponseSchema>;
+
+// --- evidence ----------------------------------------------------------------------
+//
+// `FEATURE_REQUESTS_PLAN.md` section 8 says an action moves from preview to
+// approval to automatic on the carrier's own evidence. This is that evidence:
+// their marks on previews, and what they did with drafts held for approval.
+
+export const OUTBOUND_VERDICTS = ['right', 'wrong'] as const;
+export type OutboundVerdict = (typeof OUTBOUND_VERDICTS)[number];
+
+export const MarkOutboundSchema = z.object({
+  verdict: z.enum(OUTBOUND_VERDICTS),
+  /** Why it was wrong, in the reviewer's words. Optional; a short sentence is the point. */
+  note: z.string().trim().max(500).optional(),
+});
+export type MarkOutbound = z.infer<typeof MarkOutboundSchema>;
+
+/**
+ * How much history is enough to *offer* a step up. Never applied for the
+ * carrier: the screen shows the count and the carrier makes the change.
+ *
+ *  - `rightPreviews`: previews marked right before offering to ask first.
+ *  - `approvals`: drafts approved before offering to send automatically.
+ *  - `window`: how many of the latest verdicts (or decisions) must be clean.
+ *    One old mistake should not block a step up forever, and one new one
+ *    should hold it back.
+ */
+export const PROMOTION_EVIDENCE = { rightPreviews: 5, approvals: 10, window: 10 } as const;
+
+export const OutboundEvidenceSchema = z.object({
+  previewRight: z.number().int(),
+  previewWrong: z.number().int(),
+  /** Previews still sitting there with no verdict. */
+  previewUnmarked: z.number().int(),
+  /** Wrong marks among the latest `PROMOTION_EVIDENCE.window` marked previews. */
+  recentPreviewWrong: z.number().int(),
+  /** Drafts a person approved. */
+  approved: z.number().int(),
+  /** Drafts a person rejected. */
+  rejected: z.number().int(),
+  /** Rejections among the latest `PROMOTION_EVIDENCE.window` decisions. */
+  recentRejected: z.number().int(),
+});
+export type OutboundEvidence = z.infer<typeof OutboundEvidenceSchema>;
+
+export const OutboundEvidenceResponseSchema = z.object({
+  /** Only actions with any history at all appear. */
+  actions: z.record(z.string(), OutboundEvidenceSchema),
+});
+export type OutboundEvidenceResponse = z.infer<typeof OutboundEvidenceResponseSchema>;

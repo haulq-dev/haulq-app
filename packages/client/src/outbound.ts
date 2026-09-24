@@ -13,7 +13,9 @@
 import {
   isOutboundAction,
   OUTBOUND_ACTIONS,
+  PROMOTION_EVIDENCE,
   type OutboundActionInfo,
+  type OutboundEvidence,
   type OutboundMessage,
   type OutboundMode,
   type OutboundSettingsResponse,
@@ -23,10 +25,13 @@ export type {
   OutboundActionInfo,
   OutboundActionType,
   OutboundAttachmentInfo,
+  OutboundEvidence,
+  OutboundEvidenceResponse,
   OutboundMessage,
   OutboundMode,
   OutboundSettingsResponse,
   OutboundStatus,
+  OutboundVerdict,
 } from '@haulq/contracts';
 
 /** `GET /v1/mailbox`. `status` is 'not_connected' when this org has never started. */
@@ -174,6 +179,80 @@ export function relatedLabel(message: Pick<OutboundMessage, 'relatedType'>): str
   if (message.relatedType === 'load') return 'About a load';
   if (message.relatedType === 'broker') return 'About a broker';
   return null;
+}
+
+// --- the carrier's own evidence ---------------------------------------------------------
+
+/** A step up the carrier's own history supports. Offered, never applied. */
+export interface StepUp {
+  to: Exclude<ActionPosition, 'off' | 'preview'>;
+  /** The button: the position it moves to, in the carrier's words. */
+  label: string;
+  /** The count that justifies it, in front of them when they decide. */
+  reason: string;
+}
+
+export interface EvidenceView {
+  /** "12 of 12 previews marked right" — what the history says so far. Null with no history. */
+  summary: string | null;
+  /** What is left to reach the next step, or why it is held back. Null when there is nothing to say. */
+  progress: string | null;
+  stepUp: StepUp | null;
+  /** Previews nobody has looked at yet. */
+  toReview: number;
+}
+
+const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+
+/**
+ * What the carrier's history says about one action, and whether it supports
+ * moving it up. Preview to ask-first on marks; ask-first to automatic on
+ * approvals. The thresholds are `PROMOTION_EVIDENCE`, and the step up is only
+ * ever offered where the action's ceiling allows it — an invoice email never
+ * gets an "automatic" offer because it can never be one.
+ */
+export function evidenceView(
+  action: Pick<OutboundActionInfo, 'maxMode'>,
+  position: ActionPosition,
+  evidence: OutboundEvidence | undefined,
+): EvidenceView {
+  if (!evidence) return { summary: null, progress: null, stepUp: null, toReview: 0 };
+
+  const marked = evidence.previewRight + evidence.previewWrong;
+  const decided = evidence.approved + evidence.rejected;
+  const parts: string[] = [];
+  if (marked > 0) parts.push(`${evidence.previewRight} of ${plural(marked, 'preview', 'previews')} marked right`);
+  if (decided > 0) parts.push(`${evidence.approved} of ${plural(decided, 'message', 'messages')} approved as written`);
+  const view: EvidenceView = { summary: parts.length > 0 ? parts.join(' · ') : null, progress: null, stepUp: null, toReview: evidence.previewUnmarked };
+
+  if (position === 'preview') {
+    const needed = PROMOTION_EVIDENCE.rightPreviews;
+    if (evidence.previewRight >= needed && evidence.recentPreviewWrong === 0) {
+      view.stepUp = {
+        to: 'ask',
+        label: 'Ask me first',
+        reason: `${evidence.previewRight} of ${plural(marked, 'preview', 'previews')} marked right, and none of the latest ${PROMOTION_EVIDENCE.window} were wrong.`,
+      };
+    } else if (evidence.recentPreviewWrong > 0) {
+      view.progress = 'One of the latest previews was marked wrong, so this is not ready to ask you first yet.';
+    } else {
+      view.progress = `${plural(needed - evidence.previewRight, 'more preview', 'more previews')} marked right and it can start asking you first.`;
+    }
+  } else if (position === 'ask' && positionAllowed(action, 'auto').allowed) {
+    const needed = PROMOTION_EVIDENCE.approvals;
+    if (evidence.approved >= needed && evidence.recentRejected === 0) {
+      view.stepUp = {
+        to: 'auto',
+        label: 'Send automatically',
+        reason: `${evidence.approved} of ${plural(decided, 'message', 'messages')} approved as written, and none of the latest ${PROMOTION_EVIDENCE.window} were rejected.`,
+      };
+    } else if (evidence.recentRejected > 0) {
+      view.progress = 'One of the latest messages was rejected, so this is not ready to send on its own yet.';
+    } else {
+      view.progress = `${plural(needed - evidence.approved, 'more approval', 'more approvals')} and it can start sending on its own.`;
+    }
+  }
+  return view;
 }
 
 // --- first run ------------------------------------------------------------------

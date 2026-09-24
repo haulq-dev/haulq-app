@@ -6,6 +6,7 @@ import {
   actionTitle,
   attachmentPath,
   defaultTab,
+  evidenceView,
   firstRunSteps,
   groupMessages,
   messageAge,
@@ -16,6 +17,7 @@ import {
   problemReason,
   relatedLabel,
   tabFor,
+  type OutboundEvidence,
   type OutboundMessage,
 } from './outbound.ts';
 
@@ -31,6 +33,8 @@ const msg = (over: Partial<OutboundMessage> = {}): OutboundMessage => ({
   attachments: [],
   relatedType: null,
   relatedId: null,
+  verdict: null,
+  verdictNote: null,
   error: null,
   sentAt: null,
   createdAt: new Date().toISOString(),
@@ -160,5 +164,69 @@ describe('first run', () => {
     assert.equal(defaultTab({ pending: 0, settings: configured, returningFromMailbox: false, canConfigure: true }), 'approve');
     // A dispatcher or accountant has no Settings tab to land on.
     assert.equal(defaultTab({ pending: 0, settings: { configured: {} }, returningFromMailbox: false, canConfigure: false }), 'approve');
+  });
+});
+
+describe('the carrier’s own evidence', () => {
+  const ev = (over: Partial<OutboundEvidence> = {}): OutboundEvidence => ({
+    previewRight: 0,
+    previewWrong: 0,
+    previewUnmarked: 0,
+    recentPreviewWrong: 0,
+    approved: 0,
+    rejected: 0,
+    recentRejected: 0,
+    ...over,
+  });
+  const reminders = { maxMode: 'act' as const };
+  const invoices = { maxMode: 'draft' as const };
+
+  it('says nothing without history, and shows the count once there is some', () => {
+    assert.deepEqual(evidenceView(reminders, 'preview', undefined), { summary: null, progress: null, stepUp: null, toReview: 0 });
+    assert.equal(evidenceView(reminders, 'preview', ev({ previewRight: 12 })).summary, '12 of 12 previews marked right');
+    assert.equal(evidenceView(reminders, 'preview', ev({ previewRight: 3, previewWrong: 1 })).summary, '3 of 4 previews marked right');
+    assert.equal(evidenceView(reminders, 'ask', ev({ approved: 1 })).summary, '1 of 1 message approved as written');
+    assert.equal(evidenceView(reminders, 'preview', ev({ previewUnmarked: 3 })).toReview, 3);
+  });
+
+  it('offers to ask first only after enough previews were marked right, with none recently wrong', () => {
+    const early = evidenceView(reminders, 'preview', ev({ previewRight: 4 }));
+    assert.equal(early.stepUp, null);
+    assert.match(early.progress!, /1 more preview marked right/);
+
+    const ready = evidenceView(reminders, 'preview', ev({ previewRight: 5 }));
+    assert.equal(ready.stepUp?.to, 'ask');
+    assert.equal(ready.stepUp?.label, 'Ask me first');
+    assert.match(ready.stepUp!.reason, /5 of 5 previews marked right/);
+
+    const recentlyWrong = evidenceView(reminders, 'preview', ev({ previewRight: 8, previewWrong: 1, recentPreviewWrong: 1 }));
+    assert.equal(recentlyWrong.stepUp, null, 'a recent mistake holds it back');
+    assert.match(recentlyWrong.progress!, /marked wrong/);
+  });
+
+  it('lets an old mistake stop counting once it is out of the recent window', () => {
+    const view = evidenceView(reminders, 'preview', ev({ previewRight: 9, previewWrong: 1, recentPreviewWrong: 0 }));
+    assert.equal(view.stepUp?.to, 'ask');
+    assert.equal(view.summary, '9 of 10 previews marked right', 'the total still tells the truth');
+  });
+
+  it('offers to send automatically only after enough approvals, and only where that is allowed', () => {
+    assert.equal(evidenceView(reminders, 'ask', ev({ approved: 9 })).stepUp, null);
+    assert.equal(evidenceView(reminders, 'ask', ev({ approved: 10 })).stepUp?.to, 'auto');
+    assert.equal(evidenceView(reminders, 'ask', ev({ approved: 12, rejected: 1, recentRejected: 1 })).stepUp, null);
+    // An invoice email can never be automatic, so it is never offered, and never promised.
+    const invoice = evidenceView(invoices, 'ask', ev({ approved: 40 }));
+    assert.equal(invoice.stepUp, null);
+    assert.equal(invoice.progress, null);
+  });
+
+  it('offers nothing from off or from automatic', () => {
+    assert.equal(evidenceView(reminders, 'off', ev({ previewRight: 20, approved: 20 })).stepUp, null);
+    assert.equal(evidenceView(reminders, 'auto', ev({ previewRight: 20, approved: 20 })).stepUp, null);
+  });
+
+  it('uses the carrier’s words, not the server’s', () => {
+    const view = evidenceView(reminders, 'preview', ev({ previewRight: 5 }));
+    assert.doesNotMatch(JSON.stringify(view), /shadow|draft|\bact\b/i);
   });
 });

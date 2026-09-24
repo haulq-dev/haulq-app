@@ -29,6 +29,8 @@ const message = (over: Partial<OutboundMessage> = {}): OutboundMessage => ({
   attachments: [],
   relatedType: 'broker',
   relatedId: '00000000-0000-4000-8000-0000000000aa',
+  verdict: null,
+  verdictNote: null,
   error: null,
   sentAt: null,
   createdAt: new Date(Date.now() - 3 * 3_600_000).toISOString(),
@@ -53,6 +55,7 @@ const settings = (over: Partial<OutboundSettingsResponse> = {}): OutboundSetting
 
 interface World {
   role: string;
+  evidence: Record<string, Record<string, number>>;
   messages: OutboundMessage[];
   settings: OutboundSettingsResponse;
   mailbox: { connected: boolean; status: string; provider: string | null; connectedAt: string | null };
@@ -61,6 +64,7 @@ interface World {
 function renderScreen(world: Partial<World> = {}) {
   const w: World = {
     role: 'owner',
+    evidence: {},
     messages: [],
     settings: settings(),
     mailbox: { connected: true, status: 'connected', provider: 'GOOGLE', connectedAt: null },
@@ -78,6 +82,7 @@ function renderScreen(world: Partial<World> = {}) {
       if (path === '/v1/outbound/settings' && !options?.method) return w.settings;
       if (path.startsWith('/v1/outbound/messages') && !options?.method) return { messages: w.messages };
       if (path === '/v1/mailbox') return w.mailbox;
+      if (path === '/v1/outbound/evidence') return { actions: w.evidence };
       if (path.endsWith('/approve')) return { ...w.messages[0], status: 'sent' };
       return { ok: true };
     }) as ApiClient['request'],
@@ -237,5 +242,123 @@ describe('AutopilotScreen — settings', () => {
     expect(await screen.findByText(/Sending from your mailbox is OFF/)).toBeInTheDocument();
     expect(screen.getByRole('switch')).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Connect mailbox' })).toBeEnabled();
+  });
+});
+
+describe('AutopilotScreen — was it right?', () => {
+  const preview = (over: Partial<OutboundMessage> = {}) =>
+    message({ id: '00000000-0000-4000-8000-0000000000c1', status: 'shadow', mode: 'shadow', subject: 'A preview', ...over });
+  const evidenceFor = (over: Record<string, number> = {}) => ({
+    previewRight: 0,
+    previewWrong: 0,
+    previewUnmarked: 0,
+    recentPreviewWrong: 0,
+    approved: 0,
+    rejected: 0,
+    recentRejected: 0,
+    ...over,
+  });
+  const openPreviews = async () => {
+    await userEvent.click(await screen.findByRole('tab', { name: /Would have sent/ }));
+  };
+
+  it('marks a preview right in one tap', async () => {
+    const { calls } = renderScreen({ messages: [preview()] });
+    await openPreviews();
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Looks right' }));
+
+    await waitFor(() =>
+      expect(
+        calls.some(
+          (c) =>
+            c.method === 'POST' &&
+            c.path === '/v1/outbound/messages/00000000-0000-4000-8000-0000000000c1/mark' &&
+            JSON.stringify(c.body) === JSON.stringify({ verdict: 'right' }),
+        ),
+      ).toBe(true),
+    );
+  });
+
+  it('asks why when it is not right, and the answer is optional', async () => {
+    const { calls } = renderScreen({ messages: [preview()] });
+    await openPreviews();
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Not right' }));
+    await userEvent.type(screen.getByLabelText('What was wrong?'), 'The amount is off.');
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() =>
+      expect(calls.some((c) => c.path.endsWith('/mark') && JSON.stringify(c.body) === JSON.stringify({ verdict: 'wrong', note: 'The amount is off.' }))).toBe(true),
+    );
+  });
+
+  it('shows the verdict already given, and what was said about it', async () => {
+    renderScreen({ messages: [preview({ verdict: 'wrong', verdictNote: 'Wrong broker.' })] });
+    await openPreviews();
+    expect(await screen.findByRole('button', { name: 'Not right' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('button', { name: 'Looks right' })).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.getByText(/You said: Wrong broker\./)).toBeInTheDocument();
+  });
+
+  it('offers to move up once the history supports it — and applies nothing until the owner says so', async () => {
+    const { calls } = renderScreen({
+      messages: [preview()],
+      settings: settings({ configured: { payment_reminder: 'shadow', invoice_delivery: 'shadow' } }),
+      evidence: { payment_reminder: evidenceFor({ previewRight: 6 }) },
+    });
+    await openPreviews();
+
+    expect(await screen.findByText(/Ready to move up\? Payment reminders/)).toBeInTheDocument();
+    expect(screen.getByText(/6 of 6 previews marked right/)).toBeInTheDocument();
+    expect(calls.some((c) => c.method === 'PUT')).toBe(false);
+
+    await userEvent.click(screen.getByRole('button', { name: /Switch to “Ask me first”/ }));
+
+    await waitFor(() =>
+      expect(calls.some((c) => c.method === 'PUT' && JSON.stringify(c.body) === JSON.stringify({ modes: { payment_reminder: 'draft' } }))).toBe(true),
+    );
+  });
+
+  it('shows a dispatcher the offer, but leaves the decision to the owner', async () => {
+    renderScreen({
+      role: 'dispatcher',
+      messages: [preview()],
+      settings: settings({ configured: { payment_reminder: 'shadow' } }),
+      evidence: { payment_reminder: evidenceFor({ previewRight: 6 }) },
+    });
+    await openPreviews();
+    expect(await screen.findByText(/Ready to move up\?/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Switch to/ })).not.toBeInTheDocument();
+    expect(screen.getByText(/The owner can switch this in Settings/)).toBeInTheDocument();
+  });
+
+  it('holds the offer back after a recent mistake, and says how far along it is otherwise', async () => {
+    renderScreen({
+      messages: [preview()],
+      settings: settings({ configured: { payment_reminder: 'shadow', invoice_delivery: 'shadow' } }),
+      evidence: {
+        payment_reminder: evidenceFor({ previewRight: 8, previewWrong: 1, recentPreviewWrong: 1 }),
+        invoice_delivery: evidenceFor({ previewRight: 2 }),
+      },
+    });
+    await userEvent.click(await screen.findByRole('tab', { name: 'Settings' }));
+    await screen.findByText('What Autopilot does');
+
+    expect(screen.getByText('8 of 9 previews marked right')).toBeInTheDocument();
+    expect(screen.getByText(/was marked wrong, so this is not ready to ask you first yet/)).toBeInTheDocument();
+    expect(screen.getByText(/3 more previews marked right and it can start asking you first/)).toBeInTheDocument();
+    expect(screen.queryByText(/Ready to move up/)).not.toBeInTheDocument();
+  });
+
+  it('never offers an invoice email automatic sending, however many approvals', async () => {
+    renderScreen({
+      messages: [preview()],
+      evidence: { invoice_delivery: evidenceFor({ approved: 40 }) },
+    });
+    await userEvent.click(await screen.findByRole('tab', { name: 'Settings' }));
+    await screen.findByText('What Autopilot does');
+    expect(screen.getByText('40 of 40 messages approved as written')).toBeInTheDocument();
+    expect(screen.queryByText(/Ready to move up/)).not.toBeInTheDocument();
   });
 });

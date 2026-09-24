@@ -99,6 +99,13 @@
       "when": 1790201204259,
       "tag": "0013_adorable_enchantress",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1790270302874,
+      "tag": "0014_loose_bishop",
+      "breakpoints": true
     }
   ]
 }

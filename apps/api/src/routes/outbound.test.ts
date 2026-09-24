@@ -26,6 +26,7 @@ import {
   destroyTestUser,
   markMailboxConnected,
   MemoryObjectStore,
+  outboundEvidence,
   rejectTestDocument,
   requestMailboxConnection,
   scope,
@@ -575,6 +576,139 @@ suite('outbound', () => {
 
     assert.equal(list.statusCode, 403);
     await destroyTestUser(app.db, driver.id);
+  });
+
+  // --- the carrier's own evidence -------------------------------------------------------------
+
+  const mark = (orgId: string, id: string, body: Record<string, unknown>, actingUserId = userId) =>
+    app.inject({ method: 'POST', url: `/v1/outbound/messages/${id}/mark`, headers: as(orgId, actingUserId), payload: body });
+
+  const evidenceOf = async (orgId: string, actingUserId = userId) =>
+    (await app.inject({ method: 'GET', url: '/v1/outbound/evidence', headers: as(orgId, actingUserId) })).json() as {
+      actions: Record<string, Record<string, number>>;
+    };
+
+  it('marks a preview right or wrong, keeps why it was wrong, and lets someone change their mind', async () => {
+    const orgId = await newOrg('Outbound Mark Co');
+    const preview = await send(orgId, { actionType: 'payment_reminder', dedupeKey: 'mark-1' });
+    assert.equal(preview.message.status, 'shadow');
+
+    const wrong = await mark(orgId, preview.message.id, { verdict: 'wrong', note: 'The amount is off.' });
+    assert.equal(wrong.statusCode, 200);
+    assert.equal(wrong.json().verdict, 'wrong');
+    assert.equal(wrong.json().verdictNote, 'The amount is off.');
+
+    // Flipping to right must not leave the old complaint behind.
+    const right = await mark(orgId, preview.message.id, { verdict: 'right', note: 'ignored on a right mark' });
+    assert.equal(right.json().verdict, 'right');
+    assert.equal(right.json().verdictNote, null);
+
+    const timeline = (await app.inject({ method: 'GET', url: '/v1/timeline', headers: as(orgId) })).json().items as Array<{
+      verb: string;
+      explanation: string;
+    }>;
+    assert.equal(timeline.filter((e) => e.verb === 'outbound.marked').length, 2, 'every verdict is on the record');
+  });
+
+  it('marks nothing but a preview, and refuses a made-up verdict', async () => {
+    const orgId = await newOrg('Outbound Mark Refusals Co');
+    await connectMailbox(orgId);
+    await putSettings(orgId, { sendingEnabled: true, modes: { payment_reminder: 'draft' } });
+    const held = await send(orgId, { actionType: 'payment_reminder', dedupeKey: 'mark-held' });
+    assert.equal(held.message.status, 'pending_approval');
+
+    const notAPreview = await mark(orgId, held.message.id, { verdict: 'right' });
+    const missing = await mark(orgId, randomUUID(), { verdict: 'right' });
+    const nonsense = await mark(orgId, held.message.id, { verdict: 'maybe' });
+
+    assert.equal(notAPreview.statusCode, 409, 'a held draft is judged by approve or reject, not a mark');
+    assert.equal(missing.statusCode, 404);
+    assert.equal(nonsense.statusCode, 400);
+  });
+
+  it("keeps marks inside one carrier, and an accountant to the money messages", async () => {
+    const orgId = await newOrg('Outbound Mark Roles Co');
+    const other = await newOrg('Outbound Mark Roles Other Co');
+    const money = await send(orgId, { actionType: 'payment_reminder', dedupeKey: 'mark-money' });
+    const chat = await send(orgId, { actionType: 'broker_message', dedupeKey: 'mark-chat' });
+    const accountant = await createTestUser(app.db);
+    await addTestMembership(app.db, { orgId, userId: accountant.id, role: 'accountant' });
+    const driver = await createTestUser(app.db);
+    await addTestMembership(app.db, { orgId, userId: driver.id, role: 'driver' });
+
+    assert.equal((await mark(other, money.message.id, { verdict: 'right' })).statusCode, 404, "another carrier's preview");
+    assert.equal((await mark(orgId, chat.message.id, { verdict: 'right' }, accountant.id)).statusCode, 404, 'not the accountant\'s');
+    assert.equal((await mark(orgId, money.message.id, { verdict: 'right' }, accountant.id)).statusCode, 200);
+    assert.equal((await mark(orgId, chat.message.id, { verdict: 'right' }, driver.id)).statusCode, 403);
+    await destroyTestUser(app.db, accountant.id);
+    await destroyTestUser(app.db, driver.id);
+  });
+
+  it('counts what the carrier has marked and decided, per action', async () => {
+    const orgId = await newOrg('Outbound Evidence Co');
+    await connectMailbox(orgId);
+    const previews = [];
+    for (const n of [1, 2, 3, 4]) previews.push(await send(orgId, { actionType: 'payment_reminder', dedupeKey: `ev-${n}` }));
+    await mark(orgId, previews[0]!.message.id, { verdict: 'right' });
+    await mark(orgId, previews[1]!.message.id, { verdict: 'right' });
+    await mark(orgId, previews[2]!.message.id, { verdict: 'wrong', note: 'Wrong broker.' });
+    // previews[3] is left unmarked.
+
+    await putSettings(orgId, { sendingEnabled: true, modes: { invoice_delivery: 'draft' } });
+    const toApprove = await send(orgId, { actionType: 'invoice_delivery', dedupeKey: 'ev-a' });
+    const toReject = await send(orgId, { actionType: 'invoice_delivery', dedupeKey: 'ev-b' });
+    const ok = await app.inject({ method: 'POST', url: `/v1/outbound/messages/${toApprove.message.id}/approve`, headers: as(orgId) });
+    const no = await app.inject({ method: 'POST', url: `/v1/outbound/messages/${toReject.message.id}/reject`, headers: as(orgId) });
+    assert.equal(ok.statusCode, 200);
+    assert.equal(no.statusCode, 200);
+
+    const { actions } = await evidenceOf(orgId);
+
+    assert.deepEqual(actions['payment_reminder'], {
+      previewRight: 2,
+      previewWrong: 1,
+      previewUnmarked: 1,
+      recentPreviewWrong: 1,
+      approved: 0,
+      rejected: 0,
+      recentRejected: 0,
+    });
+    assert.equal(actions['invoice_delivery']!['approved'], 1);
+    assert.equal(actions['invoice_delivery']!['rejected'], 1);
+    assert.equal(actions['invoice_delivery']!['recentRejected'], 1);
+    assert.equal(actions['broker_message'], undefined, 'no history, no entry');
+  });
+
+  it('lets an old mistake age out of the recent window, without erasing it from the totals', async () => {
+    const orgId = await newOrg('Outbound Evidence Window Co');
+    const first = await send(orgId, { actionType: 'payment_reminder', dedupeKey: 'win-1' });
+    const second = await send(orgId, { actionType: 'payment_reminder', dedupeKey: 'win-2' });
+    const third = await send(orgId, { actionType: 'payment_reminder', dedupeKey: 'win-3' });
+    await mark(orgId, first.message.id, { verdict: 'wrong' });
+    await mark(orgId, second.message.id, { verdict: 'right' });
+    await mark(orgId, third.message.id, { verdict: 'right' });
+
+    const counts = (await outboundEvidence(systemScope(orgId), { window: 2 }))['payment_reminder']!;
+
+    assert.equal(counts.previewWrong, 1, 'still on the record');
+    assert.equal(counts.recentPreviewWrong, 0, 'but not among the latest two');
+  });
+
+  it('shows an accountant the evidence for money messages only', async () => {
+    const orgId = await newOrg('Outbound Evidence Roles Co');
+    const money = await send(orgId, { actionType: 'payment_reminder', dedupeKey: 'evr-1' });
+    const chat = await send(orgId, { actionType: 'broker_message', dedupeKey: 'evr-2' });
+    await mark(orgId, money.message.id, { verdict: 'right' });
+    await mark(orgId, chat.message.id, { verdict: 'right' });
+    const accountant = await createTestUser(app.db);
+    await addTestMembership(app.db, { orgId, userId: accountant.id, role: 'accountant' });
+
+    const seen = Object.keys((await evidenceOf(orgId, accountant.id)).actions);
+    const owner = Object.keys((await evidenceOf(orgId)).actions).sort();
+
+    assert.deepEqual(seen, ['payment_reminder']);
+    assert.deepEqual(owner, ['broker_message', 'payment_reminder']);
+    await destroyTestUser(app.db, accountant.id);
   });
 
   // --- the invoice preview ----------------------------------------------------------------

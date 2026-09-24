@@ -439,4 +439,127 @@ export async function expireOutboundIfPending(s: Scope, id: string): Promise<boo
   });
 }
 
+// --- evidence ------------------------------------------------------------------
+
+/**
+ * A person's verdict on a preview. Only a message that was recorded but held
+ * (`shadow`) can be marked: that is the one thing nobody has otherwise
+ * judged. A draft awaiting approval gets its verdict from approve or reject,
+ * and a sent message is a fact. Marking again replaces the earlier verdict,
+ * because people change their minds and the latest one is what counts.
+ */
+export async function markOutbound(
+  s: Scope,
+  id: string,
+  reviewedByUserId: string,
+  verdict: 'right' | 'wrong',
+  note: string | undefined,
+): Promise<OutboundMessageRow | undefined> {
+  return withTransaction(s, async (tx) => {
+    const [row] = await tx.db
+      .update(outboundMessages)
+      .set({
+        reviewVerdict: verdict,
+        // A note explains a wrong verdict. A right one carries none, so
+        // flipping wrong to right does not leave a stale complaint behind.
+        reviewNote: verdict === 'wrong' && note ? note : null,
+        reviewedByUserId,
+        reviewedAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(outboundMessages.id, id),
+          eq(outboundMessages.orgId, tx.ctx.orgId),
+          eq(outboundMessages.status, 'shadow'),
+        ),
+      )
+      .returning();
+    if (!row) return undefined;
+
+    await recordEvent(tx, 'outbound.marked', {
+      subjectId: row.id,
+      payload: { actionType: row.actionType, to: row.toAddresses.join(', '), verdict },
+    });
+    return row;
+  });
+}
+
+export interface OutboundEvidenceCounts {
+  previewRight: number;
+  previewWrong: number;
+  previewUnmarked: number;
+  recentPreviewWrong: number;
+  approved: number;
+  rejected: number;
+  recentRejected: number;
+}
+
+/**
+ * What the carrier's own history says about each action: their marks on
+ * previews, and what they did with drafts held for approval. Computed from
+ * the rows, so it can never disagree with them. `window` is how many of the
+ * latest verdicts (and decisions) count as "recent"; `actionTypes` narrows
+ * to the actions a role may see.
+ *
+ * Reads at most the latest 500 relevant rows per organisation — far more
+ * history than any promotion decision needs — and does the counting here
+ * rather than in SQL, because "the last N" per action is clearer as code.
+ */
+export async function outboundEvidence(
+  s: Scope,
+  opts: { window: number; actionTypes?: readonly string[] | undefined },
+): Promise<Record<string, OutboundEvidenceCounts>> {
+  const rows = await s.db
+    .select({
+      actionType: outboundMessages.actionType,
+      status: outboundMessages.status,
+      reviewVerdict: outboundMessages.reviewVerdict,
+      reviewedAt: outboundMessages.reviewedAt,
+      decidedByUserId: outboundMessages.decidedByUserId,
+      decidedAt: outboundMessages.decidedAt,
+    })
+    .from(outboundMessages)
+    .where(
+      and(
+        eq(outboundMessages.orgId, s.ctx.orgId),
+        opts.actionTypes ? inArray(outboundMessages.actionType, [...opts.actionTypes]) : undefined,
+      ),
+    )
+    .orderBy(desc(outboundMessages.createdAt))
+    .limit(500);
+
+  const byAction = new Map<string, typeof rows>();
+  for (const row of rows) {
+    const list = byAction.get(row.actionType) ?? [];
+    list.push(row);
+    byAction.set(row.actionType, list);
+  }
+
+  const out: Record<string, OutboundEvidenceCounts> = {};
+  for (const [actionType, list] of byAction) {
+    const marked = list
+      .filter((r) => r.reviewVerdict !== null)
+      .sort((a, b) => (b.reviewedAt?.getTime() ?? 0) - (a.reviewedAt?.getTime() ?? 0));
+    // A decision is a person acting on a held draft; `decided_by` is null for
+    // anything that never needed one. A failed send after approval is still an approval.
+    const decided = list
+      .filter((r) => r.decidedByUserId !== null)
+      .sort((a, b) => (b.decidedAt?.getTime() ?? 0) - (a.decidedAt?.getTime() ?? 0));
+
+    const counts: OutboundEvidenceCounts = {
+      previewRight: marked.filter((r) => r.reviewVerdict === 'right').length,
+      previewWrong: marked.filter((r) => r.reviewVerdict === 'wrong').length,
+      previewUnmarked: list.filter((r) => r.status === 'shadow' && r.reviewVerdict === null).length,
+      recentPreviewWrong: marked.slice(0, opts.window).filter((r) => r.reviewVerdict === 'wrong').length,
+      approved: decided.filter((r) => r.status !== 'rejected').length,
+      rejected: decided.filter((r) => r.status === 'rejected').length,
+      recentRejected: decided.slice(0, opts.window).filter((r) => r.status === 'rejected').length,
+    };
+    // Only an action with some history at all is worth an entry.
+    if (Object.values(counts).some((n) => n > 0)) out[actionType] = counts;
+  }
+  return out;
+}
+
 export type { StoredOutboundAttachment } from '../schema/outbound.ts';

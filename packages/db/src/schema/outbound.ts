@@ -82,6 +82,18 @@ export const outboundMessages = pgTable(
     decidedAt: timestamp('decided_at', { withTimezone: true }),
     sentAt: timestamp('sent_at', { withTimezone: true }),
 
+    /**
+     * A person's verdict on whether the message was what they would have
+     * wanted sent: 'right' | 'wrong'. This is the carrier's own evidence for
+     * moving an action up (preview, then ask first, then automatic); nothing
+     * else records whether a preview was any good. Null until someone looks.
+     */
+    reviewVerdict: text('review_verdict'),
+    /** Why it was wrong, in the reviewer's words. Optional. */
+    reviewNote: text('review_note'),
+    reviewedByUserId: uuid('reviewed_by_user_id').references(() => users.id, { onDelete: 'set null' }),
+    reviewedAt: timestamp('reviewed_at', { withTimezone: true }),
+
     ...timestamps,
   },
   (t) => [

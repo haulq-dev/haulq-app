@@ -21,6 +21,7 @@ import {
   canConfigureOutbound,
   canReviewOutbound,
   defaultTab,
+  evidenceView,
   fileSize,
   firstRunSteps,
   groupMessages,
@@ -36,12 +37,15 @@ import {
   useConnectMailbox,
   useDisconnectMailbox,
   useMailbox,
+  useMarkOutbound,
+  useOutboundEvidence,
   useOutboundMessages,
   useOutboundSettings,
   useRejectOutbound,
   useSendTestMessage,
   useSetActionPosition,
   useSetSendingEnabled,
+  type OutboundEvidence,
   type OutboundMessage,
   type OutboundSettingsResponse,
   type ReviewTab,
@@ -85,6 +89,7 @@ export function AutopilotScreen() {
 
   const settings = useOutboundSettings({ enabled: canReview });
   const messages = useOutboundMessages({ enabled: canReview, refetchMs: REFRESH_MS });
+  const evidence = useOutboundEvidence({ enabled: canReview });
   const mailbox = useMailbox({
     enabled: canSeeSettings,
     // Unipile confirms the account by a separate server call that can land
@@ -178,12 +183,20 @@ export function AutopilotScreen() {
         />
       )}
       {active === 'preview' && (
-        <MessageList
-          loading={messages.isLoading}
-          messages={groups.preview}
-          empty="No previews. When an action is set to “Show me first”, what it would have sent shows up here without going anywhere."
-          render={(m) => <MessageCard key={m.id} message={m} note={previewReason(m)} />}
-        />
+        <div className="space-y-4">
+          {groups.preview.length > 0 && (
+            <p className="max-w-prose text-sm text-slate">
+              These were written but not sent. Tell it whether each one is what you would have wanted. That is how you decide how much to trust it.
+            </p>
+          )}
+          <StepUps settings={settings.data} evidence={evidence.data} canConfigure={canConfigure} />
+          <MessageList
+            loading={messages.isLoading}
+            messages={groups.preview}
+            empty="No previews. When an action is set to “Show me first”, what it would have sent shows up here without going anywhere."
+            render={(m) => <MessageCard key={m.id} message={m} note={previewReason(m)} actions={<MarkControls message={m} />} />}
+          />
+        </div>
       )}
       {active === 'sent' && (
         <MessageList
@@ -204,6 +217,7 @@ export function AutopilotScreen() {
       {active === 'settings' && canSeeSettings && (
         <SettingsPanel
           settings={settings.data}
+          evidence={evidence.data}
           mailbox={mailbox.data}
           mailboxLoading={mailbox.isLoading}
           redirect={redirect}
@@ -370,16 +384,135 @@ function ApprovalCard({ message, sendingOn }: { message: OutboundMessage; sendin
   );
 }
 
+// --- was it right? --------------------------------------------------------------------
+
+/**
+ * The verdict on a preview. "Looks right" is one tap, because most will be and
+ * a chore nobody finishes is no evidence at all. "Not right" asks for a few
+ * words, optional, because *why* is what tells us what to fix.
+ */
+function MarkControls({ message }: { message: OutboundMessage }) {
+  const mark = useMarkOutbound();
+  const [explaining, setExplaining] = useState(false);
+  const [note, setNote] = useState(message.verdictNote ?? '');
+
+  return (
+    <div className="space-y-2 border-t border-line pt-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="field-label text-mute">Is this what you would have wanted sent?</span>
+        <button
+          type="button"
+          className={`hq-btn ${message.verdict === 'right' ? 'hq-btn-primary' : 'hq-btn-ghost'}`}
+          aria-pressed={message.verdict === 'right'}
+          disabled={mark.isPending}
+          onClick={() => {
+            setExplaining(false);
+            mark.mutate({ id: message.id, verdict: 'right' });
+          }}
+        >
+          Looks right
+        </button>
+        <button
+          type="button"
+          className={`hq-btn ${message.verdict === 'wrong' ? 'hq-btn-primary' : 'hq-btn-ghost'}`}
+          aria-pressed={message.verdict === 'wrong'}
+          disabled={mark.isPending}
+          onClick={() => setExplaining(true)}
+        >
+          Not right
+        </button>
+      </div>
+      {explaining && (
+        <form
+          className="flex flex-wrap gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            mark.mutate(
+              { id: message.id, verdict: 'wrong', ...(note.trim() ? { note: note.trim() } : {}) },
+              { onSuccess: () => setExplaining(false) },
+            );
+          }}
+        >
+          <input
+            className="hq-input min-w-0 flex-1"
+            aria-label="What was wrong?"
+            placeholder="What was wrong? (optional)"
+            maxLength={500}
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+          />
+          <button type="submit" className="hq-btn hq-btn-primary" disabled={mark.isPending}>
+            {mark.isPending ? 'Saving…' : 'Save'}
+          </button>
+        </form>
+      )}
+      {!explaining && message.verdict === 'wrong' && message.verdictNote && (
+        <p className="text-sm text-warn">You said: {message.verdictNote}</p>
+      )}
+      <ErrorNote error={mark.error} />
+    </div>
+  );
+}
+
+/**
+ * "Ready to move up?" One offer per action the history supports, with the
+ * count that supports it in front of the owner. Never applied on its own: a
+ * carrier's history is a reason to offer, and the decision is theirs.
+ */
+function StepUps({
+  settings,
+  evidence,
+  canConfigure,
+}: {
+  settings: OutboundSettingsResponse | undefined;
+  evidence: Record<string, OutboundEvidence> | undefined;
+  canConfigure: boolean;
+}) {
+  const setPosition = useSetActionPosition();
+  if (!settings) return null;
+  const offers = settings.actions
+    .filter((a) => a.available)
+    .map((action) => ({ action, view: evidenceView(action, positionFor(settings, action.type), evidence?.[action.type]) }))
+    .filter((o) => o.view.stepUp !== null);
+  if (offers.length === 0) return null;
+
+  return (
+    <div className="space-y-3">
+      {offers.map(({ action, view }) => (
+        <div key={action.type} className="border-l-2 border-ok bg-ok-50 px-4 py-3">
+          <p className="font-semibold text-ok">Ready to move up? {actionTitle(action.type)}</p>
+          <p className="mt-1 text-sm text-slate">{view.stepUp!.reason}</p>
+          {canConfigure ? (
+            <button
+              type="button"
+              className="hq-btn hq-btn-primary mt-3"
+              disabled={setPosition.isPending}
+              onClick={() => setPosition.mutate({ actionType: action.type, position: view.stepUp!.to })}
+            >
+              {setPosition.isPending ? 'Saving…' : `Switch to “${view.stepUp!.label}”`}
+            </button>
+          ) : (
+            <p className="mt-2 text-sm text-mute">The owner can switch this in Settings.</p>
+          )}
+        </div>
+      ))}
+      <ErrorNote error={setPosition.error} />
+    </div>
+  );
+}
+
 // --- settings -----------------------------------------------------------------------
 
 function SettingsPanel({
   settings,
+  evidence,
   mailbox,
   mailboxLoading,
   redirect,
   canConfigure,
 }: {
   settings: OutboundSettingsResponse | undefined;
+  evidence: Record<string, OutboundEvidence> | undefined;
   mailbox: ReturnType<typeof useMailbox>['data'];
   mailboxLoading: boolean;
   redirect: 'connected' | 'denied' | null;
@@ -391,7 +524,7 @@ function SettingsPanel({
       {!canConfigure && <p className="text-sm text-mute">Only the owner can change these. You can see how they are set.</p>}
       <MailboxCard mailbox={mailbox} loading={mailboxLoading} redirect={redirect} canConfigure={canConfigure} />
       <SendingSwitch settings={settings} mailboxConnected={mailbox?.connected === true} canConfigure={canConfigure} />
-      <ActionsCard settings={settings} canConfigure={canConfigure} />
+      <ActionsCard settings={settings} evidence={evidence} canConfigure={canConfigure} />
     </div>
   );
 }
@@ -508,7 +641,15 @@ function SendingSwitch({ settings, mailboxConnected, canConfigure }: { settings:
   );
 }
 
-function ActionsCard({ settings, canConfigure }: { settings: OutboundSettingsResponse; canConfigure: boolean }) {
+function ActionsCard({
+  settings,
+  evidence,
+  canConfigure,
+}: {
+  settings: OutboundSettingsResponse;
+  evidence: Record<string, OutboundEvidence> | undefined;
+  canConfigure: boolean;
+}) {
   const setPosition = useSetActionPosition();
   const test = useSendTestMessage();
   // Only what a loop actually drives today: offering the rest invites someone
@@ -521,6 +662,7 @@ function ActionsCard({ settings, canConfigure }: { settings: OutboundSettingsRes
         {actions.map((action) => {
           const current = positionFor(settings, action.type);
           const ceiling = positionAllowed(action, 'auto');
+          const history = evidenceView(action, current, evidence?.[action.type]);
           return (
             <div key={action.type} className="space-y-2">
               <div>
@@ -551,10 +693,13 @@ function ActionsCard({ settings, canConfigure }: { settings: OutboundSettingsRes
                 {ACTION_POSITIONS.find((p) => p.value === current)?.help}
                 {!ceiling.allowed && ` ${ceiling.reason}`}
               </p>
+              {history.summary && <p className="num text-sm text-slate">{history.summary}</p>}
+              {history.progress && <p className="text-sm text-mute">{history.progress}</p>}
             </div>
           );
         })}
         <ErrorNote error={setPosition.error} />
+        <StepUps settings={settings} evidence={evidence} canConfigure={canConfigure} />
 
         {canConfigure && (
           <div className="border-t border-line pt-4">

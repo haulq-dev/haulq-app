@@ -26,7 +26,7 @@ import type {
   LoadTrackingView,
 } from './loads.ts';
 import type { DocumentsPage, DocumentRow } from './documents.ts';
-import { modeForPosition, type ActionPosition, type MailboxStatus, type OutboundMessage, type OutboundSettingsResponse } from './outbound.ts';
+import { modeForPosition, type ActionPosition, type MailboxStatus, type OutboundEvidenceResponse, type OutboundMessage, type OutboundSettingsResponse } from './outbound.ts';
 import type { CarrierProfile, Driver, OrgSummary, Truck } from './types.ts';
 
 const ApiClientContext = createContext<ApiClient | null>(null);
@@ -69,6 +69,7 @@ export const queryKeys = {
   outboundSettings: ['outbound', 'settings'] as const,
   outboundMessages: ['outbound', 'messages'] as const,
   outboundPending: ['outbound', 'pending'] as const,
+  outboundEvidence: ['outbound', 'evidence'] as const,
   mailbox: ['mailbox'] as const,
 };
 
@@ -315,6 +316,34 @@ export function useSendTestMessage() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: () => client.request<{ message: OutboundMessage; sent: boolean }>('/v1/outbound/test', { method: 'POST' }),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: queryKeys.outbound }),
+  });
+}
+
+/**
+ * What the carrier's own history says about each action: their marks on
+ * previews and what they did with held drafts. Drives the "ready to move up?"
+ * prompt. Refetched with everything else under `outbound`.
+ */
+export function useOutboundEvidence(options: { enabled?: boolean } = {}) {
+  const client = useApiClient();
+  return useQuery({
+    queryKey: queryKeys.outboundEvidence,
+    queryFn: async () => (await client.request<OutboundEvidenceResponse>('/v1/outbound/evidence')).actions,
+    enabled: options.enabled ?? true,
+  });
+}
+
+/** Was this preview what they would have wanted sent? Marking again replaces the earlier verdict. */
+export function useMarkOutbound() {
+  const client = useApiClient();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, verdict, note }: { id: string; verdict: 'right' | 'wrong'; note?: string }) =>
+      client.request<OutboundMessage>(`/v1/outbound/messages/${id}/mark`, {
+        method: 'POST',
+        body: { verdict, ...(note ? { note } : {}) },
+      }),
     onSettled: () => queryClient.invalidateQueries({ queryKey: queryKeys.outbound }),
   });
 }

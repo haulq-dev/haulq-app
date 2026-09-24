@@ -16,8 +16,10 @@
 
 import {
   ListOutboundQuerySchema,
+  MarkOutboundSchema,
   OUTBOUND_ACTIONS,
   OUTBOUND_MONEY_ACTIONS,
+  PROMOTION_EVIDENCE,
   OutboundActionTypeSchema,
   OutboundMessageSchema,
   UpdateOutboundSettingsSchema,
@@ -32,6 +34,8 @@ import {
   getOutboundSettings,
   listAllMembers,
   listOutbound,
+  markOutbound,
+  outboundEvidence,
   OutboundStateError,
   setAutonomyMode,
   setSendingEnabled,
@@ -86,6 +90,8 @@ function toMessage(row: OutboundMessageRow): OutboundMessage {
     })),
     relatedType: row.relatedType,
     relatedId: row.relatedId,
+    verdict: row.reviewVerdict === 'right' || row.reviewVerdict === 'wrong' ? row.reviewVerdict : null,
+    verdictNote: row.reviewNote,
     error: row.error,
     sentAt: row.sentAt?.toISOString() ?? null,
     createdAt: row.createdAt.toISOString(),
@@ -247,6 +253,55 @@ export async function outboundRoutes(app: FastifyInstance) {
       } catch (err) {
         rethrow(err);
       }
+    },
+  );
+
+  /**
+   * Was this preview what you would have wanted sent? The carrier's own
+   * evidence for moving an action up. Only a preview can be marked; an
+   * approval or rejection is already a verdict on a held draft.
+   */
+  server.post(
+    '/v1/outbound/messages/:id/mark',
+    {
+      schema: {
+        tags: ['Outbound'],
+        summary: 'Mark a preview right or wrong',
+        params: IdParamSchema,
+        body: MarkOutboundSchema,
+      },
+    },
+    async (request) => {
+      const s = await requireScope(request);
+      reviewer(request);
+      if (s.ctx.actor.type !== 'user') {
+        throw new HttpError(403, 'forbidden', 'Only a person can mark a message.');
+      }
+      await assertMayReview(request, s, request.params.id);
+      const marked = await markOutbound(s, request.params.id, s.ctx.actor.id, request.body.verdict, request.body.note);
+      if (marked) return toMessage(marked);
+      const existing = await getOutbound(s, request.params.id);
+      if (!existing) throw new HttpError(404, 'not_found', 'That message no longer exists.');
+      throw new HttpError(409, 'wrong_state', 'Only a preview can be marked right or wrong.');
+    },
+  );
+
+  /**
+   * What the carrier's own history says about each action, for the "ready to
+   * move up?" prompt. An accountant sees only the actions they may review.
+   */
+  server.get(
+    '/v1/outbound/evidence',
+    { schema: { tags: ['Outbound'], summary: 'How previews and approvals have gone, per action' } },
+    async (request) => {
+      const s = await requireScope(request);
+      const { moneyOnly } = reviewer(request);
+      return {
+        actions: await outboundEvidence(s, {
+          window: PROMOTION_EVIDENCE.window,
+          actionTypes: moneyOnly ? OUTBOUND_MONEY_ACTIONS : undefined,
+        }),
+      };
     },
   );
 

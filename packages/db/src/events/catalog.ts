@@ -742,6 +742,10 @@ export const eventCatalog = {
     topic: 'outbound.awaiting_approval',
   }),
 
+  'outbound.marked': define<{ actionType: string; to: string; verdict: string }>({
+    subjectType: 'outbound_message',
+    describe: (p) => `Marked the preview to ${p.to} as ${p.verdict === 'right' ? 'right' : 'wrong'}.`,
+  }),
   'outbound.expired': define<{ actionType: string; to: string; subject: string }>({
     subjectType: 'outbound_message',
     describe: (p) => `Withdrew the drafted message to ${p.to} ("${p.subject}") — it went out of date before anyone approved it.`,
