@@ -306,8 +306,8 @@ function asAwaitingApproval(message: OutboxMessage): { count: number; waiting: n
 /**
  * Tell whoever can approve that autopilot drafted something. One event per
  * organisation per pass (see `raiseAwaitingApproval`), so this is one email
- * per person per pass however many drafts there were. Sent to owners and
- * dispatchers — the same two roles that can approve.
+ * per person per pass however many drafts there were. Sent to owners,
+ * dispatchers and accountants — the roles that can approve.
  *
  * The event is raised only when something is *newly* waiting, and the loop
  * never re-announces a draft it already announced, so a backlog does not
@@ -331,7 +331,9 @@ function awaitingApprovalHandler(deps: HandlerDeps): OutboxHandler {
     });
 
     const [org, members] = await Promise.all([getOrg(s), listAllMembers(s)]);
-    const recipients = members.filter((m) => m.role === 'owner' || m.role === 'dispatcher');
+    // The three roles that can approve. An accountant is here because invoices
+    // and reminders are theirs to approve.
+    const recipients = members.filter((m) => m.role === 'owner' || m.role === 'dispatcher' || m.role === 'accountant');
     if (recipients.length === 0) {
       deps.log.warn({ seq: message.seq.toString(), orgId: message.orgId }, 'awaiting-approval notice has nobody to send to');
       return;

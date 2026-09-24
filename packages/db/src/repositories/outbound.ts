@@ -10,7 +10,7 @@
  * instead of being re-derived by each caller.
  */
 
-import { and, count, desc, eq, lt } from 'drizzle-orm';
+import { and, count, desc, eq, inArray, lt } from 'drizzle-orm';
 import type { Scope } from '../context.ts';
 import { recordEvent } from '../events/record.ts';
 import { mailboxConnections } from '../schema/mailbox.ts';
@@ -190,15 +190,22 @@ export async function getOutbound(s: Scope, id: string): Promise<OutboundMessage
 
 export async function listOutbound(
   s: Scope,
-  opts: { status?: string | undefined; limit?: number | undefined } = {},
+  opts: {
+    status?: string | undefined;
+    /** Narrow to these action types — how a role that sees only some of them is served. */
+    actionTypes?: readonly string[] | undefined;
+    limit?: number | undefined;
+  } = {},
 ): Promise<OutboundMessageRow[]> {
   return s.db
     .select()
     .from(outboundMessages)
     .where(
-      opts.status
-        ? and(eq(outboundMessages.orgId, s.ctx.orgId), eq(outboundMessages.status, opts.status))
-        : eq(outboundMessages.orgId, s.ctx.orgId),
+      and(
+        eq(outboundMessages.orgId, s.ctx.orgId),
+        opts.status ? eq(outboundMessages.status, opts.status) : undefined,
+        opts.actionTypes ? inArray(outboundMessages.actionType, [...opts.actionTypes]) : undefined,
+      ),
     )
     .orderBy(desc(outboundMessages.createdAt))
     .limit(opts.limit ?? 100);

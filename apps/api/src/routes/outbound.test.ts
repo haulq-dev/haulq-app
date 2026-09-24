@@ -511,6 +511,72 @@ suite('outbound', () => {
     assert.equal(plain.relatedId, null);
   });
 
+  // --- who may review -----------------------------------------------------------------------
+
+  it('lets an accountant see and approve invoices and reminders, and nothing else', async () => {
+    const orgId = await newOrg('Outbound Accountant Co');
+    await connectMailbox(orgId);
+    await putSettings(orgId, { sendingEnabled: true, modes: { payment_reminder: 'draft', broker_message: 'draft' } });
+    const money = await send(orgId, { actionType: 'payment_reminder', subject: 'Overdue', dedupeKey: 'acct-money' });
+    const chat = await send(orgId, { actionType: 'broker_message', subject: 'About a load', dedupeKey: 'acct-chat' });
+    assert.equal(money.message.status, 'pending_approval');
+    assert.equal(chat.message.status, 'pending_approval');
+    const accountant = await createTestUser(app.db);
+    await addTestMembership(app.db, { orgId, userId: accountant.id, role: 'accountant' });
+
+    const list = await app.inject({ method: 'GET', url: '/v1/outbound/messages', headers: as(orgId, accountant.id) });
+    const seen = (list.json().messages as Array<{ subject: string }>).map((m) => m.subject);
+    assert.deepEqual(seen, ['Overdue'], 'the broker conversation is not the accountant\'s');
+
+    const forbidden = await app.inject({
+      method: 'POST',
+      url: `/v1/outbound/messages/${chat.message.id}/approve`,
+      headers: as(orgId, accountant.id),
+    });
+    assert.equal(forbidden.statusCode, 404, 'the same answer as a message that does not exist');
+
+    const approved = await app.inject({
+      method: 'POST',
+      url: `/v1/outbound/messages/${money.message.id}/approve`,
+      headers: as(orgId, accountant.id),
+    });
+    assert.equal(approved.statusCode, 200);
+    assert.equal(approved.json().status, 'sent');
+    await destroyTestUser(app.db, accountant.id);
+  });
+
+  it('still keeps an accountant out of the settings, the mailbox switch and the test send', async () => {
+    const orgId = await newOrg('Outbound Accountant Locked Co');
+    const accountant = await createTestUser(app.db);
+    await addTestMembership(app.db, { orgId, userId: accountant.id, role: 'accountant' });
+
+    const read = await app.inject({ method: 'GET', url: '/v1/outbound/settings', headers: as(orgId, accountant.id) });
+    const write = await putSettings(orgId, { sendingEnabled: false }, accountant.id);
+    const clear = await app.inject({
+      method: 'DELETE',
+      url: '/v1/outbound/settings/payment_reminder',
+      headers: as(orgId, accountant.id),
+    });
+    const test = await app.inject({ method: 'POST', url: '/v1/outbound/test', headers: as(orgId, accountant.id) });
+
+    assert.equal(read.statusCode, 200);
+    assert.equal(write.statusCode, 403);
+    assert.equal(clear.statusCode, 403);
+    assert.equal(test.statusCode, 403);
+    await destroyTestUser(app.db, accountant.id);
+  });
+
+  it('keeps a driver out of the review queue altogether', async () => {
+    const orgId = await newOrg('Outbound Driver Locked Co');
+    const driver = await createTestUser(app.db);
+    await addTestMembership(app.db, { orgId, userId: driver.id, role: 'driver' });
+
+    const list = await app.inject({ method: 'GET', url: '/v1/outbound/messages', headers: as(orgId, driver.id) });
+
+    assert.equal(list.statusCode, 403);
+    await destroyTestUser(app.db, driver.id);
+  });
+
   // --- the invoice preview ----------------------------------------------------------------
 
   async function anInvoice(orgId: string): Promise<{ id: string; reference: number }> {

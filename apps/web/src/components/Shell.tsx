@@ -7,6 +7,7 @@
  * someone demoing this and taking it for a real account switcher.
  */
 
+import { canReviewOutbound, usePendingApprovalCount } from '@haulq/client';
 import { Link, useRouterState } from '@tanstack/react-router';
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
@@ -39,6 +40,14 @@ const PRIMARY_NAV = [
   { to: '/pay', label: 'Pay' },
 ] as const;
 
+/**
+ * Autopilot is a daily action (approving what it drafted), so it sits in the
+ * main row rather than under Account, but only for the roles that can act on
+ * it, and with a count of what is waiting so the bar itself says when there is
+ * something to do.
+ */
+const AUTOPILOT_NAV = { to: '/autopilot', label: 'Autopilot' } as const;
+
 const FLEET_NAV = [
   { to: '/trucks', label: 'Trucks' },
   { to: '/drivers', label: 'Drivers' },
@@ -51,9 +60,6 @@ const ACCOUNT_NAV = [
   { to: '/integrations', label: 'Integrations' },
   { to: '/timeline', label: 'Activity' },
 ] as const;
-
-/** Every item, flattened — the mobile drawer has room for a flat list and nothing to gain from nesting it. */
-const ALL_NAV = [...PRIMARY_NAV, ...FLEET_NAV, ...ACCOUNT_NAV];
 
 function DevSessionBar() {
   const session = useSession();
@@ -185,7 +191,7 @@ function MenuIcon({ open }: { open: boolean }) {
 }
 
 /** One item in either the inline row or the mobile drawer. */
-type NavItem = { to: string; label: string };
+type NavItem = { to: string; label: string; badge?: number };
 
 function isActive(pathname: string, to: string): boolean {
   return pathname.startsWith(to);
@@ -266,6 +272,17 @@ export function Shell({ children }: { children: ReactNode }) {
    */
   const currentOrg = orgs.data?.items.find((o) => o.id === session?.orgId);
 
+  // Only where the screen can be used: the right role, and a paid account (an
+  // unpaid one is shown the plans screen instead of anything in the nav).
+  const showAutopilot = canReviewOutbound(currentOrg?.role) && currentOrg?.status === 'active';
+  const pending = usePendingApprovalCount({ enabled: showAutopilot });
+  const primaryNav: NavItem[] = [
+    ...PRIMARY_NAV,
+    ...(showAutopilot ? [{ ...AUTOPILOT_NAV, badge: pending.data ?? 0 }] : []),
+  ];
+  /** Every item, flattened: the mobile drawer has room for a flat list and nothing to gain from nesting it. */
+  const allNav: NavItem[] = [...primaryNav, ...FLEET_NAV, ...ACCOUNT_NAV];
+
   /**
    * The saved org isn't one this login belongs to. That happens when a
    * different login signs in on the same browser, because sign-out doesn't
@@ -333,6 +350,11 @@ export function Shell({ children }: { children: ReactNode }) {
         }
       >
         {item.label}
+        {item.badge ? (
+          <span className="num ml-1.5 bg-brand px-1.5 text-xs text-white" aria-label={`${item.badge} waiting`}>
+            {item.badge}
+          </span>
+        ) : null}
       </Link>
     );
   };
@@ -358,7 +380,7 @@ export function Shell({ children }: { children: ReactNode }) {
           {/* Wide screens: the links inline, grouped — see the module note
               on PRIMARY_NAV for why this is three groups, not one flat row. */}
           <nav className="hidden items-center gap-1 md:flex">
-            {PRIMARY_NAV.map((item) => navLink(item, false))}
+            {primaryNav.map((item) => navLink(item, false))}
             <NavDropdown label="Fleet" items={FLEET_NAV} pathname={pathname} />
             <NavDropdown label="Account" items={ACCOUNT_NAV} pathname={pathname} />
           </nav>
@@ -388,7 +410,7 @@ export function Shell({ children }: { children: ReactNode }) {
             id="hq-mobile-nav"
             className="flex flex-col border-t border-line py-2 md:hidden"
           >
-            {ALL_NAV.map((item) => navLink(item, true))}
+            {allNav.map((item) => navLink(item, true))}
           </nav>
         )}
       </header>

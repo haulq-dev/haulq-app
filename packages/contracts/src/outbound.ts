@@ -58,6 +58,13 @@ export const OUTBOUND_ACTIONS = {
 
 export type OutboundActionType = keyof typeof OUTBOUND_ACTIONS;
 
+/**
+ * The actions that are about money owed to the carrier — the ones an
+ * accountant reviews. An accountant may see and approve these and nothing
+ * else: a message to a broker about a load is a dispatcher's conversation.
+ */
+export const OUTBOUND_MONEY_ACTIONS: readonly OutboundActionType[] = ['invoice_delivery', 'payment_reminder', 'detention_claim'];
+
 export const OutboundActionTypeSchema = z.enum(
   Object.keys(OUTBOUND_ACTIONS) as [OutboundActionType, ...OutboundActionType[]],
 );

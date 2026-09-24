@@ -74,8 +74,8 @@ export async function mailboxRoutes(app: FastifyInstance) {
           // state-signing of HaulQ's own. See `unipile.ts`'s module note.
           name: s.ctx.orgId,
           notifyUrl,
-          successRedirectUrl: `${webOrigin}/integrations?mailbox=connected`,
-          failureRedirectUrl: `${webOrigin}/integrations?mailbox=denied`,
+          successRedirectUrl: `${webOrigin}/autopilot?mailbox=connected`,
+          failureRedirectUrl: `${webOrigin}/autopilot?mailbox=denied`,
         });
         return { url };
       } catch (err) {

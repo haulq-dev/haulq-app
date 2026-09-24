@@ -17,6 +17,7 @@
 import {
   ListOutboundQuerySchema,
   OUTBOUND_ACTIONS,
+  OUTBOUND_MONEY_ACTIONS,
   OutboundActionTypeSchema,
   OutboundMessageSchema,
   UpdateOutboundSettingsSchema,
@@ -27,6 +28,7 @@ import {
 } from '@haulq/contracts';
 import {
   clearAutonomyMode,
+  getOutbound,
   getOutboundSettings,
   listAllMembers,
   listOutbound,
@@ -40,6 +42,26 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { approveOutbound, OutboundError, rejectDraft, sendAsCarrier } from '../outbound/dispatch.ts';
 import { HttpError, requireRole, requireScope } from '../plugins/request-context.ts';
+import type { FastifyRequest } from 'fastify';
+
+/**
+ * Who reviews what. Owners and dispatchers see every message. An accountant
+ * sees and approves the ones about money owed — invoices and payment
+ * reminders — and gets a plain "not found" for the rest, the same answer as a
+ * message that does not exist, so what a role may not read does not leak.
+ */
+function reviewer(request: FastifyRequest): { moneyOnly: boolean } {
+  requireRole(request, 'owner', 'dispatcher', 'accountant');
+  return { moneyOnly: request.auth?.role === 'accountant' };
+}
+
+async function assertMayReview(request: FastifyRequest, s: Parameters<typeof getOutbound>[0], id: string): Promise<void> {
+  if (!reviewer(request).moneyOnly) return;
+  const message = await getOutbound(s, id);
+  if (message && !(OUTBOUND_MONEY_ACTIONS as readonly string[]).includes(message.actionType)) {
+    throw new HttpError(404, 'not_found', 'That message no longer exists.');
+  }
+}
 
 const IdParamSchema = z.object({ id: z.string().uuid() });
 const ActionParamSchema = z.object({ actionType: OutboundActionTypeSchema });
@@ -89,7 +111,7 @@ export async function outboundRoutes(app: FastifyInstance) {
     { schema: { tags: ['Outbound'], summary: 'How much freedom the system has to send in your name' } },
     async (request) => {
       const s = await requireScope(request);
-      requireRole(request, 'owner', 'dispatcher');
+      reviewer(request);
       const stored = await getOutboundSettings(s);
 
       // Every registered action appears, with its effective mode: unset is
@@ -183,8 +205,11 @@ export async function outboundRoutes(app: FastifyInstance) {
     },
     async (request) => {
       const s = await requireScope(request);
-      requireRole(request, 'owner', 'dispatcher');
-      const rows = await listOutbound(s, { status: request.query.status });
+      const { moneyOnly } = reviewer(request);
+      const rows = await listOutbound(s, {
+        status: request.query.status,
+        actionTypes: moneyOnly ? OUTBOUND_MONEY_ACTIONS : undefined,
+      });
       return { messages: rows.map(toMessage) };
     },
   );
@@ -194,10 +219,11 @@ export async function outboundRoutes(app: FastifyInstance) {
     { schema: { tags: ['Outbound'], summary: 'Approve a drafted message — it sends now', params: IdParamSchema } },
     async (request) => {
       const s = await requireScope(request);
-      requireRole(request, 'owner', 'dispatcher');
+      reviewer(request);
       if (s.ctx.actor.type !== 'user') {
         throw new HttpError(403, 'forbidden', 'Only a person can approve a message.');
       }
+      await assertMayReview(request, s, request.params.id);
       try {
         return toMessage(await approveOutbound({ unipile: app.unipileClient, storage: app.storage, log: app.log }, s, request.params.id, s.ctx.actor.id));
       } catch (err) {
@@ -211,10 +237,11 @@ export async function outboundRoutes(app: FastifyInstance) {
     { schema: { tags: ['Outbound'], summary: 'Reject a drafted message', params: IdParamSchema } },
     async (request) => {
       const s = await requireScope(request);
-      requireRole(request, 'owner', 'dispatcher');
+      reviewer(request);
       if (s.ctx.actor.type !== 'user') {
         throw new HttpError(403, 'forbidden', 'Only a person can reject a message.');
       }
+      await assertMayReview(request, s, request.params.id);
       try {
         return toMessage(await rejectDraft(s, request.params.id, s.ctx.actor.id));
       } catch (err) {

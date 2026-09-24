@@ -215,6 +215,9 @@ suite('detentionAlertHandler', () => {
   });
 });
 
+let accountantId: string;
+let accountantEmail: string;
+
 suite('awaitingApprovalHandler', () => {
   before(async () => {
     db = createDatabase({ url: url! });
@@ -229,6 +232,10 @@ suite('awaitingApprovalHandler', () => {
     const driver = await createTestUser(db);
     driverId = driver.id;
     driverEmail = driver.email;
+    const accountant = await createTestUser(db);
+    accountantId = accountant.id;
+    accountantEmail = accountant.email;
+    await addTestMembership(db, { orgId, userId: accountantId, role: 'accountant' });
     await addTestMembership(db, { orgId, userId: ownerId, role: 'owner' });
     await addTestMembership(db, { orgId, userId: dispatcherId, role: 'dispatcher' });
     await addTestMembership(db, { orgId, userId: driverId, role: 'driver' });
@@ -239,6 +246,7 @@ suite('awaitingApprovalHandler', () => {
     await destroyTestUser(db, ownerId);
     await destroyTestUser(db, dispatcherId);
     await destroyTestUser(db, driverId);
+    await destroyTestUser(db, accountantId);
     await closeDatabase(db);
   });
 
@@ -267,12 +275,12 @@ suite('awaitingApprovalHandler', () => {
     return { mailer, handle: buildOutboxHandlers(deps(mailer))['outbound.awaiting_approval']! };
   }
 
-  it('emails every owner and dispatcher once, and not the driver', async () => {
+  it('emails every owner, dispatcher and accountant once, and not the driver', async () => {
     const { mailer, handle } = handler();
     await handle(notice());
 
     const recipients = mailer.sent.map((e) => e.to).sort();
-    assert.deepEqual(recipients, [dispatcherEmail, ownerEmail].sort());
+    assert.deepEqual(recipients, [accountantEmail, dispatcherEmail, ownerEmail].sort());
     assert.ok(!recipients.includes(driverEmail));
   });
 

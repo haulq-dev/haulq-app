@@ -13,7 +13,7 @@
  * run under Node's type stripping, which does not do JSX.
  */
 
-import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { NearbyStopsResponse } from '@haulq/contracts';
 import { createContext, createElement, useContext, type ReactNode } from 'react';
 import type { ApiClient } from './client.ts';
@@ -26,6 +26,7 @@ import type {
   LoadTrackingView,
 } from './loads.ts';
 import type { DocumentsPage, DocumentRow } from './documents.ts';
+import { modeForPosition, type ActionPosition, type MailboxStatus, type OutboundMessage, type OutboundSettingsResponse } from './outbound.ts';
 import type { CarrierProfile, Driver, OrgSummary, Truck } from './types.ts';
 
 const ApiClientContext = createContext<ApiClient | null>(null);
@@ -63,6 +64,12 @@ export const queryKeys = {
   documentCounts: ['documents', 'counts'] as const,
   document: (id: string) => ['documents', 'one', id] as const,
   profile: ['profile'] as const,
+  /** A prefix: invalidating it refreshes settings, every message list and the waiting count. */
+  outbound: ['outbound'] as const,
+  outboundSettings: ['outbound', 'settings'] as const,
+  outboundMessages: ['outbound', 'messages'] as const,
+  outboundPending: ['outbound', 'pending'] as const,
+  mailbox: ['mailbox'] as const,
 };
 
 /**
@@ -209,5 +216,140 @@ export function useCarrierProfile(options: { enabled?: boolean } = {}) {
     queryKey: queryKeys.profile,
     queryFn: () => client.request<CarrierProfile>('/v1/org/profile'),
     enabled: options.enabled ?? true,
+  });
+}
+
+// --- Autopilot (FEATURE_REQUESTS_PLAN.md section 9) --------------------------------
+
+/** How freely the system may send, per action, and whether the loop is running at all. */
+export function useOutboundSettings(options: { enabled?: boolean } = {}) {
+  const client = useApiClient();
+  return useQuery({
+    queryKey: queryKeys.outboundSettings,
+    queryFn: () => client.request<OutboundSettingsResponse>('/v1/outbound/settings'),
+    enabled: options.enabled ?? true,
+  });
+}
+
+/**
+ * Everything drafted, held, sent or failed, newest first (the API caps it at
+ * 100). `refetchMs` keeps an open screen current without a manual refresh.
+ */
+export function useOutboundMessages(options: { enabled?: boolean; refetchMs?: number } = {}) {
+  const client = useApiClient();
+  return useQuery({
+    queryKey: queryKeys.outboundMessages,
+    queryFn: async () => (await client.request<{ messages: OutboundMessage[] }>('/v1/outbound/messages')).messages,
+    enabled: options.enabled ?? true,
+    ...(options.refetchMs ? { refetchInterval: options.refetchMs } : {}),
+  });
+}
+
+/**
+ * How many drafts are waiting on a person. Cheap and polled, because it drives
+ * the badge that tells someone there is something to approve.
+ */
+export function usePendingApprovalCount(options: { enabled?: boolean; refetchMs?: number } = {}) {
+  const client = useApiClient();
+  return useQuery({
+    queryKey: queryKeys.outboundPending,
+    queryFn: async () =>
+      (await client.request<{ messages: OutboundMessage[] }>('/v1/outbound/messages?status=pending_approval')).messages.length,
+    enabled: options.enabled ?? true,
+    refetchInterval: options.refetchMs ?? 60_000,
+  });
+}
+
+/** Approving sends it now, so the result is the message as it ended up: sent, or failed with a reason. */
+export function useApproveOutbound() {
+  const client = useApiClient();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => client.request<OutboundMessage>(`/v1/outbound/messages/${id}/approve`, { method: 'POST' }),
+    // Settled, not success: a refused approval (too old, sending switched off)
+    // changes what the list should show just as much as a good one.
+    onSettled: () => queryClient.invalidateQueries({ queryKey: queryKeys.outbound }),
+  });
+}
+
+export function useRejectOutbound() {
+  const client = useApiClient();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => client.request<OutboundMessage>(`/v1/outbound/messages/${id}/reject`, { method: 'POST' }),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: queryKeys.outbound }),
+  });
+}
+
+/** The master switch. */
+export function useSetSendingEnabled() {
+  const client = useApiClient();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (sendingEnabled: boolean) =>
+      client.request<{ ok: true }>('/v1/outbound/settings', { method: 'PUT', body: { sendingEnabled } }),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: queryKeys.outbound }),
+  });
+}
+
+/** Move one action to a position. Off removes the setting; the others set a mode. */
+export function useSetActionPosition() {
+  const client = useApiClient();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ actionType, position }: { actionType: string; position: ActionPosition }) => {
+      const mode = modeForPosition(position);
+      if (mode === null) {
+        await client.request(`/v1/outbound/settings/${actionType}`, { method: 'DELETE' });
+      } else {
+        await client.request('/v1/outbound/settings', { method: 'PUT', body: { modes: { [actionType]: mode } } });
+      }
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey: queryKeys.outbound }),
+  });
+}
+
+/** Send the owner themselves a message through the same path everything else uses. */
+export function useSendTestMessage() {
+  const client = useApiClient();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => client.request<{ message: OutboundMessage; sent: boolean }>('/v1/outbound/test', { method: 'POST' }),
+    onSettled: () => queryClient.invalidateQueries({ queryKey: queryKeys.outbound }),
+  });
+}
+
+/**
+ * The mailbox. `refetchMs` is for the moment after coming back from the
+ * provider: it confirms the account by a separate server call that can land
+ * after the browser returns, so the first read may still say "pending".
+ */
+export function useMailbox(options: { enabled?: boolean; refetchMs?: number | false } = {}) {
+  const client = useApiClient();
+  return useQuery({
+    queryKey: queryKeys.mailbox,
+    queryFn: () => client.request<MailboxStatus>('/v1/mailbox'),
+    enabled: options.enabled ?? true,
+    refetchInterval: options.refetchMs ?? false,
+  });
+}
+
+/** Returns the provider's URL; the caller sends the browser (or the in-app browser) there. */
+export function useConnectMailbox() {
+  const client = useApiClient();
+  return useMutation({ mutationFn: () => client.request<{ url: string }>('/v1/mailbox/connect', { method: 'POST' }) });
+}
+
+export function useDisconnectMailbox() {
+  const client = useApiClient();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => client.request('/v1/mailbox', { method: 'DELETE' }),
+    // Disconnecting also turns sending off server-side, so settings change too.
+    onSettled: () =>
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.mailbox }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.outbound }),
+      ]),
   });
 }

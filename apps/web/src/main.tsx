@@ -6,6 +6,7 @@
  * that has to stay in sync.
  */
 
+import { ApiClientProvider } from '@haulq/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import {
   createRootRoute,
@@ -19,6 +20,8 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { AuthGate } from './components/AuthGate.tsx';
 import { Shell } from './components/Shell.tsx';
+import { apiClient } from './lib/api.ts';
+import { AutopilotScreen } from './routes/Autopilot.tsx';
 import { DeleteAccountScreen } from './routes/DeleteAccount.tsx';
 import { DocumentsScreen } from './routes/Documents.tsx';
 import { DriversScreen } from './routes/Drivers.tsx';
@@ -163,6 +166,11 @@ const integrationsRoute = createRoute({
   path: '/integrations',
   component: IntegrationsScreen,
 });
+const autopilotRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/autopilot',
+  component: AutopilotScreen,
+});
 const deleteAccountRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/delete-account',
@@ -185,6 +193,7 @@ const routeTree = rootRoute.addChildren([
   inviteRoute,
   trackRoute,
   integrationsRoute,
+  autopilotRoute,
   deleteAccountRoute,
 ]);
 
@@ -205,7 +214,10 @@ createRoot(root).render(
       {/* AuthGate is outside the router: with Clerk configured, an
           unauthenticated visitor sees the sign-in screen rather than a route. */}
       <AuthGate>
-        <RouterProvider router={router} />
+        {/* The shared hooks in @haulq/client read the API client from context. */}
+        <ApiClientProvider client={apiClient}>
+          <RouterProvider router={router} />
+        </ApiClientProvider>
       </AuthGate>
     </QueryClientProvider>
   </StrictMode>,

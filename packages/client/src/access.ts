@@ -30,6 +30,20 @@ export function canManageIntegrations(role: string | undefined): boolean {
   return role === 'owner';
 }
 
+/**
+ * Seeing what Autopilot drafted, and approving or rejecting it. Owner and
+ * dispatcher see everything; an accountant sees invoices and reminders only
+ * (the API narrows the list, this only decides whether to show the screen).
+ */
+export function canReviewOutbound(role: string | undefined): boolean {
+  return role === 'owner' || role === 'dispatcher' || role === 'accountant';
+}
+
+/** Connecting the mailbox, the master switch, how freely each action may act. The owner's call alone. */
+export function canConfigureOutbound(role: string | undefined): boolean {
+  return role === 'owner';
+}
+
 /** Changing roles and removing people. Inviting is `canDispatch`. */
 export function canManageMembers(role: string | undefined): boolean {
   return role === 'owner';
