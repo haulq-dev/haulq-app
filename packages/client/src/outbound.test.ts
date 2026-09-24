@@ -16,6 +16,7 @@ import {
   previewReason,
   problemReason,
   relatedLabel,
+  stepUpOffers,
   tabFor,
   type OutboundEvidence,
   type OutboundMessage,
@@ -228,5 +229,39 @@ describe('the carrier’s own evidence', () => {
   it('uses the carrier’s words, not the server’s', () => {
     const view = evidenceView(reminders, 'preview', ev({ previewRight: 5 }));
     assert.doesNotMatch(JSON.stringify(view), /shadow|draft|\bact\b/i);
+  });
+});
+
+describe('stepUpOffers', () => {
+  const actions = [
+    { type: 'invoice_delivery' as const, label: 'x', maxMode: 'draft' as const, available: true },
+    { type: 'payment_reminder' as const, label: 'x', maxMode: 'act' as const, available: true },
+    { type: 'detention_claim' as const, label: 'x', maxMode: 'draft' as const, available: false },
+  ];
+  const history = (over: Partial<OutboundEvidence>): OutboundEvidence => ({
+    previewRight: 0,
+    previewWrong: 0,
+    previewUnmarked: 0,
+    recentPreviewWrong: 0,
+    approved: 0,
+    rejected: 0,
+    recentRejected: 0,
+    ...over,
+  });
+
+  it('lists only the actions the history supports, and only ones a loop really drives', () => {
+    const settings = { configured: { invoice_delivery: 'shadow', payment_reminder: 'shadow', detention_claim: 'shadow' } as const, actions };
+    const offers = stepUpOffers(settings, {
+      invoice_delivery: history({ previewRight: 2 }),
+      payment_reminder: history({ previewRight: 7 }),
+      detention_claim: history({ previewRight: 50 }),
+    });
+    assert.deepEqual(offers.map((o) => o.action.type), ['payment_reminder']);
+    assert.equal(offers[0]!.view.stepUp.to, 'ask');
+  });
+
+  it('offers nothing without settings or history', () => {
+    assert.deepEqual(stepUpOffers(undefined, {}), []);
+    assert.deepEqual(stepUpOffers({ configured: { payment_reminder: 'shadow' }, actions }, undefined), []);
   });
 });

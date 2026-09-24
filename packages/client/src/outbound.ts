@@ -255,6 +255,25 @@ export function evidenceView(
   return view;
 }
 
+/**
+ * The actions whose history supports a step up right now, each with the count
+ * that supports it. Only actions a loop really drives are considered. Both
+ * apps show these; neither applies one on its own.
+ */
+export function stepUpOffers(
+  settings: Pick<OutboundSettingsResponse, 'configured' | 'actions'> | undefined,
+  evidence: Record<string, OutboundEvidence> | undefined,
+): Array<{ action: OutboundActionInfo; view: EvidenceView & { stepUp: StepUp } }> {
+  if (!settings) return [];
+  const offers: Array<{ action: OutboundActionInfo; view: EvidenceView & { stepUp: StepUp } }> = [];
+  for (const action of settings.actions) {
+    if (!action.available) continue;
+    const view = evidenceView(action, positionFor(settings, action.type), evidence?.[action.type]);
+    if (view.stepUp) offers.push({ action, view: { ...view, stepUp: view.stepUp } });
+  }
+  return offers;
+}
+
 // --- first run ------------------------------------------------------------------
 
 export interface FirstRunStep {

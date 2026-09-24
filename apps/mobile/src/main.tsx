@@ -32,6 +32,8 @@ import { ErrorBoundary } from './components/ErrorBoundary.tsx';
 import { showsTabBar, TabBar, TabBarSpacer } from './components/Shell.tsx';
 import { apiClient } from './lib/api.ts';
 import { AccountScreen } from './routes/Account.tsx';
+import { AutopilotScreen } from './routes/autopilot/AutopilotScreen.tsx';
+import { MessageScreen } from './routes/autopilot/MessageScreen.tsx';
 import { DocumentScreen } from './routes/documents/DocumentScreen.tsx';
 import { DocumentsScreen } from './routes/documents/DocumentsScreen.tsx';
 import { AddTruckScreen } from './routes/AddTruck.tsx';
@@ -80,14 +82,15 @@ const queryClient: QueryClient = new QueryClient({
 function RootLayout() {
   // The tab bar is for office roles only (see `Shell.tsx`). A signed-out
   // visitor on an invite link has no session, so no role and no tab bar.
-  const tabs = showsTabBar(useSession()?.role);
+  const role = useSession()?.role;
+  const tabs = showsTabBar(role);
   return (
     <div className="pt-[env(safe-area-inset-top)]">
       <Outlet />
       {tabs && (
         <>
           <TabBarSpacer />
-          <TabBar />
+          <TabBar role={role} />
         </>
       )}
     </div>
@@ -139,8 +142,21 @@ const documentRoute = createRoute({
   component: DocumentScreen,
 });
 
+const autopilotRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/autopilot',
+  component: AutopilotScreen,
+});
+const autopilotMessageRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/autopilot/$messageId',
+  component: MessageScreen,
+});
+
 const routeTree = rootRoute.addChildren([
   accountRoute,
+  autopilotRoute,
+  autopilotMessageRoute,
   documentsRoute,
   documentRoute,
   indexRoute,
@@ -157,6 +173,15 @@ declare module '@tanstack/react-router' {
     router: typeof router;
   }
 }
+
+/**
+ * Coming back to the app looks again at what Autopilot wrote. There is no push
+ * yet, so this and the open screen's own timer are how a message that arrived
+ * while the phone was in a pocket shows up: the tab's count and the inbox.
+ */
+CapacitorApp.addListener('appStateChange', ({ isActive }) => {
+  if (isActive) void queryClient.invalidateQueries({ queryKey: queryKeys.outbound });
+});
 
 /**
  * A deep link opened while the app was already running (or cold-started

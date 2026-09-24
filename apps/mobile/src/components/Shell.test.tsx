@@ -30,7 +30,7 @@ vi.mock('../lib/api.ts', async () => {
 });
 
 import { writeSession } from '../lib/api.ts';
-import { showsTabBar, SubscriptionGate } from './Shell.tsx';
+import { showsTabBar, SubscriptionGate, tabsFor } from './Shell.tsx';
 import { ErrorNote } from './ui.tsx';
 
 function org(overrides: Partial<OrgSummary> = {}): OrgSummary {
@@ -131,5 +131,20 @@ describe('ErrorNote', () => {
   it("still shows the API's own explanation for everything else", () => {
     render(<ErrorNote error={new ApiRequestError(403, { code: 'forbidden', explanation: 'Needs owner access.' })} />);
     expect(screen.getByRole('alert')).toHaveTextContent('Needs owner access.');
+  });
+});
+
+describe('tabsFor', () => {
+  const labels = (role: string | undefined) => tabsFor(role).map((t) => t.label);
+
+  it('gives the people who approve Autopilot its tab, and only them', () => {
+    for (const role of ['owner', 'dispatcher', 'accountant']) expect(labels(role)).toContain('Autopilot');
+    expect(labels('driver')).not.toContain('Autopilot');
+    expect(labels(undefined)).not.toContain('Autopilot');
+  });
+
+  it('keeps the tabs everyone already had, in order, with Account last', () => {
+    expect(labels('owner')).toEqual(['Loads', 'Documents', 'Autopilot', 'Account']);
+    expect(labels('driver')).toEqual(['Loads', 'Documents', 'Account']);
   });
 });

@@ -17,7 +17,23 @@ import { useEffect, useRef, useState } from 'react';
 import { requestBlob } from '../lib/api.ts';
 import { ErrorNote } from './ui.tsx';
 
-export function DocumentPreview({ id, contentType, filename }: { id: string; contentType: string | null; filename: string | null }) {
+/**
+ * `path` overrides where the bytes come from. A document's own file is the
+ * default; an Autopilot message's invoice attachment is `/v1/invoices/:id/pdf`
+ * and comes through the same fetch and the same viewer.
+ */
+export function DocumentPreview({
+  id,
+  path,
+  contentType,
+  filename,
+}: {
+  id: string;
+  path?: string | undefined;
+  contentType: string | null;
+  filename: string | null;
+}) {
+  const source = path ?? `/v1/documents/${id}/content`;
   const [blob, setBlob] = useState<Blob | null>(null);
   const [url, setUrl] = useState<string | null>(null);
   const [error, setError] = useState<unknown>(null);
@@ -28,7 +44,7 @@ export function DocumentPreview({ id, contentType, filename }: { id: string; con
     setBlob(null);
     setUrl(null);
     setError(null);
-    requestBlob(`/v1/documents/${id}/content`)
+    requestBlob(source)
       .then((b) => {
         if (cancelled) return;
         made = URL.createObjectURL(b);
@@ -42,7 +58,7 @@ export function DocumentPreview({ id, contentType, filename }: { id: string; con
       cancelled = true;
       if (made) URL.revokeObjectURL(made);
     };
-  }, [id]);
+  }, [source]);
 
   if (error) return <ErrorNote error={error} />;
   if (!url || !blob) return <p className="py-8 text-center text-sm text-mute">Loading the file…</p>;

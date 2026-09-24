@@ -14,7 +14,7 @@
  */
 
 import { Link, useRouterState } from '@tanstack/react-router';
-import { canDispatch, isSubscriptionActive, type OrgSummary } from '@haulq/client';
+import { canDispatch, canReviewOutbound, isSubscriptionActive, usePendingApprovalCount, type OrgSummary } from '@haulq/client';
 import { useEffect, type ReactNode } from 'react';
 import { writeSession } from '../lib/api.ts';
 // AuthGate imports `SubscriptionGate` back from here. The cycle is safe
@@ -117,8 +117,10 @@ function InactiveScreen({
 // ---------------------------------------------------------------------------
 
 interface Tab {
-  to: '/' | '/documents' | '/account';
+  to: '/' | '/documents' | '/autopilot' | '/account';
   label: string;
+  /** Which roles see this tab. Absent means every role that gets a tab bar. */
+  roles?: (role: string | undefined) => boolean;
   icon: (props: { active: boolean }) => ReactNode;
   isActive: (pathname: string) => boolean;
 }
@@ -138,6 +140,15 @@ const TABS: readonly Tab[] = [
     isActive: (p) => p.startsWith('/documents'),
   },
   {
+    to: '/autopilot',
+    label: 'Autopilot',
+    icon: AutopilotIcon,
+    isActive: (p) => p.startsWith('/autopilot'),
+    // What Autopilot drafted, for the people who approve it. A driver has
+    // nothing there, and the API would refuse them anyway.
+    roles: canReviewOutbound,
+  },
+  {
     to: '/account',
     label: 'Account',
     icon: AccountIcon,
@@ -153,16 +164,25 @@ export function showsTabBar(role: string | undefined): boolean {
   return canDispatch(role) || role === 'accountant';
 }
 
-export function TabBar() {
+/** The tabs a role sees, in order. */
+export function tabsFor(role: string | undefined): readonly Tab[] {
+  return TABS.filter((tab) => tab.roles === undefined || tab.roles(role));
+}
+
+export function TabBar({ role }: { role: string | undefined }) {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
+  // Only asked of the roles that can act on it. The count is what tells
+  // someone there is something to approve without opening the tab.
+  const waiting = usePendingApprovalCount({ enabled: canReviewOutbound(role) });
   return (
     <nav
       aria-label="Main"
       className="fixed inset-x-0 bottom-0 z-10 border-t border-line bg-card/95 pb-[env(safe-area-inset-bottom)] backdrop-blur"
     >
       <ul className="mx-auto flex max-w-md">
-        {TABS.map((tab) => {
+        {tabsFor(role).map((tab) => {
           const active = tab.isActive(pathname);
+          const badge = tab.to === '/autopilot' ? (waiting.data ?? 0) : 0;
           return (
             <li key={tab.to} className="flex-1">
               <Link
@@ -172,7 +192,17 @@ export function TabBar() {
                   active ? 'text-brand' : 'text-mute'
                 }`}
               >
-                {tab.icon({ active })}
+                <span className="relative">
+                  {tab.icon({ active })}
+                  {badge > 0 && (
+                    <span
+                      className="num absolute -right-2.5 -top-1 min-w-4 rounded-full bg-brand px-1 text-center text-[0.625rem] font-bold leading-4 text-white"
+                      aria-label={`${badge} waiting`}
+                    >
+                      {badge}
+                    </span>
+                  )}
+                </span>
                 {tab.label}
               </Link>
             </li>
@@ -207,6 +237,15 @@ function DocumentsIcon({ active }: { active: boolean }) {
     <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth={active ? 2.2 : 1.8} aria-hidden>
       <path d="M7 3h7l4 4v13a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Z" strokeLinejoin="round" />
       <path d="M14 3v4h4M9 12h6M9 16h6" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function AutopilotIcon({ active }: { active: boolean }) {
+  return (
+    <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth={active ? 2.2 : 1.8} aria-hidden>
+      <path d="M4 6.5h16v11H4z" strokeLinejoin="round" />
+      <path d="m4.5 7 7.5 6 7.5-6" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }

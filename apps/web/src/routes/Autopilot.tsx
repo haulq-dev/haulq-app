@@ -32,6 +32,7 @@ import {
   problemReason,
   relatedLabel,
   REVIEW_TAB_LABEL,
+  stepUpOffers,
   useApiClient,
   useApproveOutbound,
   useConnectMailbox,
@@ -469,11 +470,7 @@ function StepUps({
   canConfigure: boolean;
 }) {
   const setPosition = useSetActionPosition();
-  if (!settings) return null;
-  const offers = settings.actions
-    .filter((a) => a.available)
-    .map((action) => ({ action, view: evidenceView(action, positionFor(settings, action.type), evidence?.[action.type]) }))
-    .filter((o) => o.view.stepUp !== null);
+  const offers = stepUpOffers(settings, evidence);
   if (offers.length === 0) return null;
 
   return (
@@ -481,15 +478,15 @@ function StepUps({
       {offers.map(({ action, view }) => (
         <div key={action.type} className="border-l-2 border-ok bg-ok-50 px-4 py-3">
           <p className="font-semibold text-ok">Ready to move up? {actionTitle(action.type)}</p>
-          <p className="mt-1 text-sm text-slate">{view.stepUp!.reason}</p>
+          <p className="mt-1 text-sm text-slate">{view.stepUp.reason}</p>
           {canConfigure ? (
             <button
               type="button"
               className="hq-btn hq-btn-primary mt-3"
               disabled={setPosition.isPending}
-              onClick={() => setPosition.mutate({ actionType: action.type, position: view.stepUp!.to })}
+              onClick={() => setPosition.mutate({ actionType: action.type, position: view.stepUp.to })}
             >
-              {setPosition.isPending ? 'Saving…' : `Switch to “${view.stepUp!.label}”`}
+              {setPosition.isPending ? 'Saving…' : `Switch to “${view.stepUp.label}”`}
             </button>
           ) : (
             <p className="mt-2 text-sm text-mute">The owner can switch this in Settings.</p>
