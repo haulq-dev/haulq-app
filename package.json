@@ -17,7 +17,8 @@
     "db:generate": "pnpm --filter @haulq/db generate",
     "db:migrate": "pnpm --filter @haulq/db migrate",
     "db:keypair": "pnpm --filter @haulq/db keypair",
-    "routes:validate-etas": "pnpm --filter @haulq/api validate-here-etas"
+    "routes:validate-etas": "pnpm --filter @haulq/api validate-here-etas",
+    "usage:benchmark": "pnpm --filter @haulq/api usage-benchmark"
   },
   "devDependencies": {
     "turbo": "^2.3.0",
