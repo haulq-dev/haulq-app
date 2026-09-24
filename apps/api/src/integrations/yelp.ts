@@ -4,9 +4,11 @@
  * `FEATURE_REQUESTS_PLAN.md` section 3: the boss's own hedge on the call —
  * "could just be a normal AI search" — over building a persistent trust-
  * score pipeline. This is that smaller version: call Yelp at request time,
- * rank by what Yelp already returns, store nothing. Cheap enough to run on
- * Yelp's free tier (5,000 calls/day) to see whether carriers reach for this
- * before committing to scraping/aggregating reviews ourselves.
+ * rank by what Yelp already returns, store nothing. HaulQ's Yelp account
+ * allows only 300 calls a day in total (not the 5,000 first assumed), which is
+ * enough to see whether carriers reach for this before committing to
+ * scraping/aggregating reviews ourselves, and is why `routes/mechanics.ts`
+ * caps each carrier's searches.
  *
  * Bearer-token auth rather than a query-string key — Yelp's own documented
  * scheme, unlike every HERE endpoint in this codebase — so this file gets
@@ -63,8 +65,13 @@ interface YelpSearchResponse {
 }
 
 export interface MechanicSearchProvider {
-  /** Nearby auto/truck repair shops within `radiusMeters` of a point, closest first. */
-  nearbyMechanics(lat: number, lng: number, radiusMeters: number, query: string): Promise<Mechanic[]>;
+  /**
+   * Repair shops matching `query` within `radiusMeters` of a point, in Yelp's
+   * best-match order (not nearest first). `categories` is a comma-separated list
+   * of Yelp category aliases that narrows what counts as a match; leave it out
+   * and only the words in `query` decide.
+   */
+  nearbyMechanics(lat: number, lng: number, radiusMeters: number, query: string, categories?: string): Promise<Mechanic[]>;
 }
 
 export class YelpMechanicSearchProvider implements MechanicSearchProvider {
@@ -76,12 +83,15 @@ export class YelpMechanicSearchProvider implements MechanicSearchProvider {
     this.baseUrl = baseUrl;
   }
 
-  async nearbyMechanics(lat: number, lng: number, radiusMeters: number, query: string): Promise<Mechanic[]> {
+  async nearbyMechanics(lat: number, lng: number, radiusMeters: number, query: string, categories?: string): Promise<Mechanic[]> {
     const url = new URL(this.baseUrl);
     url.searchParams.set('latitude', String(lat));
     url.searchParams.set('longitude', String(lng));
     url.searchParams.set('radius', String(Math.min(Math.round(radiusMeters), YELP_MAX_RADIUS_METERS)));
-    url.searchParams.set('categories', 'autorepair');
+    // Not a fixed "autorepair": tried against the real API, that hid every
+    // towing company and tire shop (a "heavy duty towing" search returned
+    // ordinary garages). The caller says what kind of business it wants.
+    if (categories) url.searchParams.set('categories', categories);
     url.searchParams.set('term', query);
     // Yelp's own default is "best_match" — named explicitly rather than left
     // implicit, so a caller reading this file does not have to know Yelp's
@@ -106,7 +116,11 @@ export class YelpMechanicSearchProvider implements MechanicSearchProvider {
     const body = (await response.json()) as YelpSearchResponse;
 
     return (body.businesses ?? [])
-      .filter((b) => b.name)
+      // Yelp treats `radius` as a hint: asked for 15 miles, it returned shops
+      // 19 and 37 miles away when few matched. The screen says "within 15
+      // miles", so hold it to that. A business with no distance is dropped
+      // rather than assumed near.
+      .filter((b) => b.name && b.distance !== undefined && b.distance <= radiusMeters)
       .map((b) => ({
         name: b.name!,
         rating: b.rating ?? null,

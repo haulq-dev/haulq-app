@@ -21,7 +21,7 @@ import {
   type Database,
 } from '@haulq/db';
 import type { FastifyInstance } from 'fastify';
-import type { Mechanic, MechanicSearchProvider } from '../integrations/yelp.ts';
+import { YelpApiError, type Mechanic, type MechanicSearchProvider } from '../integrations/yelp.ts';
 import { loadEnv } from '../env.ts';
 import { buildServer } from '../server.ts';
 
@@ -42,26 +42,32 @@ const MECHANIC: Mechanic = {
 
 class FakeMechanicSearchProvider implements MechanicSearchProvider {
   private readonly mechanics: Mechanic[];
-  public calls: Array<{ lat: number; lng: number; radiusMeters: number; query: string }> = [];
+  public calls: Array<{ lat: number; lng: number; radiusMeters: number; query: string; categories: string | undefined }> = [];
+  /** Set to make the next searches fail, as Yelp does when its budget is spent. */
+  public failWith: Error | undefined;
 
   constructor(mechanics: Mechanic[] = [MECHANIC]) {
     this.mechanics = mechanics;
   }
 
-  async nearbyMechanics(lat: number, lng: number, radiusMeters: number, query: string): Promise<Mechanic[]> {
-    this.calls.push({ lat, lng, radiusMeters, query });
+  async nearbyMechanics(lat: number, lng: number, radiusMeters: number, query: string, categories?: string): Promise<Mechanic[]> {
+    if (this.failWith) throw this.failWith;
+    this.calls.push({ lat, lng, radiusMeters, query, categories });
     return this.mechanics;
   }
 }
 
-async function newApp(mechanicSearchProvider: MechanicSearchProvider | undefined): Promise<FastifyInstance> {
+async function newApp(
+  mechanicSearchProvider: MechanicSearchProvider | undefined,
+  extraEnv: Record<string, string> = {},
+): Promise<FastifyInstance> {
   // Every test here controls the provider explicitly, so none of them
   // should depend on whether a real YELP_API_KEY happens to sit in the
   // developer's own .env — same reasoning `nearby-stops.test.ts`'s
   // `newApp` already uses for HERE_API_KEY.
   const { YELP_API_KEY: _yelpApiKey, ...envWithoutYelpKey } = process.env;
   return buildServer(
-    loadEnv({ ...envWithoutYelpKey, NODE_ENV: 'test', DATABASE_URL: url! }),
+    loadEnv({ ...envWithoutYelpKey, ...extraEnv, NODE_ENV: 'test', DATABASE_URL: url! }),
     { mechanicSearchProvider },
   );
 }
@@ -187,6 +193,79 @@ suite('nearby-mechanics route', () => {
         headers: { 'x-haulq-org-id': orgId, 'x-haulq-user-id': userId },
       });
       assert.equal(res.statusCode, 400);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('passes the categories through, and refuses ones that are not category names', async () => {
+    const provider = new FakeMechanicSearchProvider();
+    const app = await newApp(provider);
+    try {
+      const orgId = await newOrg(app, userId, 'Mechanics Categories Carrier');
+      createdOrgs.push(orgId);
+      const headers = { 'x-haulq-org-id': orgId, 'x-haulq-user-id': userId };
+      const base = `/v1/mechanics/nearby?lat=${WICHITA.lat}&lng=${WICHITA.lng}`;
+
+      const ok = await app.inject({ method: 'GET', url: `${base}&query=towing&categories=towing,roadsideassist`, headers });
+      const bad = await app.inject({ method: 'GET', url: `${base}&categories=towing%26limit%3D50`, headers });
+      const none = await app.inject({ method: 'GET', url: base, headers });
+
+      assert.equal(ok.statusCode, 200);
+      assert.equal(provider.calls[0]!.categories, 'towing,roadsideassist');
+      assert.equal(bad.statusCode, 400, 'nothing else can ride along in the query string');
+      assert.equal(none.statusCode, 200);
+      assert.equal(provider.calls[1]!.categories, undefined);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('caps each carrier\'s searches per day, so one carrier cannot spend the whole Yelp budget', async () => {
+    const provider = new FakeMechanicSearchProvider();
+    const app = await newApp(provider, { YELP_ORG_DAILY_LIMIT: '2' });
+    try {
+      const busy = await newOrg(app, userId, 'Mechanics Busy Carrier');
+      const quiet = await newOrg(app, userId, 'Mechanics Quiet Carrier');
+      createdOrgs.push(busy, quiet);
+      const search = (orgId: string) =>
+        app.inject({
+          method: 'GET',
+          url: `/v1/mechanics/nearby?lat=${WICHITA.lat}&lng=${WICHITA.lng}`,
+          headers: { 'x-haulq-org-id': orgId, 'x-haulq-user-id': userId },
+        });
+
+      assert.equal((await search(busy)).statusCode, 200);
+      assert.equal((await search(busy)).statusCode, 200);
+      const third = await search(busy);
+      assert.equal(third.statusCode, 429);
+      assert.equal(third.json().code, 'org_search_limit_reached');
+      assert.match(third.json().explanation, /2 repair-shop searches for today/);
+      assert.equal(provider.calls.length, 2, 'the refused one never reached Yelp');
+
+      assert.equal((await search(quiet)).statusCode, 200, "another carrier's day is its own");
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('says so plainly when Yelp itself has run out of its daily budget', async () => {
+    const provider = new FakeMechanicSearchProvider();
+    provider.failWith = new YelpApiError(429, 'Yelp 429: ACCESS_LIMIT_REACHED');
+    const app = await newApp(provider);
+    try {
+      const orgId = await newOrg(app, userId, 'Mechanics Yelp Limit Carrier');
+      createdOrgs.push(orgId);
+
+      const res = await app.inject({
+        method: 'GET',
+        url: `/v1/mechanics/nearby?lat=${WICHITA.lat}&lng=${WICHITA.lng}`,
+        headers: { 'x-haulq-org-id': orgId, 'x-haulq-user-id': userId },
+      });
+
+      assert.equal(res.statusCode, 429);
+      assert.equal(res.json().code, 'search_limit_reached');
+      assert.match(res.json().explanation, /daily limit/);
     } finally {
       await app.close();
     }

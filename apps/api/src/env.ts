@@ -293,6 +293,18 @@ const EnvSchema = z.object({
   YELP_API_KEY: z.string().optional(),
   /** Override for tests only — production never sets this. */
   YELP_BASE_URL: z.string().url().optional(),
+  /**
+   * How many repair-shop searches one carrier may run per day (UTC).
+   *
+   * HaulQ's Yelp account allows **300 calls a day in total**, shared by every
+   * carrier (the response's `ratelimit-dailylimit` header says so), and each
+   * "Find shops" click is one call. Without a per-carrier cap, one carrier
+   * could spend the whole day's budget and leave everyone else with an error.
+   * 25 lets a dozen carriers each have a normal day. Kept in this process's
+   * memory: it resets on a restart and is not shared across instances, which is
+   * fine for one instance and a soft limit; Yelp's own 429 is the hard one.
+   */
+  YELP_ORG_DAILY_LIMIT: z.coerce.number().int().min(1).default(25),
 
   /**
    * Unipile, for `FEATURE_REQUESTS_PLAN.md` section 1's mailbox-ingest

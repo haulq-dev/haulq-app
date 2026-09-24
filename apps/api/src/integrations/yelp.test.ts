@@ -71,7 +71,7 @@ describe('YelpMechanicSearchProvider.nearbyMechanics', () => {
     assert.equal(url.searchParams.has('apikey'), false);
   });
 
-  it('requests coordinates, a clamped radius, the autorepair category and the given term', async () => {
+  it('requests coordinates, a clamped radius and the given term', async () => {
     const provider = new YelpMechanicSearchProvider({ apiKey: 'test-key' }, base);
     await provider.nearbyMechanics(37.6889, -97.3365, 50_000, 'diesel truck repair');
 
@@ -80,8 +80,43 @@ describe('YelpMechanicSearchProvider.nearbyMechanics', () => {
     assert.equal(url.searchParams.get('longitude'), '-97.3365');
     // Yelp's own documented ceiling is 40,000 m — a larger ask is clamped, not sent as-is.
     assert.equal(url.searchParams.get('radius'), '40000');
-    assert.equal(url.searchParams.get('categories'), 'autorepair');
     assert.equal(url.searchParams.get('term'), 'diesel truck repair');
+  });
+
+  it('narrows to the categories it is given, and sends none by default', async () => {
+    const provider = new YelpMechanicSearchProvider({ apiKey: 'test-key' }, base);
+    await provider.nearbyMechanics(37.6889, -97.3365, 24_140, 'heavy duty towing', 'towing');
+    await provider.nearbyMechanics(37.6889, -97.3365, 24_140, 'anything at all');
+
+    assert.equal(new URL(requests[0]!, base).searchParams.get('categories'), 'towing');
+    // A fixed "autorepair" hid every towing company and tire shop when this was
+    // tried against the real Yelp API, so nothing is assumed.
+    assert.equal(new URL(requests[1]!, base).searchParams.has('categories'), false);
+  });
+
+  it('holds results to the radius it was asked for, though Yelp treats radius as a hint', async () => {
+    script.body = {
+      businesses: [
+        { name: 'Near Shop', distance: 8_046.72, review_count: 3 }, // 5 mi
+        { name: 'Far Shop', distance: 65_000, review_count: 9 }, // ~40 mi, though 15 mi was asked
+        { name: 'No Distance Shop', review_count: 1 },
+      ],
+    };
+    const provider = new YelpMechanicSearchProvider({ apiKey: 'test-key' }, base);
+
+    const mechanics = await provider.nearbyMechanics(37.6889, -97.3365, 24_140, 'diesel truck repair');
+
+    assert.deepEqual(mechanics.map((m) => m.name), ['Near Shop']);
+  });
+
+  it('reports Yelp running out of its daily budget as a 429 the caller can recognise', async () => {
+    script.status = 429;
+    script.body = { error: { code: 'ACCESS_LIMIT_REACHED', description: 'You have reached the access limit for this client' } };
+    const provider = new YelpMechanicSearchProvider({ apiKey: 'test-key' }, base);
+    await assert.rejects(
+      () => provider.nearbyMechanics(37.6889, -97.3365, 24_140, 'diesel truck repair'),
+      (err: unknown) => err instanceof YelpApiError && err.status === 429,
+    );
   });
 
   it('maps businesses to name, rating, distance in miles and a joined address', async () => {
