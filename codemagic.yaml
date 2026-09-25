@@ -136,9 +136,10 @@ workflows:
         # already sitting in TestFlight from the first successful upload —
         # ENTITY_ERROR.ATTRIBUTE.INVALID.DUPLICATE on the second build.
         # get-latest-*testflight*-build-number reads the track builds
-        # actually land on. Revisit if this app ever also ships an App
-        # Store release — at that point the real latest is whichever of
-        # the two tracks is higher, not just TestFlight's.
+        # actually land on. 1.0 has since shipped to the App Store, which
+        # closes that version's train: every release after it needs
+        # MARKETING_VERSION in project.pbxproj bumped by hand before
+        # building, or the upload fails with ITMS-90062 / 90186.
         working_directory: apps/mobile/ios/App
         script: |
           LATEST=$(app-store-connect get-latest-testflight-build-number "$APP_STORE_APP_ID")
