@@ -52,6 +52,7 @@ import {
   type Scope,
 } from '@haulq/db';
 import type { ModelDocumentReader } from './model-reader.ts';
+import { proposeLoad, type ProposeOutcome } from './propose-load.ts';
 import type { DocumentReader } from './reader.ts';
 import { validateDocument, type ValidationAttempt } from './validate.ts';
 
@@ -60,6 +61,14 @@ export interface PipelineDeps {
   storage: ObjectStore;
   /** Unset means the model pass does not exist yet in this environment — see the module note. */
   modelReader?: ModelDocumentReader | undefined;
+  /**
+   * Turn an unattached rate confirmation into a proposed load (`propose-load.ts`).
+   * Unset means it does not happen, which is every environment that has not
+   * asked for it. `onError` receives a failed reading (a model that is down):
+   * a proposal is a convenience, and the document is already read and safe, so
+   * that must never fail the delivery and make the outbox re-read the document.
+   */
+  proposals?: { dailyLimit: number; onError: (err: unknown) => void } | undefined;
 }
 
 export type PipelineOutcome =
@@ -89,6 +98,8 @@ export type PipelineOutcome =
        * arrived before its load existed — the attach route runs it then.
        */
       validation: ValidationAttempt;
+      /** What happened when it was offered to `propose-load.ts`. Absent when proposals are off, or this is not an unattached rate confirmation. */
+      proposal?: ProposeOutcome;
     };
 
 /**
@@ -156,7 +167,7 @@ export async function processDocument(
           missing: patterns.missing.filter((f) => !(f in reading.fields)),
           versionSuffix: deps.modelReader.name,
           modelName: deps.modelReader.name,
-        });
+        }, { text: read.text, deps });
       }
     }
 
@@ -185,7 +196,7 @@ export async function processDocument(
           missing: stillMissing,
           versionSuffix: `${extracted.version}+${deps.modelReader.name}`,
           modelName: deps.modelReader.name,
-        });
+        }, { text: read.text, deps });
       }
     }
   }
@@ -197,7 +208,7 @@ export async function processDocument(
     fields: extracted.fields,
     missing: extracted.missing,
     versionSuffix: extracted.version,
-  });
+  }, { text: read.text, deps });
 }
 
 /** A rule-found value always wins over a model-found one for the same field — the rule is reading a label, not estimating. */
@@ -232,6 +243,7 @@ async function finishExtraction(
     /** Set only when a model actually produced part of this reading — see the module note on attribution. */
     modelName?: string;
   },
+  after: { text: string; deps: PipelineDeps },
 ): Promise<PipelineOutcome> {
   const version = `${read.version}/${args.versionSuffix}`;
 
@@ -256,6 +268,25 @@ async function finishExtraction(
 
   const validation = await validateDocument(writeScope, documentId);
 
+  // A rate confirmation that arrived before its load: worth asking what load it
+  // describes. Only when it is attached to nothing, and only when asked for.
+  let proposal: ProposeOutcome | undefined;
+  if (
+    after.deps.proposals &&
+    args.kind === 'rate_confirmation' &&
+    validation.status === 'skipped' &&
+    validation.why === 'not_attached'
+  ) {
+    try {
+      proposal = await proposeLoad(s, documentId, after.text, {
+        modelReader: after.deps.modelReader,
+        dailyLimit: after.deps.proposals.dailyLimit,
+      });
+    } catch (err) {
+      after.deps.proposals.onError(err);
+    }
+  }
+
   return {
     status: 'read',
     // Re-read rather than reusing `updated`: validation writes the status and
@@ -266,5 +297,6 @@ async function finishExtraction(
     missing: args.missing,
     extractable: worthExtracting(args.kind),
     validation,
+    ...(proposal ? { proposal } : {}),
   };
 }

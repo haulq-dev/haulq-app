@@ -28,13 +28,18 @@
  */
 
 import {
+  buildLoadReadingPrompt,
   DOCUMENT_KINDS,
   FIELD_NAMES_BY_KIND,
+  LOAD_READING_PROMPT_VERSION,
+  LOAD_READING_SYSTEM_PROMPT,
   parseCount,
+  parseLoadResponse,
   parseMoney,
   type Classification,
   type DocumentKind,
   type ExtractedField,
+  type LoadReading,
 } from '@haulq/contracts';
 
 export const DEFAULT_MODEL = 'claude-haiku-4-5-20251001';
@@ -61,6 +66,18 @@ export interface ModelDocumentReader {
    * versus absence.
    */
   read(text: string, guess: Classification | null): Promise<ModelReading | null>;
+
+  /**
+   * Read a rate confirmation as the load it describes: stops, broker, dates.
+   * Optional so a reader that only classifies (and every existing test fake)
+   * still satisfies this interface; a reader without it simply cannot propose a
+   * load. Returns null when nothing usable came back, which is a normal outcome.
+   * `FEATURE_REQUESTS_PLAN.md` section 12; the checking is `parseLoadResponse`.
+   */
+  readLoad?(text: string): Promise<LoadReading | null>;
+
+  /** Which reader and prompt made a load reading, stored on the proposal the way `name` is stored on a document. */
+  readonly loadReaderName?: string;
 }
 
 /** Thrown for anything worth retrying — a timeout, a 5xx, a rate limit. */
@@ -180,6 +197,7 @@ export const MODEL_DEFAULT_TIMEOUT_MS = 30_000;
 
 export class AnthropicModelReader implements ModelDocumentReader {
   readonly name: string;
+  readonly loadReaderName: string;
 
   readonly #apiKey: string;
   readonly #model: string;
@@ -201,9 +219,11 @@ export class AnthropicModelReader implements ModelDocumentReader {
     // the output, so both belong in the version a redelivery is compared
     // against.
     this.name = `anthropic/${this.#model}/${MODEL_PROMPT_VERSION}`;
+    this.loadReaderName = `anthropic/${this.#model}/${LOAD_READING_PROMPT_VERSION}`;
   }
 
-  async read(text: string, guess: Classification | null): Promise<ModelReading | null> {
+  /** What was said to Anthropic and what came back, shared by every kind of reading. Throws `ModelReaderError` for anything worth retrying. */
+  async #complete(system: string, user: string, maxTokens: number): Promise<string> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.#timeoutMs);
 
@@ -218,9 +238,9 @@ export class AnthropicModelReader implements ModelDocumentReader {
         },
         body: JSON.stringify({
           model: this.#model,
-          max_tokens: this.#maxTokens,
-          system: SYSTEM_PROMPT,
-          messages: [{ role: 'user', content: buildPrompt(text, guess) }],
+          max_tokens: maxTokens,
+          system,
+          messages: [{ role: 'user', content: user }],
         }),
         signal: controller.signal,
       });
@@ -244,11 +264,24 @@ export class AnthropicModelReader implements ModelDocumentReader {
     const body = (await response.json()) as {
       content?: Array<{ type: string; text?: string }>;
     };
-    const reply = (body.content ?? [])
+    return (body.content ?? [])
       .filter((c) => c.type === 'text')
       .map((c) => c.text ?? '')
       .join('');
+  }
 
-    return parseModelResponse(reply, text);
+  async read(text: string, guess: Classification | null): Promise<ModelReading | null> {
+    return parseModelResponse(await this.#complete(SYSTEM_PROMPT, buildPrompt(text, guess), this.#maxTokens), text);
+  }
+
+  /**
+   * A rate confirmation as a load. A bigger answer than a five-field reading
+   * (every stop, with its address and appointment), so it has more room to reply
+   * in. What comes back is not trusted: `parseLoadResponse` checks every string
+   * against `text` before anything is used.
+   */
+  async readLoad(text: string): Promise<LoadReading | null> {
+    const reply = await this.#complete(LOAD_READING_SYSTEM_PROMPT, buildLoadReadingPrompt(text), Math.max(this.#maxTokens, 2048));
+    return parseLoadResponse(reply, text);
   }
 }

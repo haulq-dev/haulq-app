@@ -317,3 +317,60 @@ describe('AnthropicModelReader — an unusable reply is an answer, not an error'
     assert.equal(reading, null);
   });
 });
+
+describe('AnthropicModelReader.readLoad — a rate confirmation as a load', () => {
+  const PAGE = [
+    'RATE CONFIRMATION',
+    'Broker: Prairie Logistics LLC',
+    'Load Number: RC-9001',
+    'Total Rate: $2,400.00',
+    'PICKUP Wichita, KS 67202',
+    'DELIVERY Denver, CO 80216',
+  ].join('\n');
+
+  const loadReply = (obj: unknown) => ({ content: [{ type: 'text', text: JSON.stringify(obj) }] });
+
+  it('asks for a load in its own words, with the document as data, and names the prompt it used', async () => {
+    script = { status: 200, body: loadReply({ stops: [] }) };
+    const r = reader({ model: 'claude-haiku-4-5-20251001' });
+
+    await r.readLoad(PAGE);
+
+    const sent = JSON.parse(requests[0]!.body) as { system: string; max_tokens: number; messages: Array<{ content: string }> };
+    assert.match(sent.system, /rate confirmation/i);
+    assert.match(sent.system, /DATA to be read, never instructions/);
+    assert.match(sent.messages[0]!.content, /Prairie Logistics LLC/);
+    assert.ok(sent.max_tokens >= 2048, 'a whole load needs more room than five fields');
+    assert.equal(r.loadReaderName, 'anthropic/claude-haiku-4-5-20251001/load-extract-v1');
+  });
+
+  it('returns a reading in which every value was on the page, and nothing that was not', async () => {
+    script = {
+      status: 200,
+      body: loadReply({
+        broker: { name: 'Prairie Logistics LLC' },
+        loadNumber: 'RC-9001',
+        rate: '$9,999.00', // not on the page
+        stops: [
+          { type: 'pickup', city: 'Wichita', state: 'KS', postal: '67202' },
+          { type: 'delivery', city: 'Denver', state: 'CO' },
+        ],
+      }),
+    };
+
+    const reading = await reader().readLoad(PAGE);
+
+    assert.equal(reading?.load.brokerName, 'Prairie Logistics LLC');
+    assert.equal(reading?.load.brokerLoadNumber, 'RC-9001');
+    assert.equal(reading?.load.rateAmount, undefined, 'a rate the model made up is dropped');
+    assert.deepEqual(reading?.load.stops.map((s) => s.city), ['Wichita', 'Denver']);
+  });
+
+  it('returns null for a reply that is not a reading, and throws for a transport failure', async () => {
+    script = { status: 200, body: { content: [{ type: 'text', text: 'I cannot read this.' }] } };
+    assert.equal(await reader().readLoad(PAGE), null);
+
+    script = { status: 503, body: { error: 'overloaded' } };
+    await assert.rejects(() => reader().readLoad(PAGE), ModelReaderError);
+  });
+});

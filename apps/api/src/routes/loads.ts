@@ -87,7 +87,7 @@ interface PgError {
   message?: string;
 }
 
-function rethrow(err: unknown): never {
+export function rethrow(err: unknown): never {
   if (err instanceof LoadError) {
     const status = err.code === 'not_found' ? 404 : 400;
     throw new HttpError(status, err.code, err.explanation);

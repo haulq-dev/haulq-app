@@ -305,6 +305,14 @@ const EnvSchema = z.object({
    * fine for one instance and a soft limit; Yelp's own 429 is the hard one.
    */
   YELP_ORG_DAILY_LIMIT: z.coerce.number().int().min(1).default(25),
+  /**
+   * How many rate confirmations one carrier may have read as a possible load per
+   * day (`FEATURE_REQUESTS_PLAN.md` section 12). Each is one model call, and the
+   * mailbox takes mail from anyone, so this bounds the worst case. It only has
+   * any effect where a model is configured (`ANTHROPIC_API_KEY`). 0 turns
+   * proposing loads off.
+   */
+  LOAD_PROPOSALS_PER_DAY: z.coerce.number().int().min(0).default(30),
 
   /**
    * Unipile, for `FEATURE_REQUESTS_PLAN.md` section 1's mailbox-ingest

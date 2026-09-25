@@ -106,6 +106,13 @@
       "when": 1790270302874,
       "tag": "0014_loose_bishop",
       "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1790350694558,
+      "tag": "0015_icy_pixie",
+      "breakpoints": true
     }
   ]
 }

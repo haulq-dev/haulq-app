@@ -41,6 +41,8 @@ export interface HandlerDeps {
   reader: DocumentReader;
   /** Unset means no model pass — see `documents/pipeline.ts`. */
   modelReader?: ModelDocumentReader | undefined;
+  /** Rate confirmations one carrier may have read as a possible load per day. 0 or unset: none are. */
+  loadProposalsPerDay?: number | undefined;
   log: {
     info: (o: unknown, msg: string) => void;
     warn: (o: unknown, msg: string) => void;
@@ -166,6 +168,19 @@ function documentHandler(deps: HandlerDeps): OutboxHandler {
       reader: deps.reader,
       storage: deps.storage,
       modelReader: deps.modelReader,
+      proposals: deps.loadProposalsPerDay
+        ? {
+            dailyLimit: deps.loadProposalsPerDay,
+            // A proposal is a convenience. The document is already read and safe,
+            // so a model that is down is logged and not retried: failing here would
+            // make the outbox re-read the whole document to try again.
+            onError: (err) =>
+              deps.log.warn(
+                { documentId, err: err instanceof Error ? err.message : String(err) },
+                'could not read a rate confirmation as a load — it stays in the inbox',
+              ),
+          }
+        : undefined,
     });
 
     const base = { seq: message.seq.toString(), documentId, reader: deps.reader.name };

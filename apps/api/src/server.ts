@@ -54,6 +54,7 @@ import { requestContextPlugin } from './plugins/request-context.ts';
 import { billingRoutes } from './routes/billing.ts';
 import { brokerRoutes } from './routes/brokers.ts';
 import { documentRoutes } from './routes/documents.ts';
+import { loadProposalRoutes } from './routes/load-proposals.ts';
 import { geocodeRoutes } from './routes/geocode.ts';
 import { feasibilityRoutes } from './routes/feasibility.ts';
 import { mechanicsRoutes } from './routes/mechanics.ts';
@@ -81,6 +82,10 @@ declare module 'fastify' {
     db: Database;
     env: Env;
     storage: ObjectStore;
+    /** Reads a document's text. The pipeline uses it; the routes that re-read one on demand use it too. */
+    documentReader: DocumentReader;
+    /** Undefined without `ANTHROPIC_API_KEY` — see `documents/model-reader.ts`. */
+    modelReader: ModelDocumentReader | undefined;
     /** Undefined until `HERE_API_KEY` is set — see `runtime.ts`'s `buildRoutingProvider`. */
     routingProvider: RoutingProvider | undefined;
     /** Same gate as `routingProvider` — see `runtime.ts`'s `buildGeocoder`. */
@@ -252,6 +257,8 @@ export async function buildServer(
   const mailer = options.mailer ?? buildMailer(env, app.log);
   const reader = options.reader ?? buildDocumentReader(env, app.log);
   const modelReader = options.modelReader ?? buildModelReader(env, app.log);
+  app.decorate('documentReader', reader);
+  app.decorate('modelReader', modelReader);
   app.decorate('routingProvider', options.routingProvider ?? buildRoutingProvider(env, app.log));
   // One call, two decorations — see `runtime.ts`'s `buildGeocoder` note on
   // why this must not call it twice.
@@ -271,6 +278,7 @@ export async function buildServer(
       storage,
       reader,
       modelReader,
+      loadProposalsPerDay: env.LOAD_PROPOSALS_PER_DAY,
       log: {
         info: (o, msg) => app.log.info(o, msg),
         warn: (o, msg) => app.log.warn(o, msg),
@@ -439,6 +447,7 @@ export async function buildServer(
   // Registered without fastify-plugin so its binary body parser stays scoped
   // to these routes rather than applying to every upload in the API.
   await app.register(documentRoutes);
+  await app.register(loadProposalRoutes);
   // Unauthenticated-tenant, secret-gated — same family as webhookRoutes above,
   // just Basic Auth instead of an HMAC signature. Ordinary JSON body, so no
   // scoped content type parser needed.

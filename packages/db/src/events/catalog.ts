@@ -746,6 +746,22 @@ export const eventCatalog = {
     subjectType: 'outbound_message',
     describe: (p) => `Marked the preview to ${p.to} as ${p.verdict === 'right' ? 'right' : 'wrong'}.`,
   }),
+  'load_proposal.created': define<{ filename: string; stops: number }>({
+    subjectType: 'load_proposal',
+    describe: (p) => `Read ${p.filename} as a possible load with ${p.stops} stop${p.stops === 1 ? '' : 's'}, waiting for someone to look.`,
+  }),
+  'load_proposal.accepted': define<{ filename: string; reference: number }>({
+    subjectType: 'load_proposal',
+    describe: (p) => `Created load ${p.reference} from ${p.filename}.`,
+  }),
+  'load_proposal.attached': define<{ filename: string; reference: number }>({
+    subjectType: 'load_proposal',
+    describe: (p) => `Attached ${p.filename} to the existing load ${p.reference} instead of creating a new one.`,
+  }),
+  'load_proposal.dismissed': define<{ filename: string }>({
+    subjectType: 'load_proposal',
+    describe: (p) => `Dismissed ${p.filename}: it was not a load to create.`,
+  }),
   'outbound.expired': define<{ actionType: string; to: string; subject: string }>({
     subjectType: 'outbound_message',
     describe: (p) => `Withdrew the drafted message to ${p.to} ("${p.subject}") — it went out of date before anyone approved it.`,

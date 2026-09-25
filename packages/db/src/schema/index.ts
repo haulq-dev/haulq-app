@@ -21,6 +21,7 @@ export * from './tenancy.ts';
 export * from './fleet.ts';
 export * from './brokers.ts';
 export * from './mailbox.ts';
+export * from './load-proposals.ts';
 export * from './outbound.ts';
 export * from './loads.ts';
 export * from './documents.ts';

@@ -92,6 +92,7 @@ const loop = startOutboxLoop({
     storage,
     reader,
     modelReader,
+    loadProposalsPerDay: env.LOAD_PROPOSALS_PER_DAY,
     log,
   }),
   intervalMs,
