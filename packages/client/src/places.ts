@@ -99,6 +99,21 @@ export function formatRating(mechanic: Pick<Mechanic, 'rating' | 'reviewCount'>)
   return `${mechanic.rating.toFixed(1)} (${reviews})`;
 }
 
+/**
+ * Which of Yelp's star images shows a rating: the part of its file name between
+ * `Review_Ribbon_<size>_` and `@<density>.png`. Yelp rounds to half a star, and
+ * its ratings arrive as decimals (4.8, 2.3), so this rounds the same way. Their
+ * naming is not regular for the half stars: 1.5 is "2_1_half" and 2.5 is
+ * "2_half", checked against the images. Null for a business with no rating, which
+ * shows no stars rather than an empty row that reads as one star.
+ */
+export function yelpStarKey(rating: number | null): string | null {
+  if (rating === null || !Number.isFinite(rating)) return null;
+  const half = Math.round(Math.min(5, Math.max(0, rating)) * 2);
+  const KEYS = ['0', 'half', '1', '2_1_half', '2', '2_half', '3', '3_half', '4', '4_half', '5'] as const;
+  return KEYS[half]!;
+}
+
 /** A phone number a phone can dial. Null when there is nothing dialable. */
 export function telHref(phone: string | null): string | null {
   const digits = phone?.replace(/[^\d+]/g, '') ?? '';

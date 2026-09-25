@@ -11,6 +11,7 @@ import {
   STOP_RADIUS_OPTIONS,
   telHref,
   tidyAddress,
+  yelpStarKey,
   type NearbyPlace,
 } from './places.ts';
 
@@ -78,6 +79,23 @@ describe('repair shops', () => {
     }
     // A towing search must not be limited to garages, which is what a fixed autorepair category did.
     assert.equal(MECHANIC_SEARCHES.find((s) => s.label === 'Towing')!.categories, 'towing');
+  });
+
+  it('picks the Yelp star image by rounding to the nearest half star, with its irregular half-star names', () => {
+    assert.equal(yelpStarKey(5), '5');
+    assert.equal(yelpStarKey(4.8), '5', 'Yelp ratings arrive as decimals');
+    assert.equal(yelpStarKey(4.5), '4_half');
+    assert.equal(yelpStarKey(4.2), '4');
+    assert.equal(yelpStarKey(2.5), '2_half');
+    assert.equal(yelpStarKey(1.5), '2_1_half');
+    assert.equal(yelpStarKey(0.5), 'half');
+    assert.equal(yelpStarKey(0), '0');
+    assert.equal(yelpStarKey(7), '5', 'out of range is held to the scale');
+  });
+
+  it('shows no stars for a business Yelp has not rated', () => {
+    assert.equal(yelpStarKey(null), null);
+    assert.equal(yelpStarKey(Number.NaN), null);
   });
 
   it('makes a number a phone can dial, or nothing', () => {

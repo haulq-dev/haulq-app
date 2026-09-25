@@ -13,7 +13,6 @@ import {
   DEFAULT_MECHANIC_RADIUS,
   DEFAULT_STOP_RADIUS,
   formatMiles,
-  formatRating,
   groupPlaces,
   mapsUrl,
   MECHANIC_RADIUS_OPTIONS,
@@ -25,6 +24,7 @@ import {
   useLoadTracking,
   useNearbyMechanics,
   useNearbyStops,
+  yelpStarKey,
   type Load,
   type MechanicSearch,
 } from '@haulq/client';
@@ -36,6 +36,45 @@ import { CoordinateLookup } from './Loads.tsx';
 /** A state the carrier cannot do anything about, said calmly: no alert styling. */
 function ExpectedNote({ children }: { children: React.ReactNode }) {
   return <p className="border-l-2 border-line bg-wash px-3 py-2 text-sm text-mute">{children}</p>;
+}
+
+/**
+ * Yelp's own logo and stars, unaltered (see `public/yelp/NOTICE.txt`). Yelp's
+ * display requirements ask for the logo to be prominent on anything that came
+ * from Yelp, linking to Yelp; a rating shown with Yelp's branded stars beside
+ * the review count; and no generic stars. Sized by height only, so the
+ * proportions are Yelp's.
+ */
+function YelpMark({ height }: { height: number }) {
+  return <img src="/yelp/yelp_logo.svg" alt="Yelp" style={{ height, width: 'auto' }} />;
+}
+
+function YelpLogo({ href, height }: { href: string; height: number }) {
+  return (
+    <a href={href} target="_blank" rel="noreferrer" className="inline-flex items-center align-middle">
+      <YelpMark height={height} />
+    </a>
+  );
+}
+
+function YelpStars({ rating, reviewCount }: { rating: number | null; reviewCount: number }) {
+  const key = yelpStarKey(rating);
+  if (key === null || rating === null) return <span className="text-sm text-mute">Not rated on Yelp</span>;
+  const base = `/yelp/stars/Review_Ribbon_medium_20_${key}`;
+  return (
+    <span className="inline-flex items-center gap-2">
+      <img
+        src={`${base}@1x.png`}
+        srcSet={`${base}@1x.png 1x, ${base}@2x.png 2x`}
+        width={108}
+        height={20}
+        alt={`${rating.toFixed(1)} out of 5 stars on Yelp`}
+      />
+      <span className="num text-sm text-slate">
+        {reviewCount} review{reviewCount === 1 ? '' : 's'}
+      </span>
+    </span>
+  );
 }
 
 const code = (error: unknown) => (error instanceof ApiRequestError ? error.code : null);
@@ -282,7 +321,7 @@ export function NearbyMechanicsCard({ load }: { load: Load }) {
                     <li key={`${m.name}-${i}`} className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 py-3">
                       <div className="min-w-0">
                         <p className="font-semibold">{m.name}</p>
-                        <p className="num text-sm text-slate">{formatRating(m)}</p>
+                        <YelpStars rating={m.rating} reviewCount={m.reviewCount} />
                         {m.address && <p className="text-xs text-mute">{m.address}</p>}
                         <p className="mt-1 flex flex-wrap gap-x-4 text-sm">
                           {tel && m.phone && (
@@ -290,8 +329,9 @@ export function NearbyMechanicsCard({ load }: { load: Load }) {
                               {m.phone}
                             </a>
                           )}
-                          <a href={m.yelpUrl} target="_blank" rel="noreferrer" className="text-brand underline">
-                            View on Yelp
+                          <a href={m.yelpUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 text-brand underline">
+                            Read reviews on
+                            <YelpMark height={16} />
                           </a>
                         </p>
                       </div>
@@ -300,7 +340,10 @@ export function NearbyMechanicsCard({ load }: { load: Load }) {
                   );
                 })}
               </ul>
-              <p className="mt-2 text-xs text-mute">Ratings and reviews are from Yelp.</p>
+              <p className="mt-3 flex items-center gap-2 text-xs text-mute">
+                Ratings and reviews from
+                <YelpLogo href="https://www.yelp.com" height={20} />
+              </p>
             </>
           ))}
       </div>

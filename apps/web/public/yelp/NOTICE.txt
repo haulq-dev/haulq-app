@@ -1,0 +1,25 @@
+Yelp brand assets. Do not edit, recolor, redraw or stretch these files.
+
+What they are
+  yelp_logo.svg   The Yelp logo, light-background version.
+                  From https://www.yelp.com/brand (yelp_logos.zip: Logo/Light bg/RGB).
+  stars/          Yelp's branded star ratings, desktop, 20 px high, @1x and @2x.
+                  From https://terms.yelp.com/developers/display_requirements/
+                  (ReviewRibbon_v2.zip: Desktop/medium_20).
+  Both were downloaded 2026-09-24 and are used unaltered.
+
+Why they are here
+  HaulQ's repair-shop search shows Yelp ratings. Yelp's display requirements say
+  the Yelp logo must be prominently visible on content that came from Yelp, that
+  a Yelp rating must be shown with Yelp's own branded stars ("generic or
+  unbranded stars are not permitted"), next to the review count, and that each
+  business links to its own Yelp page. Yelp data must not be stored longer than
+  24 hours. HaulQ stores none of it.
+
+Rules for anyone changing this
+  - Yelp owns the logo and the stars. Do not use them anywhere that is not Yelp
+    content, and do not use them to suggest Yelp endorses HaulQ.
+  - Questions about use: api@yelp.com (display) and trademarks@yelp.com (brand).
+
+File names for the stars follow Yelp's own scheme. The half-star names are not
+obvious: _half is 0.5, _2_1_half is 1.5 and _2_half is 2.5.
