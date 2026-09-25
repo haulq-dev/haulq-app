@@ -85,7 +85,7 @@ export async function storeLoadProposal(
         : 0;
       await recordEvent(tx, 'load_proposal.created', {
         subjectId: row.id,
-        payload: { filename: doc?.filename ?? 'a rate confirmation', stops },
+        payload: { filename: doc?.filename ?? 'a rate confirmation', stops, proposalId: row.id },
       });
     }
     return { proposal: row, created: true };

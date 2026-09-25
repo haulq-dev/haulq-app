@@ -35,6 +35,8 @@ import { MembersScreen } from './routes/Members.tsx';
 import { OnboardingScreen } from './routes/Onboarding.tsx';
 import { PayScreen } from './routes/Pay.tsx';
 import { ProfileScreen } from './routes/Profile.tsx';
+import { ProposalReviewScreen } from './routes/ProposalReview.tsx';
+import { ProposalsScreen } from './routes/Proposals.tsx';
 import { TimelineScreen } from './routes/Timeline.tsx';
 import { TrackScreen } from './routes/Track.tsx';
 import { TrucksScreen } from './routes/Trucks.tsx';
@@ -171,6 +173,16 @@ const autopilotRoute = createRoute({
   path: '/autopilot',
   component: AutopilotScreen,
 });
+const proposalsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/proposals',
+  component: ProposalsScreen,
+});
+const proposalReviewRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/proposals/$proposalId',
+  component: ProposalReviewScreen,
+});
 const deleteAccountRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/delete-account',
@@ -194,6 +206,8 @@ const routeTree = rootRoute.addChildren([
   trackRoute,
   integrationsRoute,
   autopilotRoute,
+  proposalsRoute,
+  proposalReviewRoute,
   deleteAccountRoute,
 ]);
 

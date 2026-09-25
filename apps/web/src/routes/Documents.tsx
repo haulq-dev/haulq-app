@@ -36,6 +36,7 @@ import {
 import { request, requestBlob, type CarrierProfile } from '../lib/api.ts';
 import { useSession } from '../components/AuthGate.tsx';
 import { Card, Empty, ErrorNote, Field, LoadMore, Pill } from '../components/ui.tsx';
+import { RateConfirmationAction } from './Proposals.tsx';
 
 interface DocumentRow {
   id: string;
@@ -817,8 +818,10 @@ export function DocumentsScreen() {
                       title is what squeezed everything on a phone-width
                       screen. From `sm:` up there's room for both on one line,
                       same as before. */}
-                  <div className="mt-2 sm:mt-0 sm:shrink-0">
+                  <div className="mt-2 space-y-2 sm:mt-0 sm:shrink-0">
                     <AttachControl document={doc} />
+                    {/* A rate confirmation no load owns can be turned into one. */}
+                    {doc.kind === 'rate_confirmation' && !doc.loadId && <RateConfirmationAction documentId={doc.id} />}
                   </div>
                 </div>
 

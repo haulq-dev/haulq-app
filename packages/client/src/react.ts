@@ -27,6 +27,7 @@ import type {
 } from './loads.ts';
 import type { DocumentsPage, DocumentRow } from './documents.ts';
 import type { MechanicSearch } from './places.ts';
+import type { LoadProposalStatus, LoadProposalView } from './proposals.ts';
 import { modeForPosition, type ActionPosition, type MailboxStatus, type OutboundEvidenceResponse, type OutboundMessage, type OutboundSettingsResponse } from './outbound.ts';
 import type { CarrierProfile, Driver, OrgSummary, Truck } from './types.ts';
 
@@ -73,6 +74,10 @@ export const queryKeys = {
   outboundPending: ['outbound', 'pending'] as const,
   outboundEvidence: ['outbound', 'evidence'] as const,
   mailbox: ['mailbox'] as const,
+  /** A prefix: invalidating it refreshes every proposal list and detail. */
+  proposals: ['proposals'] as const,
+  proposalList: (status: string) => ['proposals', 'list', status] as const,
+  proposal: (id: string) => ['proposals', 'one', id] as const,
 };
 
 /**
@@ -410,5 +415,87 @@ export function useDisconnectMailbox() {
         queryClient.invalidateQueries({ queryKey: queryKeys.mailbox }),
         queryClient.invalidateQueries({ queryKey: queryKeys.outbound }),
       ]),
+  });
+}
+
+// --- Rate confirmations read as loads (FEATURE_REQUESTS_PLAN.md section 12) ---------
+
+/** The proposals in one state, newest first. `pending` is what is waiting for someone to look. */
+export function useLoadProposals(status: LoadProposalStatus = 'pending', options: { enabled?: boolean; refetchMs?: number } = {}) {
+  const client = useApiClient();
+  return useQuery({
+    queryKey: queryKeys.proposalList(status),
+    queryFn: async () => (await client.request<{ items: LoadProposalView[] }>(`/v1/load-proposals?status=${status}`)).items,
+    enabled: options.enabled ?? true,
+    ...(options.refetchMs ? { refetchInterval: options.refetchMs } : {}),
+  });
+}
+
+/** One proposal, in any state: an email links straight to it, and it may already have been dealt with. */
+export function useLoadProposal(id: string, options: { enabled?: boolean } = {}) {
+  const client = useApiClient();
+  return useQuery({
+    queryKey: queryKeys.proposal(id),
+    queryFn: () => client.request<LoadProposalView>(`/v1/load-proposals/${id}`),
+    enabled: options.enabled ?? true,
+  });
+}
+
+/** Everything that changes when a proposal is handled: the lists, and the loads and documents it touched. */
+function useInvalidateProposals() {
+  const queryClient = useQueryClient();
+  return () =>
+    Promise.all([
+      queryClient.invalidateQueries({ queryKey: queryKeys.proposals }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.loads }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.documents }),
+    ]);
+}
+
+/** Read a rate confirmation as a load now: for one that arrived before this existed, or whose first reading came back empty. */
+export function useProposeLoad() {
+  const client = useApiClient();
+  const invalidate = useInvalidateProposals();
+  return useMutation({
+    mutationFn: (documentId: string) => client.request<LoadProposalView>(`/v1/documents/${documentId}/propose-load`, { method: 'POST' }),
+    onSettled: invalidate,
+  });
+}
+
+/** Make the load. `body` is `createBodyFromForm`; the result says which load it became. */
+export function useCreateFromProposal() {
+  const client = useApiClient();
+  const invalidate = useInvalidateProposals();
+  return useMutation({
+    mutationFn: ({ id, body }: { id: string; body: Record<string, unknown> }) =>
+      client.request<{ load: { id: string; reference: number }; proposal: LoadProposalView | null }>(`/v1/load-proposals/${id}/create`, {
+        method: 'POST',
+        body,
+      }),
+    onSettled: invalidate,
+  });
+}
+
+/** This rate confirmation is the paperwork of a load that already exists. */
+export function useAttachProposal() {
+  const client = useApiClient();
+  const invalidate = useInvalidateProposals();
+  return useMutation({
+    mutationFn: ({ id, loadId }: { id: string; loadId: string }) =>
+      client.request<{ load: { id: string; reference: number }; validation: { outcome: string; reason: string } | null }>(
+        `/v1/load-proposals/${id}/attach`,
+        { method: 'POST', body: { loadId } },
+      ),
+    onSettled: invalidate,
+  });
+}
+
+/** This is not a load to create. */
+export function useDismissProposal() {
+  const client = useApiClient();
+  const invalidate = useInvalidateProposals();
+  return useMutation({
+    mutationFn: (id: string) => client.request<{ ok: true }>(`/v1/load-proposals/${id}/dismiss`, { method: 'POST' }),
+    onSettled: invalidate,
   });
 }

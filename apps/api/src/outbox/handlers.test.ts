@@ -313,3 +313,102 @@ suite('awaitingApprovalHandler', () => {
     assert.equal(mailer.sent.length, 0);
   });
 });
+
+suite('loadProposalReadyHandler', () => {
+  let accountantId2: string;
+
+  before(async () => {
+    db = createDatabase({ url: url! });
+    const org = await createTestOrg(db, 'Load Proposal Notice Carrier');
+    orgId = org.id;
+    const owner = await createTestUser(db);
+    ownerId = owner.id;
+    ownerEmail = owner.email;
+    const dispatcher = await createTestUser(db);
+    dispatcherId = dispatcher.id;
+    dispatcherEmail = dispatcher.email;
+    const accountant = await createTestUser(db);
+    accountantId2 = accountant.id;
+    const driver = await createTestUser(db);
+    driverId = driver.id;
+    driverEmail = driver.email;
+    await addTestMembership(db, { orgId, userId: ownerId, role: 'owner' });
+    await addTestMembership(db, { orgId, userId: dispatcherId, role: 'dispatcher' });
+    await addTestMembership(db, { orgId, userId: accountantId2, role: 'accountant' });
+    await addTestMembership(db, { orgId, userId: driverId, role: 'driver' });
+  });
+
+  after(async () => {
+    await destroyTestOrg(db, orgId);
+    await destroyTestUser(db, ownerId);
+    await destroyTestUser(db, dispatcherId);
+    await destroyTestUser(db, accountantId2);
+    await destroyTestUser(db, driverId);
+    await closeDatabase(db);
+  });
+
+  const notice = (payload: Record<string, unknown> = { proposalId: 'p-123', filename: 'ratecon.pdf', stops: 2 }): OutboxMessage => ({
+    seq: 1n,
+    orgId,
+    eventSeq: null,
+    topic: 'load_proposal.created',
+    attempts: 1,
+    payload,
+  });
+
+  function setup() {
+    const mailer = new FakeMailer();
+    const deps: HandlerDeps = {
+      mailer,
+      webOrigin: 'http://localhost:5173',
+      db,
+      storage: {} as never,
+      reader: {} as never,
+      log: { info: () => {}, warn: () => {} },
+    };
+    return { mailer, handle: buildOutboxHandlers(deps)['load_proposal.created']!, deps };
+  }
+
+  it('tells the owner and the dispatcher, who can create a load, and nobody else', async () => {
+    const { mailer, handle } = setup();
+    await handle(notice());
+
+    const recipients = mailer.sent.map((e) => e.to).sort();
+    assert.deepEqual(recipients, [dispatcherEmail, ownerEmail].sort());
+    assert.ok(!recipients.includes(driverEmail));
+  });
+
+  it('links to that proposal, says which document and how many stops, and names no broker or rate', async () => {
+    const { mailer, handle } = setup();
+    await handle(notice());
+
+    const email = mailer.sent[0]!;
+    assert.match(email.subject, /ready to become a load/);
+    assert.match(email.text, /ratecon\.pdf/);
+    assert.match(email.text, /2 stops/);
+    assert.match(email.text, /http:\/\/localhost:5173\/proposals\/p-123/);
+    assert.match(email.text, /Nothing has been created/);
+    assert.doesNotMatch(email.text + email.html, /\$\d/);
+  });
+
+  it('reads singular for one stop, and escapes a file name in the html', async () => {
+    const { mailer, handle } = setup();
+    await handle(notice({ proposalId: 'p-1', filename: '<b>x</b>.pdf', stops: 1 }));
+
+    assert.match(mailer.sent[0]!.text, /\(1 stop\)/);
+    assert.doesNotMatch(mailer.sent[0]!.html, /<b>x<\/b>/);
+    assert.match(mailer.sent[0]!.html, /&lt;b&gt;x/);
+  });
+
+  it('is in the fast group, so it is not stuck behind document reading', () => {
+    const { deps } = setup();
+    const fast = buildOutboxGroups(deps).find((g) => g.name === 'fast')!;
+    assert.ok('load_proposal.created' in fast.handlers);
+  });
+
+  it('skips a message missing its proposal rather than throwing', async () => {
+    const { mailer, handle } = setup();
+    await handle(notice({ filename: 'ratecon.pdf' }));
+    assert.equal(mailer.sent.length, 0);
+  });
+});

@@ -114,6 +114,23 @@ export async function loadProposalRoutes(app: FastifyInstance) {
   );
 
   /**
+   * One proposal, whatever state it is in. The email links straight to this, and
+   * by the time someone follows it another person may already have created the
+   * load: the screen needs to say so rather than show nothing.
+   */
+  server.get(
+    '/v1/load-proposals/:id',
+    { schema: { tags: ['Load proposals'], summary: 'One rate confirmation read as a load', params: IdParamSchema } },
+    async (request) => {
+      const s = await requireScope(request);
+      requireRole(request, 'owner', 'dispatcher');
+      const row = await getLoadProposal(s, request.params.id);
+      if (!row) throw new HttpError(404, 'not_found', 'That proposal is not in this account.');
+      return viewOne(s, row);
+    },
+  );
+
+  /**
    * Read a rate confirmation as a load now, when asked. The automatic path only
    * runs as a document arrives; this is for one that arrived before proposing
    * existed, or whose first reading came back empty.

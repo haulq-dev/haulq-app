@@ -24,6 +24,7 @@ import { canTransition, LOAD_STATUSES, nextStatuses, type LoadStatus } from '@ha
 import { request, type Truck } from '../lib/api.ts';
 import { useOrgs, useSession } from '../components/AuthGate.tsx';
 import { Card, Empty, ErrorNote, Field, LoadMore, Money, Num, Pill } from '../components/ui.tsx';
+import { ProposalsBanner } from './Proposals.tsx';
 
 export interface Stop {
   id: string;
@@ -642,6 +643,8 @@ export function LoadsScreen() {
           </button>
         )}
       </div>
+
+      {canWrite && <ProposalsBanner />}
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap gap-1.5">

@@ -746,9 +746,11 @@ export const eventCatalog = {
     subjectType: 'outbound_message',
     describe: (p) => `Marked the preview to ${p.to} as ${p.verdict === 'right' ? 'right' : 'wrong'}.`,
   }),
-  'load_proposal.created': define<{ filename: string; stops: number }>({
+  'load_proposal.created': define<{ filename: string; stops: number; proposalId: string }>({
     subjectType: 'load_proposal',
     describe: (p) => `Read ${p.filename} as a possible load with ${p.stops} stop${p.stops === 1 ? '' : 's'}, waiting for someone to look.`,
+    // Tells whoever dispatches: the proposal is only useful if someone looks.
+    topic: 'load_proposal.created',
   }),
   'load_proposal.accepted': define<{ filename: string; reference: number }>({
     subjectType: 'load_proposal',

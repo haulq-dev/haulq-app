@@ -500,6 +500,27 @@ suite('rate confirmation to draft load', () => {
     assert.equal((await proposals(orgId)).length, 0);
   });
 
+  it('reads one proposal by id in any state, and never another carrier’s', async () => {
+    const orgId = await newOrg('Proposal Get One Co');
+    const other = await newOrg('Proposal Get One Other Co');
+    await upload(orgId, rateCon('56001'), 'ratecon.pdf');
+    await drain(app, fake, 30, orgId);
+    const [p] = await proposals(orgId);
+
+    const pending = await app.inject({ method: 'GET', url: `/v1/load-proposals/${p!.id}`, headers: as(orgId) });
+    assert.equal(pending.statusCode, 200);
+    assert.equal(pending.json().status, 'pending');
+    assert.equal(pending.json().filename, 'ratecon.pdf');
+
+    await app.inject({ method: 'POST', url: `/v1/load-proposals/${p!.id}/dismiss`, headers: as(orgId) });
+    const dismissed = await app.inject({ method: 'GET', url: `/v1/load-proposals/${p!.id}`, headers: as(orgId) });
+    assert.equal(dismissed.statusCode, 200, 'still readable once handled, so a link from an email can say what happened');
+    assert.equal(dismissed.json().status, 'dismissed');
+
+    assert.equal((await app.inject({ method: 'GET', url: `/v1/load-proposals/${p!.id}`, headers: as(other) })).statusCode, 404);
+    assert.equal((await app.inject({ method: 'GET', url: `/v1/load-proposals/${'0'.repeat(8)}-0000-4000-8000-${'0'.repeat(12)}`, headers: as(orgId) })).statusCode, 404);
+  });
+
   // --- who -------------------------------------------------------------------------------
 
   it('is for owners and dispatchers, and one carrier never sees another’s', async () => {

@@ -23,6 +23,7 @@ import {
 } from '@haulq/db';
 import { detentionAlertEmail } from '../email/detention-alert-email.ts';
 import { awaitingApprovalEmail } from '../email/awaiting-approval-email.ts';
+import { loadProposalReadyEmail } from '../email/load-proposal-email.ts';
 import { exceptionAlertEmail } from '../email/exception-alert-email.ts';
 import { inviteEmail, type InvitePayload } from '../email/invite-email.ts';
 import { MailerError, type Mailer } from '../email/postmark.ts';
@@ -377,6 +378,68 @@ function awaitingApprovalHandler(deps: HandlerDeps): OutboxHandler {
   };
 }
 
+/** Enough of the payload to notify on, or nothing. */
+function asLoadProposal(message: OutboxMessage): { proposalId: string; filename: string; stops: number } | null {
+  const p = message.payload as Partial<{ proposalId: string; filename: string; stops: number }>;
+  if (typeof p.proposalId !== 'string' || typeof p.filename !== 'string') return null;
+  return { proposalId: p.proposalId, filename: p.filename, stops: typeof p.stops === 'number' ? p.stops : 0 };
+}
+
+/**
+ * Tell whoever dispatches that a rate confirmation is ready to become a load.
+ * One email per proposal: each is a discrete thing a person acts on, and the
+ * per-carrier daily cap on readings bounds how many there can be. Owners and
+ * dispatchers only, the two roles that can create a load.
+ */
+function loadProposalReadyHandler(deps: HandlerDeps): OutboxHandler {
+  return async (message) => {
+    const notice = asLoadProposal(message);
+    if (!notice) {
+      deps.log.warn({ seq: message.seq.toString(), topic: message.topic }, 'load proposal notice skipped: payload missing fields');
+      return;
+    }
+
+    const s = scope(deps.db, {
+      orgId: message.orgId,
+      actor: { type: 'system', name: 'outbox-consumer' },
+      correlationId: randomUUID(),
+    });
+    const [org, members] = await Promise.all([getOrg(s), listAllMembers(s)]);
+    const recipients = members.filter((m) => m.role === 'owner' || m.role === 'dispatcher');
+    if (recipients.length === 0) {
+      deps.log.warn({ seq: message.seq.toString(), orgId: message.orgId }, 'load proposal notice has nobody to send to');
+      return;
+    }
+
+    for (const recipient of recipients) {
+      const email = loadProposalReadyEmail(
+        {
+          to: recipient.email,
+          orgName: org?.name ?? 'your carrier',
+          filename: notice.filename,
+          proposalId: notice.proposalId,
+          stops: notice.stops,
+        },
+        deps.webOrigin,
+      );
+      try {
+        await deps.mailer.send({ ...email, metadata: { outboxSeq: message.seq.toString(), orgId: message.orgId } });
+      } catch (error) {
+        if (error instanceof MailerError && !error.retryable) {
+          deps.log.warn(
+            { seq: message.seq.toString(), to: recipient.email, status: error.status },
+            'load proposal notice permanently rejected for this recipient — not retrying',
+          );
+          continue;
+        }
+        throw error;
+      }
+    }
+
+    deps.log.info({ seq: message.seq.toString(), recipients: recipients.length }, 'load proposal notice sent');
+  };
+}
+
 /** Enough of the payload to alert on, or nothing. */
 function asDetentionAlert(
   message: OutboxMessage,
@@ -587,6 +650,7 @@ export function buildOutboxHandlers(deps: HandlerDeps): Record<string, OutboxHan
     'track.detention_alerted': detentionAlertHandler(deps),
     'broker.verification_changed': verificationChangedHandler(deps),
     'outbound.awaiting_approval': awaitingApprovalHandler(deps),
+    'load_proposal.created': loadProposalReadyHandler(deps),
   };
 }
 
@@ -642,6 +706,7 @@ export function buildOutboxGroups(deps: HandlerDeps): OutboxGroup[] {
         'track.detention_alerted': detentionAlertHandler(deps),
         'broker.verification_changed': verificationChangedHandler(deps),
         'outbound.awaiting_approval': awaitingApprovalHandler(deps),
+        'load_proposal.created': loadProposalReadyHandler(deps),
       },
       batchSize: 20,
       leaseSeconds: 300,
