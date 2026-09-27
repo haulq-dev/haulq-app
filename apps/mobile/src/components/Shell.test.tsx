@@ -143,8 +143,14 @@ describe('tabsFor', () => {
     expect(labels(undefined)).not.toContain('Autopilot');
   });
 
+  it('gives Pay to the roles the API lets read invoices, and never a driver', () => {
+    for (const role of ['owner', 'dispatcher', 'accountant']) expect(labels(role)).toContain('Pay');
+    expect(labels('driver')).not.toContain('Pay');
+  });
+
   it('keeps the tabs everyone already had, in order, with Account last', () => {
-    expect(labels('owner')).toEqual(['Loads', 'Documents', 'Autopilot', 'Account']);
+    expect(labels('owner')).toEqual(['Loads', 'Documents', 'Pay', 'Autopilot', 'Account']);
+    expect(labels('accountant')).toEqual(['Loads', 'Documents', 'Pay', 'Autopilot', 'Account']);
     expect(labels('driver')).toEqual(['Loads', 'Documents', 'Account']);
   });
 });

@@ -43,6 +43,10 @@ import { InviteAcceptScreen } from './routes/Invite.tsx';
 import { InviteDriverScreen } from './routes/InviteDriver.tsx';
 import { LoadRoute } from './routes/load/LoadScreen.tsx';
 import { HomeRoute } from './routes/Home.tsx';
+import { FactoringScreen } from './routes/pay/FactoringScreen.tsx';
+import { InvoiceScreen } from './routes/pay/InvoiceScreen.tsx';
+import { NewInvoiceScreen } from './routes/pay/NewInvoiceScreen.tsx';
+import { PayScreen } from './routes/pay/PayScreen.tsx';
 import './styles.css';
 
 const queryClient: QueryClient = new QueryClient({
@@ -153,12 +157,28 @@ const autopilotMessageRoute = createRoute({
   component: MessageScreen,
 });
 
+const payRoute = createRoute({ getParentRoute: () => rootRoute, path: '/pay', component: PayScreen });
+const newInvoiceRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/pay/new',
+  component: NewInvoiceScreen,
+  // Opened from a delivered load's screen, the load comes preselected.
+  validateSearch: (search: Record<string, unknown>): { loadId?: string } =>
+    typeof search['loadId'] === 'string' ? { loadId: search['loadId'] } : {},
+});
+const factoringRoute = createRoute({ getParentRoute: () => rootRoute, path: '/pay/factoring', component: FactoringScreen });
+const invoiceRoute = createRoute({ getParentRoute: () => rootRoute, path: '/pay/$invoiceId', component: InvoiceScreen });
+
 const routeTree = rootRoute.addChildren([
   accountRoute,
   autopilotRoute,
   autopilotMessageRoute,
   documentsRoute,
   documentRoute,
+  payRoute,
+  newInvoiceRoute,
+  factoringRoute,
+  invoiceRoute,
   indexRoute,
   loadDetailRoute,
   inviteRoute,

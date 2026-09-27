@@ -14,7 +14,7 @@
  */
 
 import { Link, useRouterState } from '@tanstack/react-router';
-import { canDispatch, canReviewOutbound, isSubscriptionActive, usePendingApprovalCount, type OrgSummary } from '@haulq/client';
+import { canDispatch, canReviewOutbound, canWritePay, isSubscriptionActive, usePendingApprovalCount, type OrgSummary } from '@haulq/client';
 import { useEffect, type ReactNode } from 'react';
 import { writeSession } from '../lib/api.ts';
 // AuthGate imports `SubscriptionGate` back from here. The cycle is safe
@@ -117,7 +117,7 @@ function InactiveScreen({
 // ---------------------------------------------------------------------------
 
 interface Tab {
-  to: '/' | '/documents' | '/autopilot' | '/account';
+  to: '/' | '/documents' | '/pay' | '/autopilot' | '/account';
   label: string;
   /** Which roles see this tab. Absent means every role that gets a tab bar. */
   roles?: (role: string | undefined) => boolean;
@@ -138,6 +138,15 @@ const TABS: readonly Tab[] = [
     label: 'Documents',
     icon: DocumentsIcon,
     isActive: (p) => p.startsWith('/documents'),
+  },
+  {
+    to: '/pay',
+    label: 'Pay',
+    icon: PayIcon,
+    isActive: (p) => p.startsWith('/pay'),
+    // Invoices carry the rate, which a driver is not meant to see. The API
+    // refuses them anyway.
+    roles: canWritePay,
   },
   {
     to: '/autopilot',
@@ -237,6 +246,16 @@ function DocumentsIcon({ active }: { active: boolean }) {
     <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth={active ? 2.2 : 1.8} aria-hidden>
       <path d="M7 3h7l4 4v13a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Z" strokeLinejoin="round" />
       <path d="M14 3v4h4M9 12h6M9 16h6" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function PayIcon({ active }: { active: boolean }) {
+  return (
+    <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth={active ? 2.2 : 1.8} aria-hidden>
+      <rect x="3" y="6" width="18" height="12" rx="1.5" />
+      <circle cx="12" cy="12" r="2.5" />
+      <path d="M6.5 9.5v5M17.5 9.5v5" strokeLinecap="round" />
     </svg>
   );
 }

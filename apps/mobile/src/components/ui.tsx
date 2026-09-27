@@ -136,6 +136,28 @@ export function LoadMore({ onClick, loading, hasMore }: { onClick: () => void; l
   );
 }
 
+/**
+ * A status filter with its count. Used in a sideways-scrolling row
+ * (`role="tablist"`) rather than wrapped, so a long status list doesn't push
+ * the list itself off the first screen.
+ */
+export function Chip({ active, onClick, label, count }: { active: boolean; onClick: () => void; label: string; count: number }) {
+  return (
+    <button
+      type="button"
+      role="tab"
+      aria-selected={active}
+      onClick={onClick}
+      className={`hq-pill shrink-0 gap-1.5 whitespace-nowrap px-3 py-1.5 text-[0.8125rem] capitalize ${
+        active ? 'bg-ink text-white' : 'bg-card text-slate shadow-[inset_0_0_0_1px_var(--color-line)]'
+      }`}
+    >
+      {label}{' '}
+      <span className={`num ${active ? 'text-white/70' : 'text-mute'}`}>{count}</span>
+    </button>
+  );
+}
+
 /** A plain, expected-state note, not an error: "routing isn't connected", "not checked yet". */
 export function Note({ children }: { children: ReactNode }) {
   return <p className="rounded-[var(--radius-sm)] bg-wash px-3 py-2 text-sm text-mute">{children}</p>;

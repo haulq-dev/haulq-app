@@ -27,6 +27,17 @@ import type {
 } from './loads.ts';
 import type { DocumentsPage, DocumentRow } from './documents.ts';
 import type { MechanicSearch } from './places.ts';
+import {
+  invoiceableLoads,
+  type AgingBucket,
+  type FactoringCompaniesPage,
+  type FactoringCompany,
+  type FactoringPacket,
+  type Invoice,
+  type InvoicesPage,
+  type Payment,
+  type PaymentSource,
+} from './pay.ts';
 import type { LoadProposalStatus, LoadProposalView } from './proposals.ts';
 import { modeForPosition, type ActionPosition, type MailboxStatus, type OutboundEvidenceResponse, type OutboundMessage, type OutboundSettingsResponse } from './outbound.ts';
 import type { CarrierProfile, Driver, OrgSummary, Truck } from './types.ts';
@@ -78,6 +89,15 @@ export const queryKeys = {
   proposals: ['proposals'] as const,
   proposalList: (status: string) => ['proposals', 'list', status] as const,
   proposal: (id: string) => ['proposals', 'one', id] as const,
+  /** A prefix: every invoice list and single invoice. `['invoices', status]` matches web's `Pay.tsx`. */
+  invoices: ['invoices'] as const,
+  invoiceList: (status: string) => ['invoices', status] as const,
+  invoice: (id: string) => ['invoices', 'one', id] as const,
+  invoicesForLoad: (loadId: string) => ['invoices', 'load', loadId] as const,
+  receivablesAging: ['receivables-aging'] as const,
+  invoicePayments: (id: string) => ['invoice-payments', id] as const,
+  factoringPackets: (invoiceId: string) => ['factoring-packets', invoiceId] as const,
+  factoringCompanies: ['factoring-companies'] as const,
 };
 
 /**
@@ -496,6 +516,220 @@ export function useDismissProposal() {
   const invalidate = useInvalidateProposals();
   return useMutation({
     mutationFn: (id: string) => client.request<{ ok: true }>(`/v1/load-proposals/${id}/dismiss`, { method: 'POST' }),
+    onSettled: invalidate,
+  });
+}
+
+// --- Pay (MOBILE_PARITY_PLAN.md M3) -------------------------------------------------
+
+/** Invoices, a page at a time. `status` is one status or none; the counts are org-wide either way. */
+export function useInvoices(status: string = '') {
+  const client = useApiClient();
+  return useInfiniteQuery({
+    queryKey: queryKeys.invoiceList(status),
+    queryFn: ({ pageParam }: { pageParam: string | undefined }) =>
+      client.request<InvoicesPage>(
+        `/v1/invoices?${new URLSearchParams({
+          ...(status ? { status } : {}),
+          ...(pageParam ? { cursor: pageParam } : {}),
+        })}`,
+      ),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (last) => last.nextCursor ?? undefined,
+  });
+}
+
+export function useInvoice(id: string) {
+  const client = useApiClient();
+  return useQuery({
+    queryKey: queryKeys.invoice(id),
+    queryFn: async () => (await client.request<{ invoice: Invoice }>(`/v1/invoices/${id}`)).invoice,
+  });
+}
+
+/** Every invoice on one load, void ones included. */
+export function useInvoicesForLoad(loadId: string, options: { enabled?: boolean } = {}) {
+  const client = useApiClient();
+  return useQuery({
+    queryKey: queryKeys.invoicesForLoad(loadId),
+    queryFn: async () => (await client.request<InvoicesPage>(`/v1/invoices?loadId=${loadId}`)).items,
+    enabled: options.enabled ?? true,
+  });
+}
+
+export function useReceivablesAging() {
+  const client = useApiClient();
+  return useQuery({
+    queryKey: queryKeys.receivablesAging,
+    queryFn: async () => (await client.request<{ buckets: AgingBucket[] }>('/v1/invoices/receivables-aging')).buckets,
+  });
+}
+
+export function useInvoicePayments(invoiceId: string) {
+  const client = useApiClient();
+  return useQuery({
+    queryKey: queryKeys.invoicePayments(invoiceId),
+    queryFn: async () => (await client.request<{ items: Payment[] }>(`/v1/invoices/${invoiceId}/payments`)).items,
+  });
+}
+
+export function useFactoringPackets(invoiceId: string) {
+  const client = useApiClient();
+  return useQuery({
+    queryKey: queryKeys.factoringPackets(invoiceId),
+    queryFn: async () =>
+      (await client.request<{ items: FactoringPacket[] }>(`/v1/factoring-packets?invoiceId=${invoiceId}`)).items,
+  });
+}
+
+export function useFactoringCompanies() {
+  const client = useApiClient();
+  return useInfiniteQuery({
+    queryKey: queryKeys.factoringCompanies,
+    queryFn: ({ pageParam }: { pageParam: string | undefined }) =>
+      client.request<FactoringCompaniesPage>(
+        `/v1/factoring-companies${pageParam ? `?cursor=${encodeURIComponent(pageParam)}` : ''}`,
+      ),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (last) => last.nextCursor ?? undefined,
+  });
+}
+
+/**
+ * Loads that can take a new invoice (`invoiceableLoads`). Both lists at the
+ * API's page maximum: a carrier with more than 200 delivered-but-unpaid
+ * loads has a bigger problem than this picker, and the API still refuses a
+ * duplicate if one slips through.
+ */
+export function useInvoiceableLoads() {
+  const client = useApiClient();
+  return useQuery({
+    queryKey: [...queryKeys.invoices, 'invoiceable-loads'],
+    queryFn: async () => {
+      const [loads, open] = await Promise.all([
+        client.request<LoadsPage>('/v1/loads?status=delivered,invoiced&limit=200'),
+        client.request<InvoicesPage>('/v1/invoices?status=draft,sent,paid&limit=200'),
+      ]);
+      return invoiceableLoads(loads.items, open.items);
+    },
+  });
+}
+
+/**
+ * Everything a Pay write can change. Sending moves the load to `invoiced`
+ * and a full payment moves it to `paid`, so the load caches go too.
+ */
+function useInvalidatePay() {
+  const queryClient = useQueryClient();
+  const prefixes = new Set<unknown>([
+    queryKeys.invoices[0],
+    queryKeys.receivablesAging[0],
+    'invoice-payments',
+    'factoring-packets',
+    queryKeys.factoringCompanies[0],
+    queryKeys.loads[0],
+    'load',
+    'load-margin',
+  ]);
+  return () => queryClient.invalidateQueries({ predicate: (q) => prefixes.has(q.queryKey[0]) });
+}
+
+/** `lineItems` is `lineItemsBody`'s output. The result is the new draft invoice. */
+export function useGenerateInvoice() {
+  const client = useApiClient();
+  const invalidate = useInvalidatePay();
+  return useMutation({
+    mutationFn: (body: { loadId: string; lineItems: { code: string; description: string; amountCents: number }[] }) =>
+      client.request<Invoice>('/v1/invoices', { method: 'POST', body }),
+    onSuccess: invalidate,
+  });
+}
+
+/** Records that it went to the broker. Sends nothing itself; see `invoiceActions`. */
+export function useMarkInvoiceSent() {
+  const client = useApiClient();
+  const invalidate = useInvalidatePay();
+  return useMutation({
+    mutationFn: (id: string) => client.request<Invoice>(`/v1/invoices/${id}/send`, { method: 'POST' }),
+    onSettled: invalidate,
+  });
+}
+
+export function useVoidInvoice() {
+  const client = useApiClient();
+  const invalidate = useInvalidatePay();
+  return useMutation({
+    mutationFn: ({ id, reason }: { id: string; reason: string }) =>
+      client.request<Invoice>(`/v1/invoices/${id}/void`, { method: 'POST', body: { reason } }),
+    onSettled: invalidate,
+  });
+}
+
+export interface RecordPaymentInput {
+  invoiceId: string;
+  amountCents: number;
+  currency: string;
+  source: PaymentSource;
+  receivedAt?: string;
+  reference?: string;
+  factoringPacketId?: string;
+}
+
+export function useRecordPayment() {
+  const client = useApiClient();
+  const invalidate = useInvalidatePay();
+  return useMutation({
+    mutationFn: (input: RecordPaymentInput) =>
+      client.request(`/v1/invoices/${input.invoiceId}/payments`, {
+        method: 'POST',
+        body: {
+          amount: { amount: input.amountCents, currency: input.currency },
+          source: input.source,
+          ...(input.receivedAt ? { receivedAt: input.receivedAt } : {}),
+          ...(input.reference ? { reference: input.reference } : {}),
+          ...(input.factoringPacketId ? { factoringPacketId: input.factoringPacketId } : {}),
+        },
+      }),
+    onSuccess: invalidate,
+  });
+}
+
+export function useAddFactoringCompany() {
+  const client = useApiClient();
+  const invalidate = useInvalidatePay();
+  return useMutation({
+    mutationFn: (body: { name: string; email?: string; phone?: string }) =>
+      client.request<FactoringCompany>('/v1/factoring-companies', { method: 'POST', body }),
+    onSuccess: invalidate,
+  });
+}
+
+/** Starts with no documents attached; the API treats that as a normal first step. */
+export function useAssemblePacket() {
+  const client = useApiClient();
+  const invalidate = useInvalidatePay();
+  return useMutation({
+    mutationFn: (body: { invoiceId: string; factoringCompanyId: string }) =>
+      client.request<FactoringPacket>('/v1/factoring-packets', { method: 'POST', body: { ...body, documentIds: [] } }),
+    onSuccess: invalidate,
+  });
+}
+
+export function useSubmitPacket() {
+  const client = useApiClient();
+  const invalidate = useInvalidatePay();
+  return useMutation({
+    mutationFn: (id: string) => client.request<FactoringPacket>(`/v1/factoring-packets/${id}/submit`, { method: 'POST' }),
+    onSettled: invalidate,
+  });
+}
+
+export function useRespondToPacket() {
+  const client = useApiClient();
+  const invalidate = useInvalidatePay();
+  return useMutation({
+    mutationFn: ({ id, ...body }: { id: string; outcome: 'accepted' | 'rejected'; reason?: string }) =>
+      client.request<FactoringPacket>(`/v1/factoring-packets/${id}/response`, { method: 'POST', body }),
     onSettled: invalidate,
   });
 }

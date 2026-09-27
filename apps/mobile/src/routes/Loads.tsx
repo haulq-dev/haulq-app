@@ -32,7 +32,7 @@ import {
 } from '@haulq/client';
 import { useEffect, useState } from 'react';
 import { useSession } from '../components/AuthGate.tsx';
-import { Card, Empty, ErrorNote, LoadMore, Money, Pill } from '../components/ui.tsx';
+import { Card, Chip, Empty, ErrorNote, LoadMore, Money, Pill } from '../components/ui.tsx';
 
 /** Typing pause before a search re-queries the list. */
 const SEARCH_DEBOUNCE_MS = 400;
@@ -104,23 +104,6 @@ export function LoadsScreen() {
 
       <LoadMore onClick={() => void loads.fetchNextPage()} loading={loads.isFetchingNextPage} hasMore={loads.hasNextPage} />
     </div>
-  );
-}
-
-function Chip({ active, onClick, label, count }: { active: boolean; onClick: () => void; label: string; count: number }) {
-  return (
-    <button
-      type="button"
-      role="tab"
-      aria-selected={active}
-      onClick={onClick}
-      className={`hq-pill shrink-0 gap-1.5 whitespace-nowrap px-3 py-1.5 text-[0.8125rem] capitalize ${
-        active ? 'bg-ink text-white' : 'bg-card text-slate shadow-[inset_0_0_0_1px_var(--color-line)]'
-      }`}
-    >
-      {label}{' '}
-      <span className={`num ${active ? 'text-white/70' : 'text-mute'}`}>{count}</span>
-    </button>
   );
 }
 

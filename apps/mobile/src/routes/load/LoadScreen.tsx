@@ -14,7 +14,7 @@
  */
 
 import { Link, useParams } from '@tanstack/react-router';
-import { canDispatch, laneEnds, LOAD_STATUS_TONE, prettyStatus, useLoad, type Load } from '@haulq/client';
+import { canDispatch, canWritePay, laneEnds, loadIsBillable, LOAD_STATUS_TONE, prettyStatus, useLoad, type Load } from '@haulq/client';
 import { useSession } from '../../components/AuthGate.tsx';
 import { showsTabBar } from '../../components/Shell.tsx';
 import { Paperwork } from '../../components/Paperwork.tsx';
@@ -22,6 +22,7 @@ import { Card, ErrorNote, Money, Pill } from '../../components/ui.tsx';
 import { LoadDetailScreen as DriverLoadDetailScreen } from '../LoadDetail.tsx';
 import { BrokerSection } from './Broker.tsx';
 import { FeasibilitySection } from './Feasibility.tsx';
+import { InvoiceCard } from './Invoice.tsx';
 import { CheckinCodeSection, TrackingLinkSection } from './Links.tsx';
 import { MarginCard, TrackingCard } from './Progress.tsx';
 import { AssignmentControl, StatusControl } from './StatusAndAssignment.tsx';
@@ -47,12 +48,12 @@ function OfficeLoadScreen() {
 
       {load.isError && <ErrorNote error={load.error} />}
       {load.isLoading && <p className="text-sm text-mute">Loading…</p>}
-      {load.data && <Body load={load.data} canWrite={canWrite} />}
+      {load.data && <Body load={load.data} canWrite={canWrite} canBill={canWritePay(session?.role)} />}
     </div>
   );
 }
 
-function Body({ load, canWrite }: { load: Load; canWrite: boolean }) {
+function Body({ load, canWrite, canBill }: { load: Load; canWrite: boolean; canBill: boolean }) {
   const { pickup, delivery } = laneEnds(load.stops);
 
   return (
@@ -92,6 +93,7 @@ function Body({ load, canWrite }: { load: Load; canWrite: boolean }) {
         </Card>
       )}
 
+      {canBill && loadIsBillable(load.status) && <InvoiceCard load={load} />}
       <TrackingCard loadId={load.id} />
       <MarginCard loadId={load.id} />
       <Paperwork loadId={load.id} forDriver={false} />
