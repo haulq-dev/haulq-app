@@ -257,6 +257,8 @@ export async function importRoutes(app: FastifyInstance) {
     { schema: { tags: ['Imports'], summary: 'Imported history vs. stated operating costs' } },
     async (request) => {
       const s = await requireScope(request);
+      // Revenue history. Office roles only.
+      requireRole(request, 'owner', 'dispatcher', 'accountant');
       return importedHistorySummary(s);
     },
   );

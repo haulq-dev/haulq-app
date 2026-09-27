@@ -1,14 +1,13 @@
 /**
  * "How much are we using HaulQ for" — one org, one month.
  *
- * No role restriction, unlike most write routes: this is a read, and every
- * member (owner, dispatcher, accountant) has reason to see it — same
- * shape `insights.ts` already takes.
+ * Office roles (owner, dispatcher, accountant), the same as `insights.ts`.
+ * A driver login has no reason to see account-wide volumes.
  */
 
 import { monthlyUsage } from '@haulq/db';
 import type { FastifyInstance } from 'fastify';
-import { requireScope } from '../plugins/request-context.ts';
+import { requireRole, requireScope } from '../plugins/request-context.ts';
 
 export async function usageRoutes(app: FastifyInstance) {
   app.get(
@@ -16,6 +15,7 @@ export async function usageRoutes(app: FastifyInstance) {
     { schema: { tags: ['Usage'], summary: "This org's usage for the current month" } },
     async (request) => {
       const s = await requireScope(request);
+      requireRole(request, 'owner', 'dispatcher', 'accountant');
       return monthlyUsage(s);
     },
   );

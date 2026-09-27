@@ -14,7 +14,7 @@
  */
 
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { NearbyMechanicsResponse, NearbyStopsResponse } from '@haulq/contracts';
+import type { NearbyMechanicsResponse, NearbyStopsResponse, OperatingFacts } from '@haulq/contracts';
 import { createContext, createElement, useContext, type ReactNode } from 'react';
 import type { ApiClient } from './client.ts';
 import type {
@@ -42,16 +42,20 @@ import type { LoadProposalStatus, LoadProposalView } from './proposals.ts';
 import { modeForPosition, type ActionPosition, type MailboxStatus, type OutboundEvidenceResponse, type OutboundMessage, type OutboundSettingsResponse } from './outbound.ts';
 import { ApiRequestError } from './client.ts';
 import { CREDENTIAL_WARN_DAYS } from './fleet.ts';
+import type { InsightsResponse, MonthlyUsage } from './insights.ts';
 import type { CursorPage, MembersPage } from './members.ts';
 import type {
   CarrierProfile,
   Driver,
   ExpiringCredential,
+  HistorySummary,
   Invitation,
   MotiveVehicle,
   MotiveVehiclesResponse,
+  OperatingFactsResponse,
   OrgSummary,
   Role,
+  TimelineEntry,
   Truck,
 } from './types.ts';
 
@@ -119,6 +123,11 @@ export const queryKeys = {
   members: ['members'] as const,
   memberList: ['members', 'list'] as const,
   invitationList: ['members', 'invitations'] as const,
+  insights: (days: number) => ['insights', days] as const,
+  historySummary: ['history-summary'] as const,
+  timeline: ['timeline'] as const,
+  usage: ['usage'] as const,
+  operatingFacts: ['operating-facts'] as const,
 };
 
 /**
@@ -978,5 +987,89 @@ export function useRemoveMember() {
   return useMutation({
     mutationFn: (userId: string) => client.request(`/v1/members/${userId}`, { method: 'DELETE' }),
     onSettled: invalidate,
+  });
+}
+
+// --- Insights, activity, profile (MOBILE_PARITY_PLAN.md M5) ------------------------
+
+/** The rollups for the last `days` days, plus the not-windowed "needs attention" queue. */
+export function useInsights(days: number) {
+  const client = useApiClient();
+  return useQuery({
+    queryKey: queryKeys.insights(days),
+    queryFn: () => client.request<InsightsResponse>(`/v1/insights?days=${days}`),
+  });
+}
+
+/** What the imported load history says. Zero loads for a carrier that never imported. */
+export function useHistorySummary() {
+  const client = useApiClient();
+  return useQuery({
+    queryKey: queryKeys.historySummary,
+    queryFn: () => client.request<HistorySummary>('/v1/imports/history-summary'),
+  });
+}
+
+/** The audit trail, newest first, 50 at a time. The cursor is the last `seq` seen. */
+export function useTimeline() {
+  const client = useApiClient();
+  return useInfiniteQuery({
+    queryKey: queryKeys.timeline,
+    queryFn: ({ pageParam }: { pageParam: string | undefined }) =>
+      client.request<{ items: TimelineEntry[]; nextCursor: string | null }>(
+        `/v1/timeline?${new URLSearchParams({ limit: '50', ...(pageParam ? { before: pageParam } : {}) })}`,
+      ),
+    initialPageParam: undefined as string | undefined,
+    // A short page is the last one; the API returns a cursor whenever it returned anything.
+    getNextPageParam: (last) => (last.items.length < 50 ? undefined : (last.nextCursor ?? undefined)),
+  });
+}
+
+export function useUsage() {
+  const client = useApiClient();
+  return useQuery({ queryKey: queryKeys.usage, queryFn: () => client.request<MonthlyUsage>('/v1/usage') });
+}
+
+export function useOperatingFacts() {
+  const client = useApiClient();
+  return useQuery({
+    queryKey: queryKeys.operatingFacts,
+    queryFn: () => client.request<OperatingFactsResponse>('/v1/org/operating-facts'),
+  });
+}
+
+/**
+ * Saving costs changes every margin: insights, load margins, the profile's
+ * "used for margins" state. The API answers a blocked save with 200 and
+ * `saved: false`; that is surfaced as an error here so a screen can't show
+ * "Saved" for it.
+ */
+export function useSaveOperatingFacts() {
+  const client = useApiClient();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (facts: OperatingFacts) => {
+      const res = await client.request<{ saved: boolean; explanation?: string }>('/v1/org/operating-facts', {
+        method: 'PUT',
+        body: facts,
+      });
+      if (!res.saved) throw new Error(res.explanation ?? 'Those costs could not be saved.');
+      return res;
+    },
+    onSuccess: () => {
+      const prefixes = new Set<unknown>([queryKeys.operatingFacts[0], 'insights', 'load-margin', queryKeys.profile[0]]);
+      return queryClient.invalidateQueries({ predicate: (q) => prefixes.has(q.queryKey[0]) });
+    },
+  });
+}
+
+/** Only the fields given change; `null` clears one. */
+export function useUpdateProfile() {
+  const client = useApiClient();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: Record<string, string | null>) =>
+      client.request<CarrierProfile>('/v1/org/profile', { method: 'PATCH', body }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.profile }),
   });
 }

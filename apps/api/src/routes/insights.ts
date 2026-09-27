@@ -20,7 +20,7 @@ import {
 import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
-import { requireScope } from '../plugins/request-context.ts';
+import { requireRole, requireScope } from '../plugins/request-context.ts';
 
 const InsightsQuerySchema = z.object({
   days: z.coerce.number().int().min(1).max(730).default(90),
@@ -40,6 +40,9 @@ export async function insightsRoutes(app: FastifyInstance) {
     },
     async (request) => {
       const s = await requireScope(request);
+      // Money: revenue, rates, what brokers owe. Office roles only; a driver
+      // login is not meant to see what a load pays (see `pay.ts`'s PDF route).
+      requireRole(request, 'owner', 'dispatcher', 'accountant');
       const { days } = request.query;
 
       const [summary, byBroker, byLane, byTruck, payment, queue] = await Promise.all([

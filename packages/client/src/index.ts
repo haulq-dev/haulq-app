@@ -7,6 +7,7 @@ export * from './outbound.ts';
 export * from './pay.ts';
 export * from './fleet.ts';
 export * from './members.ts';
+export * from './insights.ts';
 export * from './places.ts';
 export * from './proposals.ts';
 export * from './react.ts';

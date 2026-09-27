@@ -8,11 +8,12 @@
  * banner, since those are worth opening first.
  *
  * Adding paperwork is at the top: the camera or a file, plus the email
- * address brokers can send to. The custom-address setting stays on the web
- * for now; it's a one-time setup, and it belongs with the profile (M5).
+ * address brokers can send to. Setting the carrier's own forwarding address
+ * lives with the profile (`more/CarrierScreen.tsx`); this links there.
  */
 
 import { useCarrierProfile, useDocumentCounts, useDocuments } from '@haulq/client';
+import { Link } from '@tanstack/react-router';
 import { useState } from 'react';
 import { DocumentCapture } from '../../components/DocumentCapture.tsx';
 import { DocumentRows } from '../../components/DocumentRows.tsx';
@@ -90,8 +91,12 @@ function InboundEmail() {
   return (
     <Card title="Or email it in">
       <p className="text-sm text-slate">Forward paperwork to this address and it lands here the same way.</p>
-      {profile.data?.customDocsEmail && (
+      {profile.data?.customDocsEmail ? (
         <p className="mt-1 text-xs text-mute">Mail forwarded from {profile.data.customDocsEmail} arrives here too.</p>
+      ) : (
+        <Link to="/carrier" className="mt-1 block text-xs text-brand underline">
+          Use your own address instead
+        </Link>
       )}
       <code className="num mt-3 block break-all rounded-[var(--radius-sm)] bg-wash px-3 py-2 text-sm">{address}</code>
       <div className="mt-2 flex items-center gap-2">

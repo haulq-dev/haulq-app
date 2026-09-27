@@ -1,11 +1,12 @@
 /**
- * The More tab: the fleet and people screens, then which carrier, your role,
+ * The More tab: insights, the carrier, activity, trucks, drivers and people,
  * the plan, and the account links.
  *
  * iOS shows at most five tabs, and Pay (M3) took the fifth. Trucks, drivers
  * and people (M4) are weekly tasks rather than daily ones, so they live here
- * as rows instead of pushing Autopilot's badge off the bar. This is the
- * standard iOS "More" pattern. M5's profile and insights will go here too.
+ * as rows instead of pushing Autopilot's badge off the bar, and so do
+ * insights, the carrier profile and activity (M5). This is the standard iOS
+ * "More" pattern.
  *
  * The plan is shown **read-only**: its name and nothing else. No price, no
  * change-plan or manage-billing control, no link to one. Apple allows an
@@ -34,13 +35,22 @@ export function AccountScreen() {
       <h1 className="text-2xl">{showsTabBar(role) ? 'More' : 'Account'}</h1>
 
       {showsTabBar(role) && (
-        <nav aria-label="Fleet and people" className="hq-card overflow-hidden">
-          <ul className="divide-y divide-line">
-            <NavRow to="/trucks" label="Trucks" hint="Equipment, what each can haul, Motive" />
-            <NavRow to="/drivers" label="Drivers" hint="Contacts, CDL and medical card dates" />
-            <NavRow to="/people" label="People" hint="Who can sign in, and their roles" />
-          </ul>
-        </nav>
+        <>
+          <nav aria-label="Business" className="hq-card overflow-hidden">
+            <ul className="divide-y divide-line">
+              <NavRow to="/insights" label="Insights" hint="What loads made, by broker, lane and truck" />
+              <NavRow to="/carrier" label="Carrier and costs" hint="MC and DOT, paperwork email, cost per mile" />
+              <NavRow to="/activity" label="Activity" hint="Everything that happened, in plain words" />
+            </ul>
+          </nav>
+          <nav aria-label="Fleet and people" className="hq-card overflow-hidden">
+            <ul className="divide-y divide-line">
+              <NavRow to="/trucks" label="Trucks" hint="Equipment, what each can haul, Motive" />
+              <NavRow to="/drivers" label="Drivers" hint="Contacts, CDL and medical card dates" />
+              <NavRow to="/people" label="People" hint="Who can sign in, and their roles" />
+            </ul>
+          </nav>
+        </>
       )}
 
       <Card title="Carrier">
@@ -60,7 +70,15 @@ export function AccountScreen() {
   );
 }
 
-function NavRow({ to, label, hint }: { to: '/trucks' | '/drivers' | '/people'; label: string; hint: string }) {
+function NavRow({
+  to,
+  label,
+  hint,
+}: {
+  to: '/trucks' | '/drivers' | '/people' | '/insights' | '/carrier' | '/activity';
+  label: string;
+  hint: string;
+}) {
   return (
     <li>
       <Link to={to} className="flex items-center justify-between gap-3 px-4 py-3.5">

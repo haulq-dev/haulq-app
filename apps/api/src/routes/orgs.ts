@@ -124,6 +124,8 @@ export async function orgRoutes(app: FastifyInstance) {
     { schema: { tags: ['Orgs'], summary: 'Get stated operating costs' } },
     async (request) => {
       const s = await requireScope(request);
+      // The carrier's cost per mile is its margin. Office roles only.
+      requireRole(request, 'owner', 'dispatcher', 'accountant');
       const profile = await getCarrierProfile(s);
       const facts = (profile?.operatingFacts ?? {}) as Record<string, number>;
 

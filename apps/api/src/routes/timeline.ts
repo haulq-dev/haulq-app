@@ -16,7 +16,7 @@ import { readTimeline } from '@haulq/db';
 import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
-import { requireScope } from '../plugins/request-context.ts';
+import { requireRole, requireScope } from '../plugins/request-context.ts';
 
 const TimelineQuerySchema = z.object({
   // Digits only, checked here rather than left to `BigInt()` — an all-digit
@@ -35,6 +35,9 @@ export async function timelineRoutes(app: FastifyInstance) {
     { schema: { tags: ['Timeline'], summary: 'Read the audit trail', querystring: TimelineQuerySchema } },
     async (request) => {
       const s = await requireScope(request);
+      // The whole account's history, invoice amounts and payments included.
+      // Office roles only, the same line `pay.ts` draws for a driver login.
+      requireRole(request, 'owner', 'dispatcher', 'accountant');
       const q = request.query;
 
       const entries = await readTimeline(s, {
