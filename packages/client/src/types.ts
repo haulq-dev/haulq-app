@@ -218,6 +218,8 @@ export interface Driver {
   medicalCardExpiresAt: string | null;
   endorsements: string[];
   defaultTruckId: string | null;
+  /** Set once the driver accepts an invite and signs in. Null for a roster-only driver. */
+  userId?: string | null;
 }
 
 export interface ExpiringCredential {

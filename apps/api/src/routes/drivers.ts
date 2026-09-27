@@ -7,8 +7,16 @@
  * notification system exists to send it.
  */
 
-import { CreateDriverSchema, PageQuerySchema } from '@haulq/contracts';
-import { createDriver, CursorError, expiringCredentials, listDrivers } from '@haulq/db';
+import { CreateDriverSchema, PageQuerySchema, UpdateDriverSchema } from '@haulq/contracts';
+import {
+  createDriver,
+  CursorError,
+  DriverError,
+  expiringCredentials,
+  listDrivers,
+  removeDriver,
+  updateDriver,
+} from '@haulq/db';
 import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -17,6 +25,15 @@ import { HttpError, requireRole, requireScope } from '../plugins/request-context
 const ExpiringQuerySchema = z.object({
   days: z.coerce.number().int().min(0).max(365).default(30),
 });
+
+const IdParamSchema = z.object({ id: z.string().uuid() });
+
+function rethrow(err: unknown): never {
+  if (err instanceof DriverError) {
+    throw new HttpError(err.code === 'not_found' ? 404 : 409, err.code, err.explanation);
+  }
+  throw err;
+}
 
 export async function driverRoutes(app: FastifyInstance) {
   const server = app.withTypeProvider<ZodTypeProvider>();
@@ -43,6 +60,46 @@ export async function driverRoutes(app: FastifyInstance) {
       const s = await requireScope(request);
       requireRole(request, 'owner', 'dispatcher');
       return reply.code(201).send(await createDriver(s, request.body));
+    },
+  );
+
+  server.patch(
+    '/v1/drivers/:id',
+    {
+      schema: {
+        tags: ['Drivers'],
+        summary: 'Update a driver',
+        params: IdParamSchema,
+        body: UpdateDriverSchema,
+      },
+    },
+    async (request) => {
+      const s = await requireScope(request);
+      requireRole(request, 'owner', 'dispatcher');
+      try {
+        return await updateDriver(s, request.params.id, request.body);
+      } catch (err) {
+        rethrow(err);
+      }
+    },
+  );
+
+  /**
+   * Off the roster, not erased: past loads keep the name they ran under.
+   * Refused while the driver is on a load that still needs them.
+   */
+  server.delete(
+    '/v1/drivers/:id',
+    { schema: { tags: ['Drivers'], summary: 'Take a driver off the roster', params: IdParamSchema } },
+    async (request, reply) => {
+      const s = await requireScope(request);
+      requireRole(request, 'owner', 'dispatcher');
+      try {
+        await removeDriver(s, request.params.id);
+      } catch (err) {
+        rethrow(err);
+      }
+      return reply.code(204).send();
     },
   );
 

@@ -36,13 +36,16 @@ import { AutopilotScreen } from './routes/autopilot/AutopilotScreen.tsx';
 import { MessageScreen } from './routes/autopilot/MessageScreen.tsx';
 import { DocumentScreen } from './routes/documents/DocumentScreen.tsx';
 import { DocumentsScreen } from './routes/documents/DocumentsScreen.tsx';
-import { AddTruckScreen } from './routes/AddTruck.tsx';
 import { CheckinScreen, isCheckinRoute } from './routes/Checkin.tsx';
 import { CreateLoadScreen } from './routes/CreateLoad.tsx';
 import { InviteAcceptScreen } from './routes/Invite.tsx';
-import { InviteDriverScreen } from './routes/InviteDriver.tsx';
 import { LoadRoute } from './routes/load/LoadScreen.tsx';
 import { HomeRoute } from './routes/Home.tsx';
+import { DriverScreen, NewDriverScreen } from './routes/fleet/DriverScreen.tsx';
+import { DriversScreen } from './routes/fleet/DriversScreen.tsx';
+import { PeopleScreen } from './routes/fleet/PeopleScreen.tsx';
+import { NewTruckScreen, TruckScreen } from './routes/fleet/TruckScreen.tsx';
+import { TrucksScreen } from './routes/fleet/TrucksScreen.tsx';
 import { FactoringScreen } from './routes/pay/FactoringScreen.tsx';
 import { InvoiceScreen } from './routes/pay/InvoiceScreen.tsx';
 import { NewInvoiceScreen } from './routes/pay/NewInvoiceScreen.tsx';
@@ -113,16 +116,13 @@ const inviteRoute = createRoute({
   path: '/invite/$token',
   component: InviteAcceptScreen,
 });
-const addTruckRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: '/trucks/new',
-  component: AddTruckScreen,
-});
-const inviteDriverRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: '/drivers/new',
-  component: InviteDriverScreen,
-});
+const trucksRoute = createRoute({ getParentRoute: () => rootRoute, path: '/trucks', component: TrucksScreen });
+const newTruckRoute = createRoute({ getParentRoute: () => rootRoute, path: '/trucks/new', component: NewTruckScreen });
+const truckRoute = createRoute({ getParentRoute: () => rootRoute, path: '/trucks/$truckId', component: TruckScreen });
+const driversRoute = createRoute({ getParentRoute: () => rootRoute, path: '/drivers', component: DriversScreen });
+const newDriverRoute = createRoute({ getParentRoute: () => rootRoute, path: '/drivers/new', component: NewDriverScreen });
+const driverRoute = createRoute({ getParentRoute: () => rootRoute, path: '/drivers/$driverId', component: DriverScreen });
+const peopleRoute = createRoute({ getParentRoute: () => rootRoute, path: '/people', component: PeopleScreen });
 const createLoadRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/loads/new',
@@ -182,8 +182,13 @@ const routeTree = rootRoute.addChildren([
   indexRoute,
   loadDetailRoute,
   inviteRoute,
-  addTruckRoute,
-  inviteDriverRoute,
+  trucksRoute,
+  newTruckRoute,
+  truckRoute,
+  driversRoute,
+  newDriverRoute,
+  driverRoute,
+  peopleRoute,
   createLoadRoute,
 ]);
 const router = createRouter({ routeTree });

@@ -305,6 +305,16 @@ export const eventCatalog = {
     describe: (p) => `Added driver ${p.name}.`,
   }),
 
+  'driver.updated': define<{ name: string; fields: string[] }>({
+    subjectType: 'driver',
+    describe: (p) => `Updated driver ${p.name}: ${p.fields.join(', ')}.`,
+  }),
+
+  'driver.removed': define<{ name: string }>({
+    subjectType: 'driver',
+    describe: (p) => `Took ${p.name} off the driver roster.`,
+  }),
+
   /**
    * `drivers.userId` going from null to set — the moment a roster row
    * (dispatcher-entered, possibly long before any app existed) becomes a

@@ -159,9 +159,10 @@ const TABS: readonly Tab[] = [
   },
   {
     to: '/account',
-    label: 'Account',
+    label: 'More',
     icon: AccountIcon,
-    isActive: (p) => p.startsWith('/account'),
+    // Fleet and people screens open from More, so it stays lit on them.
+    isActive: (p) => ['/account', '/trucks', '/drivers', '/people'].some((prefix) => p.startsWith(prefix)),
   },
 ];
 

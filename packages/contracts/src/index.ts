@@ -271,6 +271,30 @@ export const CreateDriverSchema = z.object({
 });
 export type CreateDriver = z.infer<typeof CreateDriverSchema>;
 
+/**
+ * A partial update. `null` clears a field, absent leaves it alone. The case
+ * this exists for is a renewed CDL or medical card: without it, the expiring
+ * warning keeps firing for a credential that was renewed last week.
+ */
+export const UpdateDriverSchema = z
+  .object({
+    fullName: z.string().min(1).max(120).optional(),
+    phone: z.string().max(40).nullable().optional(),
+    email: z.string().email().nullable().optional(),
+    cdlNumber: z.string().max(40).nullable().optional(),
+    cdlState: StateCode.nullable().optional(),
+    cdlExpiresAt: z.string().datetime().nullable().optional(),
+    medicalCardExpiresAt: z.string().datetime().nullable().optional(),
+    endorsements: z.array(z.enum(ENDORSEMENTS)).optional(),
+    defaultTruckId: z.string().uuid().nullable().optional(),
+  })
+  .superRefine((input, ctx) => {
+    if (Object.values(input).every((v) => v === undefined)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'Nothing to update.' });
+    }
+  });
+export type UpdateDriver = z.infer<typeof UpdateDriverSchema>;
+
 // ---------------------------------------------------------------------------
 // Timeline
 // ---------------------------------------------------------------------------

@@ -148,9 +148,9 @@ describe('tabsFor', () => {
     expect(labels('driver')).not.toContain('Pay');
   });
 
-  it('keeps the tabs everyone already had, in order, with Account last', () => {
-    expect(labels('owner')).toEqual(['Loads', 'Documents', 'Pay', 'Autopilot', 'Account']);
-    expect(labels('accountant')).toEqual(['Loads', 'Documents', 'Pay', 'Autopilot', 'Account']);
-    expect(labels('driver')).toEqual(['Loads', 'Documents', 'Account']);
+  it('keeps the tabs everyone already had, in order, with More last', () => {
+    expect(labels('owner')).toEqual(['Loads', 'Documents', 'Pay', 'Autopilot', 'More']);
+    expect(labels('accountant')).toEqual(['Loads', 'Documents', 'Pay', 'Autopilot', 'More']);
+    expect(labels('driver')).toEqual(['Loads', 'Documents', 'More']);
   });
 });

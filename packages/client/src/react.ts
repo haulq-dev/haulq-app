@@ -40,7 +40,20 @@ import {
 } from './pay.ts';
 import type { LoadProposalStatus, LoadProposalView } from './proposals.ts';
 import { modeForPosition, type ActionPosition, type MailboxStatus, type OutboundEvidenceResponse, type OutboundMessage, type OutboundSettingsResponse } from './outbound.ts';
-import type { CarrierProfile, Driver, OrgSummary, Truck } from './types.ts';
+import { ApiRequestError } from './client.ts';
+import { CREDENTIAL_WARN_DAYS } from './fleet.ts';
+import type { CursorPage, MembersPage } from './members.ts';
+import type {
+  CarrierProfile,
+  Driver,
+  ExpiringCredential,
+  Invitation,
+  MotiveVehicle,
+  MotiveVehiclesResponse,
+  OrgSummary,
+  Role,
+  Truck,
+} from './types.ts';
 
 const ApiClientContext = createContext<ApiClient | null>(null);
 
@@ -98,6 +111,14 @@ export const queryKeys = {
   invoicePayments: (id: string) => ['invoice-payments', id] as const,
   factoringPackets: (invoiceId: string) => ['factoring-packets', invoiceId] as const,
   factoringCompanies: ['factoring-companies'] as const,
+  truckList: ['trucks', 'list'] as const,
+  motiveVehicles: ['motive-vehicles'] as const,
+  driverList: ['drivers', 'list'] as const,
+  expiringCredentials: ['drivers', 'expiring'] as const,
+  /** A prefix: the member list and the invitation list. */
+  members: ['members'] as const,
+  memberList: ['members', 'list'] as const,
+  invitationList: ['members', 'invitations'] as const,
 };
 
 /**
@@ -730,6 +751,232 @@ export function useRespondToPacket() {
   return useMutation({
     mutationFn: ({ id, ...body }: { id: string; outcome: 'accepted' | 'rejected'; reason?: string }) =>
       client.request<FactoringPacket>(`/v1/factoring-packets/${id}/response`, { method: 'POST', body }),
+    onSettled: invalidate,
+  });
+}
+
+// --- Fleet and people (MOBILE_PARITY_PLAN.md M4) -----------------------------------
+
+/**
+ * Everything a truck or driver write can change: both lists, the expiring
+ * strip, Motive suggestions, and the loads that show a truck or driver name.
+ */
+function useInvalidateFleet() {
+  const queryClient = useQueryClient();
+  const prefixes = new Set<unknown>(['trucks', 'drivers', 'motive-vehicles', 'loads', 'load']);
+  return () => queryClient.invalidateQueries({ predicate: (q) => prefixes.has(q.queryKey[0]) });
+}
+
+/** Every truck, a page at a time, inactive ones included. `['trucks', 'list']` matches web. */
+export function useTruckList() {
+  const client = useApiClient();
+  return useInfiniteQuery({
+    queryKey: queryKeys.truckList,
+    queryFn: ({ pageParam }: { pageParam: string | undefined }) =>
+      client.request<CursorPage<Truck>>(`/v1/trucks${pageParam ? `?cursor=${encodeURIComponent(pageParam)}` : ''}`),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (last) => last.nextCursor ?? undefined,
+  });
+}
+
+/**
+ * Motive's vehicles and suggested matches. A 409 `not_connected` is the
+ * normal answer for a carrier without Motive, not a failure to retry
+ * (`isMotiveNotConnected`).
+ */
+export function useMotiveVehicles(options: { enabled?: boolean } = {}) {
+  const client = useApiClient();
+  return useQuery({
+    queryKey: queryKeys.motiveVehicles,
+    queryFn: () => client.request<MotiveVehiclesResponse>('/v1/integrations/motive/vehicles'),
+    retry: false,
+    enabled: options.enabled ?? true,
+  });
+}
+
+export function isMotiveNotConnected(error: unknown): boolean {
+  return error instanceof ApiRequestError && error.code === 'not_connected';
+}
+
+export function useCreateTruck() {
+  const client = useApiClient();
+  const invalidate = useInvalidateFleet();
+  return useMutation({
+    mutationFn: (body: Record<string, unknown>) => client.request<Truck>('/v1/trucks', { method: 'POST', body }),
+    onSuccess: invalidate,
+  });
+}
+
+export function useUpdateTruck() {
+  const client = useApiClient();
+  const invalidate = useInvalidateFleet();
+  return useMutation({
+    mutationFn: ({ id, body }: { id: string; body: Record<string, unknown> }) =>
+      client.request<Truck>(`/v1/trucks/${id}`, { method: 'PATCH', body }),
+    onSuccess: invalidate,
+  });
+}
+
+/** Out of service or back in. Never a delete; see `SetTruckActiveSchema`. */
+export function useSetTruckActive() {
+  const client = useApiClient();
+  const invalidate = useInvalidateFleet();
+  return useMutation({
+    mutationFn: ({ id, active, reason }: { id: string; active: boolean; reason?: string }) =>
+      client.request<Truck>(`/v1/trucks/${id}/active`, { method: 'PATCH', body: { active, ...(reason ? { reason } : {}) } }),
+    onSettled: invalidate,
+  });
+}
+
+/** `null` unmatches. */
+export function useSetMotiveVehicle() {
+  const client = useApiClient();
+  const invalidate = useInvalidateFleet();
+  return useMutation({
+    mutationFn: ({ truckId, motiveVehicleId }: { truckId: string; motiveVehicleId: number | null }) =>
+      client.request<Truck>(`/v1/trucks/${truckId}/motive-vehicle`, { method: 'PATCH', body: { motiveVehicleId } }),
+    onSettled: invalidate,
+  });
+}
+
+/** A Motive vehicle with no HaulQ truck: create the truck under its number and match it, in one tap. */
+export function useCreateTruckFromMotive() {
+  const client = useApiClient();
+  const invalidate = useInvalidateFleet();
+  return useMutation({
+    mutationFn: async (vehicle: MotiveVehicle) => {
+      const truck = await client.request<Truck>('/v1/trucks', {
+        method: 'POST',
+        body: { label: vehicle.number, equipment: 'STRAIGHT_BOX', capabilities: {} },
+      });
+      return client.request<Truck>(`/v1/trucks/${truck.id}/motive-vehicle`, {
+        method: 'PATCH',
+        body: { motiveVehicleId: vehicle.id },
+      });
+    },
+    onSettled: invalidate,
+  });
+}
+
+/** Every driver on the roster, a page at a time. `['drivers', 'list']` matches web. */
+export function useDriverList() {
+  const client = useApiClient();
+  return useInfiniteQuery({
+    queryKey: queryKeys.driverList,
+    queryFn: ({ pageParam }: { pageParam: string | undefined }) =>
+      client.request<CursorPage<Driver>>(`/v1/drivers${pageParam ? `?cursor=${encodeURIComponent(pageParam)}` : ''}`),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (last) => last.nextCursor ?? undefined,
+  });
+}
+
+/** CDLs and medical cards expired or expiring within `CREDENTIAL_WARN_DAYS`. */
+export function useExpiringCredentials() {
+  const client = useApiClient();
+  return useQuery({
+    queryKey: queryKeys.expiringCredentials,
+    queryFn: async () =>
+      (await client.request<{ items: ExpiringCredential[] }>(`/v1/drivers/expiring?days=${CREDENTIAL_WARN_DAYS}`)).items,
+  });
+}
+
+export function useCreateDriver() {
+  const client = useApiClient();
+  const invalidate = useInvalidateFleet();
+  return useMutation({
+    mutationFn: (body: Record<string, unknown>) => client.request<Driver>('/v1/drivers', { method: 'POST', body }),
+    onSuccess: invalidate,
+  });
+}
+
+export function useUpdateDriver() {
+  const client = useApiClient();
+  const invalidate = useInvalidateFleet();
+  return useMutation({
+    mutationFn: ({ id, body }: { id: string; body: Record<string, unknown> }) =>
+      client.request<Driver>(`/v1/drivers/${id}`, { method: 'PATCH', body }),
+    onSuccess: invalidate,
+  });
+}
+
+/** Off the roster. The API refuses while they're on a booked, dispatched or in-transit load. */
+export function useRemoveDriver() {
+  const client = useApiClient();
+  const invalidate = useInvalidateFleet();
+  return useMutation({
+    mutationFn: (id: string) => client.request<void>(`/v1/drivers/${id}`, { method: 'DELETE' }),
+    onSuccess: invalidate,
+  });
+}
+
+/** Members, a page at a time. Invitations page separately (`useInvitations`). */
+export function useMembers() {
+  const client = useApiClient();
+  return useInfiniteQuery({
+    queryKey: queryKeys.memberList,
+    queryFn: ({ pageParam }: { pageParam: string | undefined }) =>
+      client.request<MembersPage>(`/v1/members${pageParam ? `?membersCursor=${encodeURIComponent(pageParam)}` : ''}`),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (last) => last.members.nextCursor ?? undefined,
+  });
+}
+
+export function useInvitations() {
+  const client = useApiClient();
+  return useInfiniteQuery({
+    queryKey: queryKeys.invitationList,
+    queryFn: ({ pageParam }: { pageParam: string | undefined }) =>
+      client.request<MembersPage>(`/v1/members${pageParam ? `?invitationsCursor=${encodeURIComponent(pageParam)}` : ''}`),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (last) => last.invitations.nextCursor ?? undefined,
+  });
+}
+
+/**
+ * Member writes change the lists, and can change the caller's own role
+ * (the org list carries it) and which roster row a driver login controls.
+ */
+function useInvalidateMembers() {
+  const queryClient = useQueryClient();
+  const prefixes = new Set<unknown>([queryKeys.members[0], queryKeys.orgs[0], 'drivers']);
+  return () => queryClient.invalidateQueries({ predicate: (q) => prefixes.has(q.queryKey[0]) });
+}
+
+/** The token comes back once; the database keeps only its hash. */
+export function useInvite() {
+  const client = useApiClient();
+  const invalidate = useInvalidateMembers();
+  return useMutation({
+    mutationFn: (body: { email: string; role: Role; driverId?: string }) =>
+      client.request<{ invitation: Invitation; token: string }>('/v1/members/invites', { method: 'POST', body }),
+    onSuccess: invalidate,
+  });
+}
+
+export function useRevokeInvitation() {
+  const client = useApiClient();
+  const invalidate = useInvalidateMembers();
+  return useMutation({
+    mutationFn: (id: string) => client.request(`/v1/members/invites/${id}`, { method: 'DELETE' }),
+    onSettled: invalidate,
+  });
+}
+
+export function useChangeRole() {
+  const client = useApiClient();
+  const invalidate = useInvalidateMembers();
+  return useMutation({
+    mutationFn: ({ userId, role }: { userId: string; role: Role }) =>
+      client.request(`/v1/members/${userId}`, { method: 'PATCH', body: { role } }),
+    onSettled: invalidate,
+  });
+}
+
+export function useRemoveMember() {
+  const client = useApiClient();
+  const invalidate = useInvalidateMembers();
+  return useMutation({
+    mutationFn: (userId: string) => client.request(`/v1/members/${userId}`, { method: 'DELETE' }),
     onSettled: invalidate,
   });
 }
