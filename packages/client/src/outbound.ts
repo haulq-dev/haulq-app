@@ -40,6 +40,13 @@ export interface MailboxStatus {
   status: 'not_connected' | 'pending' | 'connected' | 'disconnected';
   provider: string | null;
   connectedAt: string | null;
+  /**
+   * Whether this deployment even has a mailbox provider set up. False on
+   * every deployment today — mailbox connect is a work in progress. Email
+   * forwarding (`InboundEmailPanel` in Documents.tsx) is the default,
+   * already-working way rate confirmations arrive; this does not gate it.
+   */
+  configured: boolean;
 }
 
 // --- the per-action control ---------------------------------------------------

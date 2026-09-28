@@ -58,7 +58,7 @@ interface World {
   evidence: Record<string, Record<string, number>>;
   messages: OutboundMessage[];
   settings: OutboundSettingsResponse;
-  mailbox: { connected: boolean; status: string; provider: string | null; connectedAt: string | null };
+  mailbox: { connected: boolean; status: string; provider: string | null; connectedAt: string | null; configured: boolean };
 }
 
 function renderScreen(world: Partial<World> = {}) {
@@ -67,7 +67,7 @@ function renderScreen(world: Partial<World> = {}) {
     evidence: {},
     messages: [],
     settings: settings(),
-    mailbox: { connected: true, status: 'connected', provider: 'GOOGLE', connectedAt: null },
+    mailbox: { connected: true, status: 'connected', provider: 'GOOGLE', connectedAt: null, configured: true },
     ...world,
   };
   writeSession({ userId: 'user-1', orgId: 'org-1' });
@@ -235,13 +235,24 @@ describe('AutopilotScreen — settings', () => {
     renderScreen({
       messages: [message()],
       settings: settings({ sendingEnabled: false }),
-      mailbox: { connected: false, status: 'not_connected', provider: null, connectedAt: null },
+      mailbox: { connected: false, status: 'not_connected', provider: null, connectedAt: null, configured: true },
     });
     await screen.findByText('Payment reminder — 2 invoices');
     await userEvent.click(screen.getByRole('tab', { name: 'Settings' }));
     expect(await screen.findByText(/Sending from your mailbox is OFF/)).toBeInTheDocument();
     expect(screen.getByRole('switch')).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Connect mailbox' })).toBeEnabled();
+  });
+
+  it('says mailbox connect is a work in progress, and points at email forwarding instead, when this deployment has no provider set up', async () => {
+    renderScreen({
+      settings: settings({ sendingEnabled: false }),
+      mailbox: { connected: false, status: 'not_connected', provider: null, connectedAt: null, configured: false },
+    });
+    await userEvent.click(await screen.findByRole('tab', { name: 'Settings' }));
+    expect(await screen.findByText(/not ready yet/)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Documents' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Connect mailbox' })).not.toBeInTheDocument();
   });
 });
 

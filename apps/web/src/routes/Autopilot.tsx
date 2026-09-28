@@ -542,6 +542,21 @@ function MailboxCard({
   const connected = mailbox?.connected === true;
   // Back from the provider but not confirmed yet: say so rather than "not connected".
   const finishing = !connected && (mailbox?.status === 'pending' || redirect === 'connected');
+  // Work in progress on every deployment today. Forwarding a rate confirmation
+  // by email (the Documents screen) already works and does not need this.
+  const configured = mailbox?.configured === true;
+
+  if (!loading && !configured) {
+    return (
+      <Card title="Your mailbox">
+        <p className="max-w-prose text-sm text-slate">
+          Connecting your own mailbox is not ready yet, so there is nothing to turn on here. In the meantime,
+          forward rate confirmations, BOLs and PODs by email — see <Link to="/documents" className="text-brand underline">Documents</Link> for
+          the address.
+        </p>
+      </Card>
+    );
+  }
 
   return (
     <Card title="Your mailbox">

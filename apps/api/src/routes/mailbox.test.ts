@@ -99,6 +99,24 @@ suite('mailbox routes', () => {
     }
   });
 
+  it('says it is not configured on the status route too, without erroring', async () => {
+    const app = await newApp(undefined);
+    try {
+      const orgId = await newOrg(app, userId, 'Mailbox Status Not Configured Carrier');
+      createdOrgs.push(orgId);
+
+      const res = await app.inject({
+        method: 'GET',
+        url: '/v1/mailbox',
+        headers: { 'x-haulq-org-id': orgId, 'x-haulq-user-id': userId },
+      });
+      assert.equal(res.statusCode, 200);
+      assert.equal(res.json().configured, false);
+    } finally {
+      await app.close();
+    }
+  });
+
   it('starts a pending connection and returns the hosted-auth url', async () => {
     const client = new FakeUnipileClient();
     const app = await newApp(client, CONFIG_ENV);
@@ -123,6 +141,7 @@ suite('mailbox routes', () => {
       });
       assert.equal(status.json().status, 'pending');
       assert.equal(status.json().connected, false);
+      assert.equal(status.json().configured, true);
     } finally {
       await app.close();
     }

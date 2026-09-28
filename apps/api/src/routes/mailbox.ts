@@ -27,15 +27,19 @@ import { UnipileApiError } from '../integrations/unipile.ts';
 import { HttpError, requireRole, requireScope } from '../plugins/request-context.ts';
 import { appReturnPath } from './app-return.ts';
 
+function unipileConfigured(app: FastifyInstance): boolean {
+  return Boolean(app.unipileClient) && Boolean(app.env.UNIPILE_NOTIFY_URL);
+}
+
 function requireUnipileConfig(app: FastifyInstance): { notifyUrl: string } {
-  if (!app.unipileClient || !app.env.UNIPILE_NOTIFY_URL) {
+  if (!unipileConfigured(app)) {
     throw new HttpError(
       503,
       'not_configured',
       'Mailbox connect is not configured on this deployment yet.',
     );
   }
-  return { notifyUrl: app.env.UNIPILE_NOTIFY_URL };
+  return { notifyUrl: app.env.UNIPILE_NOTIFY_URL! };
 }
 
 /** `?client=app` when the mobile app starts the connect; see `app-return.ts`. */
@@ -58,6 +62,11 @@ export async function mailboxRoutes(app: FastifyInstance) {
         status: connection?.status ?? 'not_connected',
         provider: connection?.provider ?? null,
         connectedAt: connection?.connectedAt?.toISOString() ?? null,
+        // Whether this deployment can even attempt a connect — Postmark
+        // forwarding (InboundEmailPanel in Documents.tsx) is the default way
+        // rate confirmations arrive; this is a work-in-progress alternative
+        // that also lets Autopilot send from the carrier's own mailbox.
+        configured: unipileConfigured(app),
       };
     },
   );
