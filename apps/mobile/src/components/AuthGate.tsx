@@ -11,6 +11,7 @@
  * needs an actual choice, not just a placeholder message.
  */
 
+import { unregisterThisDevice } from '../lib/push.ts';
 import { Browser } from '@capacitor/browser';
 import {
   ClerkFailed,
@@ -158,7 +159,10 @@ export function SignOutLink() {
     <button
       type="button"
       className="text-sm text-brand underline"
-      onClick={() => {
+      onClick={async () => {
+        // Before the session goes, while the request can still say who is
+        // signing out: a shared cab phone must stop getting their alerts.
+        await unregisterThisDevice();
         writeSession(null);
         void signOut();
       }}

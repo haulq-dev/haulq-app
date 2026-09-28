@@ -12,6 +12,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import { DeleteAccountLink, SignOutLink, SwitchAccountLink, useSession } from '../components/AuthGate.tsx';
+import { PushPrompt } from '../components/PushPrompt.tsx';
 import { Card, Empty, ErrorNote, Pill } from '../components/ui.tsx';
 import { request } from '../lib/api.ts';
 
@@ -50,12 +51,17 @@ export function MyLoadsScreen() {
       <div className="flex items-center justify-between">
         <h1 className="text-2xl">Your loads</h1>
         <div className="flex flex-col items-end gap-0.5">
+          <Link to="/notifications" className="text-sm text-brand underline">
+            Notifications
+          </Link>
           <SwitchAccountLink />
           <SignOutLink />
           <DeleteAccountLink />
         </div>
       </div>
       {session?.orgName && <p className="-mt-2 text-sm text-mute">{session.orgName}</p>}
+
+      <PushPrompt forDriver />
 
       {loads.isError && <ErrorNote error={loads.error} />}
 

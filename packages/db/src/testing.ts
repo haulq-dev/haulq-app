@@ -25,6 +25,8 @@ import { outboundMessages } from './schema/outbound.ts';
 import { factoringCompanies, factoringPackets } from './schema/pay.ts';
 import { orgInvitations, orgMemberships, orgs, users } from './schema/tenancy.ts';
 import { brokerVerifications } from './schema/verify.ts';
+import { drivers } from './schema/fleet.ts';
+import { pushDevices } from './schema/push.ts';
 
 export interface TestOrg {
   id: string;
@@ -408,4 +410,21 @@ export async function backdateTestOutbound(db: Database, messageId: string, days
     .update(outboundMessages)
     .set({ createdAt: new Date(Date.now() - daysAgo * 86_400_000) })
     .where(eq(outboundMessages.id, messageId));
+}
+
+/** Link a roster driver to a login, the way accepting a driver invite does. */
+export async function linkDriverToUserForTest(db: Database, driverId: string, userId: string): Promise<void> {
+  await db.update(drivers).set({ userId }).where(eq(drivers.id, driverId));
+}
+
+/** A push device row as the test left it: whether it's still live. */
+export async function pushDeviceForTest(
+  db: Database,
+  token: string,
+): Promise<{ userId: string; disabledAt: Date | null } | undefined> {
+  const [row] = await db
+    .select({ userId: pushDevices.userId, disabledAt: pushDevices.disabledAt })
+    .from(pushDevices)
+    .where(eq(pushDevices.token, token));
+  return row;
 }

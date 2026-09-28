@@ -351,6 +351,26 @@ const EnvSchema = z.object({
    * without it.
    */
   UNIPILE_WEBHOOK_SECRET: z.string().optional(),
+
+  /**
+   * Apple push notifications (MOBILE_PARITY_PLAN.md section 7). An APNs auth
+   * key (.p8) from the Apple Developer account (Certificates, IDs & Profiles
+   * → Keys), its Key ID, and the Team ID. `APNS_PRIVATE_KEY` is the .p8's
+   * contents; `\n` escapes are accepted, for a secret stored on one line.
+   * Optional together, same degrade-rather-than-fail pattern as everything
+   * else here: without them, alerts go by email only and the push routes
+   * still register devices.
+   */
+  APNS_KEY_ID: z.string().optional(),
+  APNS_TEAM_ID: z.string().optional(),
+  APNS_PRIVATE_KEY: z.string().optional(),
+  APNS_BUNDLE_ID: z.string().default('ai.haulq.app'),
+  /**
+   * `production` for TestFlight and App Store builds (both use Apple's
+   * production gateway), `sandbox` only for a debug build run from Xcode.
+   * A token from one environment is rejected by the other.
+   */
+  APNS_ENV: z.enum(['sandbox', 'production']).default('production'),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

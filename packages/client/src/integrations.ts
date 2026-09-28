@@ -58,6 +58,25 @@ export function connectResult(search: string): ConnectResult | null {
 }
 
 /**
+ * Where a tapped notification should open: its `path`, if it's one of the
+ * app's own paths. Anything else (another origin, `//host`, a scheme) opens
+ * the home screen instead. The payload comes from HaulQ's own API, but a
+ * path that navigates the app is worth checking anyway.
+ */
+export function pushTapPath(data: unknown): string {
+  const path = (data as { path?: unknown } | null)?.path;
+  if (typeof path !== 'string') return '/';
+  if (!path.startsWith('/') || path.startsWith('//') || path.includes('\\') || path.includes(':')) return '/';
+  return path;
+}
+
+/** The carrier a notification is about, if it names one. */
+export function pushOrgId(data: unknown): string | null {
+  const orgId = (data as { orgId?: unknown } | null)?.orgId;
+  return typeof orgId === 'string' && /^[0-9a-f-]{36}$/i.test(orgId) ? orgId : null;
+}
+
+/**
  * The in-app path for a URL the OS hands the app: an https link
  * (`https://app.haulq.ai/invite/abc` → `/invite/abc`) or the app's own
  * scheme (`ai.haulq.app://integrations?x=1` → `/integrations?x=1`), where

@@ -18,6 +18,8 @@
  * runs where anyone is watching.
  */
 
+import { ApnsSender } from './push/apns.ts';
+import type { PushSender } from './push/sender.ts';
 import {
   FilesystemObjectStore,
   r2FromEnv,
@@ -284,6 +286,30 @@ export function buildMechanicSearchProvider(env: Env, log: RuntimeLog): YelpMech
  * routes treat an unset client as a 503. `FEATURE_REQUESTS_PLAN.md`
  * section 1.
  */
+/**
+ * APNs when its key is configured, undefined otherwise: alerts then go by
+ * email only. Same shape as `buildUnipileClient` below. Never a fake in
+ * production; tests inject `FakePushSender` through `BuildOptions`.
+ */
+export function buildPushSender(env: Env, log: RuntimeLog): PushSender | undefined {
+  if (!env.APNS_KEY_ID || !env.APNS_TEAM_ID || !env.APNS_PRIVATE_KEY) {
+    log.info(
+      { push: false },
+      'push notifications are not configured — alerts go by email only. Set APNS_KEY_ID, APNS_TEAM_ID and APNS_PRIVATE_KEY to enable them.',
+    );
+    return undefined;
+  }
+  const sender = new ApnsSender({
+    keyId: env.APNS_KEY_ID,
+    teamId: env.APNS_TEAM_ID,
+    privateKey: env.APNS_PRIVATE_KEY,
+    bundleId: env.APNS_BUNDLE_ID,
+    environment: env.APNS_ENV,
+  });
+  log.info({ push: sender.name, bundleId: env.APNS_BUNDLE_ID }, 'push sender ready');
+  return sender;
+}
+
 export function buildUnipileClient(env: Env, log: RuntimeLog): UnipileClient | undefined {
   if (!env.UNIPILE_API_KEY || !env.UNIPILE_DSN) {
     log.info(

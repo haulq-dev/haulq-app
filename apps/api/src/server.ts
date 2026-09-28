@@ -42,7 +42,9 @@ import { startMotiveSyncRunner } from './integrations/motive-sync-runner.ts';
 import { startVerifyRecheckRunner } from './verify/recheck-runner.ts';
 import { buildOutboxGroups } from './outbox/handlers.ts';
 import { startOutboxRunner } from './outbox/runner.ts';
-import { buildBilling, buildDocumentReader, buildGeocoder, buildMailer, buildMechanicSearchProvider, buildModelReader, buildPlacesProvider, buildRoutingProvider, buildStorage, buildUnipileClient } from './runtime.ts';
+import { buildBilling, buildDocumentReader, buildGeocoder, buildMailer, buildMechanicSearchProvider, buildModelReader, buildPlacesProvider, buildRoutingProvider, buildPushSender, buildStorage, buildUnipileClient } from './runtime.ts';
+import type { PushSender } from './push/sender.ts';
+import { pushRoutes } from './routes/push.ts';
 import type { ModelDocumentReader } from './documents/model-reader.ts';
 import type { DocumentReader } from './documents/reader.ts';
 import type { Geocoder, ReverseGeocoder } from './integrations/here-geocode.ts';
@@ -99,6 +101,8 @@ declare module 'fastify' {
     mechanicSearchProvider: MechanicSearchProvider | undefined;
     /** Undefined until `UNIPILE_API_KEY` and `UNIPILE_DSN` are set — see `runtime.ts`'s `buildUnipileClient`. */
     unipileClient: UnipileClient | undefined;
+    /** Undefined until the `APNS_*` key is set — see `runtime.ts`'s `buildPushSender`. */
+    pushSender: PushSender | undefined;
     /** Undefined until `STRIPE_SECRET_KEY` and `STRIPE_PRICE_CARRIER_MONTHLY` are set — see `runtime.ts`'s `buildBilling`. */
     billing: BillingClient | undefined;
   }
@@ -190,6 +194,12 @@ export interface BuildOptions {
   unipileClient?: UnipileClient | undefined;
 
   /**
+   * Override the push sender. Tests inject `FakePushSender`. Left unset, APNs
+   * when its key is configured, and no push at all when it is not.
+   */
+  pushSender?: PushSender | undefined;
+
+  /**
    * Override billing. Tests inject a fake Stripe client. Left unset, the
    * server builds one when `STRIPE_SECRET_KEY` and
    * `STRIPE_PRICE_CARRIER_MONTHLY` are configured, and none at all when
@@ -270,10 +280,13 @@ export async function buildServer(
   app.decorate('mechanicSearchProvider', options.mechanicSearchProvider ?? buildMechanicSearchProvider(env, app.log));
   app.decorate('unipileClient', options.unipileClient ?? buildUnipileClient(env, app.log));
   app.decorate('billing', options.billing ?? buildBilling(env, app.log));
+  const pushSender = 'pushSender' in options ? options.pushSender : buildPushSender(env, app.log);
+  app.decorate('pushSender', pushSender);
 
   startOutboxRunner(app, {
     groups: buildOutboxGroups({
       mailer,
+      push: pushSender,
       webOrigin: env.WEB_ORIGIN,
       db,
       storage,
@@ -442,6 +455,7 @@ export async function buildServer(
   await app.register(geocodeRoutes);
   await app.register(integrationRoutes);
   await app.register(appReturnRoutes);
+  await app.register(pushRoutes);
   await app.register(payRoutes);
   await app.register(insightsRoutes);
   await app.register(usageRoutes);

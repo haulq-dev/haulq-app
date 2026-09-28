@@ -296,6 +296,19 @@ export async function createLoad(
       payload: { reference: row.reference, origin, destination, source },
     });
 
+    // Created with a driver on it: that driver is being given a load now.
+    // Not for imported history, for the same reason `load.booked` below isn't.
+    if (row.driverId && source !== 'csv_import') {
+      const [driver] = await tx.db
+        .select({ fullName: drivers.fullName })
+        .from(drivers)
+        .where(and(eq(drivers.id, row.driverId), eq(drivers.orgId, tx.ctx.orgId)));
+      await recordEvent(tx, 'load.driver_assigned', {
+        subjectId: row.id,
+        payload: { reference: row.reference, driverId: row.driverId, driverName: driver?.fullName ?? 'a driver' },
+      });
+    }
+
     /**
      * Created straight into `booked` — a carrier entering a load they have
      * already taken. The booking deserves its own line: it is the commitment,
@@ -637,6 +650,14 @@ export async function assignLoad(
         updatedAt: new Date(),
       })
       .where(and(eq(loads.id, id), eq(loads.orgId, tx.ctx.orgId)));
+
+    // A new driver, not a re-save of the same one.
+    if (input.driverId && input.driverId !== current.driverId) {
+      await recordEvent(tx, 'load.driver_assigned', {
+        subjectId: id,
+        payload: { reference: current.reference, driverId: input.driverId, driverName: driverName ?? 'a driver' },
+      });
+    }
 
     if (input.truckId) {
       await recordEvent(tx, 'load.assigned', {

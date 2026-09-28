@@ -11,7 +11,9 @@
  */
 
 import { randomUUID } from 'node:crypto';
+import { documentKindLabel } from '@haulq/contracts';
 import {
+  driverUserId,
   eventSubject,
   getOrg,
   listAllMembers,
@@ -31,9 +33,17 @@ import { verifyWatchlistEmail } from '../email/verify-watchlist-email.ts';
 import { processDocument } from '../documents/pipeline.ts';
 import type { ModelDocumentReader } from '../documents/model-reader.ts';
 import type { DocumentReader } from '../documents/reader.ts';
+import { pushToUsers } from '../push/notify.ts';
+import type { PushSender } from '../push/sender.ts';
 
 export interface HandlerDeps {
   mailer: Mailer;
+  /**
+   * Push, the second channel on the alerts that email (MOBILE_PARITY_PLAN.md
+   * section 7). Unset when APNs isn't configured: alerts go by email only.
+   * Always best effort; see `push/notify.ts` on why it never throws.
+   */
+  push?: PushSender | undefined;
   /** The app origin the invite link points at. */
   webOrigin: string;
   /** Needed by the document pipeline: the row says where the bytes are, not what they are. */
@@ -63,6 +73,23 @@ function asInvite(message: OutboxMessage): InvitePayload | null {
     ...(p.invitedByEmail ? { invitedByEmail: p.invitedByEmail } : {}),
   };
 }
+
+/**
+ * The event's subject (the load, document or invoice it's about), for a
+ * push's tap-through path. Undefined when the row was queued without an
+ * event; the push then opens a list instead of one item.
+ */
+async function subjectOf(deps: HandlerDeps, message: OutboxMessage): Promise<string | undefined> {
+  if (!message.eventSeq) return undefined;
+  const lookup = scope(deps.db, {
+    orgId: message.orgId,
+    actor: { type: 'system', name: 'outbox-consumer' },
+    correlationId: randomUUID(),
+  });
+  return (await eventSubject(lookup, message.eventSeq))?.subjectId ?? undefined;
+}
+
+const collapse = (message: OutboxMessage) => `${message.topic}-${message.seq.toString()}`;
 
 function inviteHandler(deps: HandlerDeps): OutboxHandler {
   return async (message) => {
@@ -273,6 +300,21 @@ function exceptionAlertHandler(deps: HandlerDeps): OutboxHandler {
       return;
     }
 
+    // Before the emails, so an email retry re-sends a push that collapses
+    // into the first rather than an email storm after a push hiccup.
+    const loadId = await subjectOf(deps, message);
+    await pushToUsers(deps, {
+      userIds: recipients.map((r) => r.userId),
+      category: 'load_quiet',
+      message: {
+        title: `Load ${alert.reference}`,
+        body: `No check-in or position in ${alert.hoursSinceActivity} hours.`,
+        path: loadId ? `/loads/${loadId}` : '/',
+        orgId: message.orgId,
+        collapseId: collapse(message),
+      },
+    });
+
     for (const recipient of recipients) {
       const email = exceptionAlertEmail(
         {
@@ -354,6 +396,21 @@ function awaitingApprovalHandler(deps: HandlerDeps): OutboxHandler {
       deps.log.warn({ seq: message.seq.toString(), orgId: message.orgId }, 'awaiting-approval notice has nobody to send to');
       return;
     }
+
+    // "Messages", not "drafts": the carrier never reads "draft" (section 7's catalog).
+    await pushToUsers(deps, {
+      userIds: recipients.map((r) => r.userId),
+      category: 'approvals',
+      message: {
+        title: 'Autopilot',
+        body:
+          notice.waiting === 1 ? '1 message is waiting for your OK.' : `${notice.waiting} messages are waiting for your OK.`,
+        path: '/autopilot',
+        orgId: message.orgId,
+        // One notification per carrier, replaced by the latest count.
+        collapseId: `approvals-${message.orgId}`,
+      },
+    });
 
     for (const recipient of recipients) {
       const email = awaitingApprovalEmail(
@@ -502,6 +559,19 @@ function detentionAlertHandler(deps: HandlerDeps): OutboxHandler {
       return;
     }
 
+    const loadId = await subjectOf(deps, message);
+    await pushToUsers(deps, {
+      userIds: recipients.map((r) => r.userId),
+      category: 'detention',
+      message: {
+        title: `Load ${alert.reference}`,
+        body: `Detention started at stop ${alert.stopSeq}.`,
+        path: loadId ? `/loads/${loadId}` : '/',
+        orgId: message.orgId,
+        collapseId: collapse(message),
+      },
+    });
+
     for (const recipient of recipients) {
       const email = detentionAlertEmail(
         {
@@ -594,6 +664,19 @@ function verificationChangedHandler(deps: HandlerDeps): OutboxHandler {
       return;
     }
 
+    // No broker name on a lock screen (section 7): the activity feed has it.
+    await pushToUsers(deps, {
+      userIds: recipients.map((r) => r.userId),
+      category: 'broker_authority',
+      message: {
+        title: 'Broker authority changed',
+        body: 'A broker you work with changed status with FMCSA. Open to see which.',
+        path: '/activity',
+        orgId: message.orgId,
+        collapseId: collapse(message),
+      },
+    });
+
     for (const recipient of recipients) {
       const email = verifyWatchlistEmail(
         {
@@ -634,6 +717,112 @@ function verificationChangedHandler(deps: HandlerDeps): OutboxHandler {
   };
 }
 
+/** Enough of the payload to push on, or nothing. */
+function asDocumentRejected(message: OutboxMessage): { kind: string; loadReference: number } | null {
+  const p = message.payload as Partial<{ kind: string; loadReference: number }>;
+  if (typeof p.kind !== 'string' || typeof p.loadReference !== 'number') return null;
+  return { kind: p.kind, loadReference: p.loadReference };
+}
+
+/**
+ * A document that disagrees with its load. Push only: this had a topic but
+ * no handler until push, and an email per mismatched page would be noise.
+ * Owners and dispatchers, who can fix the load or re-attach the document.
+ */
+function documentRejectedHandler(deps: HandlerDeps): OutboxHandler {
+  return async (message) => {
+    const notice = asDocumentRejected(message);
+    if (!notice) {
+      deps.log.warn({ seq: message.seq.toString(), topic: message.topic }, 'document-rejected push skipped: payload missing fields');
+      return;
+    }
+    const s = scope(deps.db, { orgId: message.orgId, actor: { type: 'system', name: 'outbox-consumer' }, correlationId: randomUUID() });
+    const recipients = (await listAllMembers(s)).filter((m) => m.role === 'owner' || m.role === 'dispatcher');
+    const documentId = await subjectOf(deps, message);
+    await pushToUsers(deps, {
+      userIds: recipients.map((r) => r.userId),
+      category: 'documents',
+      message: {
+        title: `Load ${notice.loadReference}`,
+        body: `A ${documentKindLabel(notice.kind)} doesn't match the load.`,
+        path: documentId ? `/documents/${documentId}` : '/documents',
+        orgId: message.orgId,
+        collapseId: collapse(message),
+      },
+    });
+  };
+}
+
+function asDriverAssigned(message: OutboxMessage): { reference: number; driverId: string } | null {
+  const p = message.payload as Partial<{ reference: number; driverId: string }>;
+  if (typeof p.reference !== 'number' || typeof p.driverId !== 'string') return null;
+  return { reference: p.reference, driverId: p.driverId };
+}
+
+/**
+ * The driver's own "you've been given a load". Only to the login linked to
+ * that roster row, and only while it's still an active member here: a
+ * driver removed from the account keeps their phone but not this carrier's
+ * loads. A driver who doesn't use the app has no one to push to.
+ */
+function driverAssignedHandler(deps: HandlerDeps): OutboxHandler {
+  return async (message) => {
+    const notice = asDriverAssigned(message);
+    if (!notice) {
+      deps.log.warn({ seq: message.seq.toString(), topic: message.topic }, 'driver-assigned push skipped: payload missing fields');
+      return;
+    }
+    const s = scope(deps.db, { orgId: message.orgId, actor: { type: 'system', name: 'outbox-consumer' }, correlationId: randomUUID() });
+    const userId = await driverUserId(s, notice.driverId);
+    if (!userId) return;
+    const stillHere = (await listAllMembers(s)).some((m) => m.userId === userId);
+    if (!stillHere) return;
+    const loadId = await subjectOf(deps, message);
+    await pushToUsers(deps, {
+      userIds: [userId],
+      category: 'assigned',
+      message: {
+        title: `Load ${notice.reference}`,
+        body: "You've been assigned this load.",
+        path: loadId ? `/loads/${loadId}` : '/',
+        orgId: message.orgId,
+        collapseId: collapse(message),
+      },
+    });
+  };
+}
+
+function asInvoicePaid(message: OutboxMessage): { reference: number; loadReference: number } | null {
+  const p = message.payload as Partial<{ reference: number; loadReference: number }>;
+  if (typeof p.reference !== 'number' || typeof p.loadReference !== 'number') return null;
+  return { reference: p.reference, loadReference: p.loadReference };
+}
+
+/** Money in. Owner and accountant. No amount on the lock screen (section 7). */
+function invoicePaidHandler(deps: HandlerDeps): OutboxHandler {
+  return async (message) => {
+    const notice = asInvoicePaid(message);
+    if (!notice) {
+      deps.log.warn({ seq: message.seq.toString(), topic: message.topic }, 'invoice-paid push skipped: payload missing fields');
+      return;
+    }
+    const s = scope(deps.db, { orgId: message.orgId, actor: { type: 'system', name: 'outbox-consumer' }, correlationId: randomUUID() });
+    const recipients = (await listAllMembers(s)).filter((m) => m.role === 'owner' || m.role === 'accountant');
+    const invoiceId = await subjectOf(deps, message);
+    await pushToUsers(deps, {
+      userIds: recipients.map((r) => r.userId),
+      category: 'invoice_paid',
+      message: {
+        title: `Invoice ${notice.reference} paid`,
+        body: `Load ${notice.loadReference} is paid in full.`,
+        path: invoiceId ? `/pay/${invoiceId}` : '/pay',
+        orgId: message.orgId,
+        collapseId: collapse(message),
+      },
+    });
+  };
+}
+
 /**
  * The topic map. Only topics in here are claimed; anything else stays queued
  * untouched.
@@ -651,6 +840,9 @@ export function buildOutboxHandlers(deps: HandlerDeps): Record<string, OutboxHan
     'broker.verification_changed': verificationChangedHandler(deps),
     'outbound.awaiting_approval': awaitingApprovalHandler(deps),
     'load_proposal.created': loadProposalReadyHandler(deps),
+    'document.rejected': documentRejectedHandler(deps),
+    'load.driver_assigned': driverAssignedHandler(deps),
+    'invoice.paid': invoicePaidHandler(deps),
   };
 }
 
@@ -707,6 +899,9 @@ export function buildOutboxGroups(deps: HandlerDeps): OutboxGroup[] {
         'broker.verification_changed': verificationChangedHandler(deps),
         'outbound.awaiting_approval': awaitingApprovalHandler(deps),
         'load_proposal.created': loadProposalReadyHandler(deps),
+        'document.rejected': documentRejectedHandler(deps),
+        'load.driver_assigned': driverAssignedHandler(deps),
+        'invoice.paid': invoicePaidHandler(deps),
       },
       batchSize: 20,
       leaseSeconds: 300,

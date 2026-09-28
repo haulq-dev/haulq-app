@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Push Notifications (MOBILE_PARITY_PLAN.md section 7). `development` here is
+	     the Xcode convention: exporting with the App Store provisioning profile
+	     rewrites it to `production`, which is what TestFlight and the store use.
+	     The App ID ai.haulq.app must have the Push Notifications capability
+	     enabled, or signing fails. -->
+	<key>aps-environment</key>
+	<string>development</string>
+</dict>
+</plist>

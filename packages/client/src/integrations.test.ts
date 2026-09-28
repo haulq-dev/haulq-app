@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { connectResult, inAppPath } from './integrations.ts';
+import { connectResult, inAppPath, pushOrgId, pushTapPath } from './integrations.ts';
 
 describe('inAppPath', () => {
   it("reads the app's own scheme, where the host is the first path segment", () => {
@@ -30,5 +30,21 @@ describe('connectResult', () => {
   it('ignores anything it does not recognise', () => {
     assert.equal(connectResult('?motive=hacked'), null);
     assert.equal(connectResult(''), null);
+  });
+});
+
+describe('pushTapPath', () => {
+  it("opens the app's own paths, and home for anything else", () => {
+    assert.equal(pushTapPath({ path: '/loads/L1' }), '/loads/L1');
+    assert.equal(pushTapPath({ path: '//evil.example/x' }), '/');
+    assert.equal(pushTapPath({ path: 'https://evil.example' }), '/');
+    assert.equal(pushTapPath({ path: '/x:y' }), '/');
+    assert.equal(pushTapPath({}), '/');
+    assert.equal(pushTapPath(null), '/');
+  });
+
+  it('reads a carrier id only when it looks like one', () => {
+    assert.equal(pushOrgId({ orgId: '00000000-0000-4000-8000-000000000001' }), '00000000-0000-4000-8000-000000000001');
+    assert.equal(pushOrgId({ orgId: 'nope' }), null);
   });
 });

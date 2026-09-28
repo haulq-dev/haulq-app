@@ -130,6 +130,7 @@ export const queryKeys = {
   usage: ['usage'] as const,
   operatingFacts: ['operating-facts'] as const,
   integrations: ['integrations'] as const,
+  pushPreferences: ['push-preferences'] as const,
 };
 
 /**
@@ -1115,4 +1116,31 @@ export function useDisconnectMotive() {
         queryClient.invalidateQueries({ queryKey: queryKeys.motiveVehicles }),
       ]),
   });
+}
+
+// --- Push notifications (MOBILE_PARITY_PLAN.md section 7) ------------------------
+
+/** The categories this person switched off. Everything else is on. */
+export function usePushPreferences(options: { enabled?: boolean } = {}) {
+  const client = useApiClient();
+  return useQuery({
+    queryKey: queryKeys.pushPreferences,
+    queryFn: () => client.request<{ muted: string[] }>('/v1/push/preferences'),
+    enabled: options.enabled ?? true,
+  });
+}
+
+export function useSetPushPreferences() {
+  const client = useApiClient();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (muted: string[]) => client.request<{ muted: string[] }>('/v1/push/preferences', { method: 'PUT', body: { muted } }),
+    onSuccess: (data) => queryClient.setQueryData(queryKeys.pushPreferences, data),
+  });
+}
+
+/** Sends this person's own phones a notification, to check they get one. */
+export function useSendTestPush() {
+  const client = useApiClient();
+  return useMutation({ mutationFn: () => client.request<{ sent: number }>('/v1/push/test', { method: 'POST' }) });
 }

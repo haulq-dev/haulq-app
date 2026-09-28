@@ -299,3 +299,16 @@ export async function removeDriver(s: Scope, id: string): Promise<void> {
     await recordEvent(tx, 'driver.removed', { subjectId: id, payload: { name: current.fullName } });
   });
 }
+
+/**
+ * The login a roster row is linked to, or undefined for a driver who doesn't
+ * use the app. For a push to that driver: a roster row can't receive one,
+ * only a person can.
+ */
+export async function driverUserId(s: Scope, driverId: string): Promise<string | undefined> {
+  const [row] = await s.db
+    .select({ userId: drivers.userId })
+    .from(drivers)
+    .where(and(eq(drivers.id, driverId), eq(drivers.orgId, s.ctx.orgId), isNull(drivers.deletedAt)));
+  return row?.userId ?? undefined;
+}

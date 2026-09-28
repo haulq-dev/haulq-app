@@ -32,6 +32,7 @@ import {
 } from '@haulq/client';
 import { useEffect, useState } from 'react';
 import { useSession } from '../components/AuthGate.tsx';
+import { PushPrompt } from '../components/PushPrompt.tsx';
 import { Card, Chip, Empty, ErrorNote, LoadMore, Money, Pill } from '../components/ui.tsx';
 
 /** Typing pause before a search re-queries the list. */
@@ -66,6 +67,8 @@ export function LoadsScreen() {
           </Link>
         )}
       </div>
+
+      <PushPrompt forDriver={false} />
 
       <input
         type="search"

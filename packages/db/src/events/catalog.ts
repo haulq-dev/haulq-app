@@ -377,6 +377,20 @@ export const eventCatalog = {
       `Confirm their authority before dispatching.`,
   }),
 
+  /**
+   * A load got a driver it didn't have: at creation, or reassigned. Separate
+   * from `load.assigned`, which is about the truck and fires on every truck
+   * save, because this one wakes a phone: the driver's own "you've been given
+   * load 1042" push (MOBILE_PARITY_PLAN.md section 7). `driverId` is carried
+   * so the handler can find that driver's login without a second lookup by
+   * name.
+   */
+  'load.driver_assigned': define<{ reference: number; driverId: string; driverName: string }>({
+    subjectType: 'load',
+    describe: (p) => `Assigned ${p.driverName} to ${formatLoad(p.reference)}.`,
+    topic: 'load.driver_assigned',
+  }),
+
   'load.assigned': define<{
     reference: number;
     truckLabel: string;
@@ -585,6 +599,8 @@ export const eventCatalog = {
     describe: (p) =>
       `${formatInvoice(p.reference)} for ${formatLoad(p.loadReference)} is now ` +
       `fully paid: ${formatMoney(p.totalAmount, p.totalCurrency)}.`,
+    // A push to the owner and accountant (MOBILE_PARITY_PLAN.md section 7).
+    topic: 'invoice.paid',
   }),
 
   'invoice.voided': define<{ reference: number; reason: string }>({

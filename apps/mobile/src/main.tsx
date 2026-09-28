@@ -17,7 +17,7 @@
 
 import { App as CapacitorApp } from '@capacitor/app';
 import { Browser } from '@capacitor/browser';
-import { ApiClientProvider, inAppPath, isSubscriptionInactive, queryKeys } from '@haulq/client';
+import { ApiClientProvider, inAppPath, isSubscriptionInactive, pushOrgId, pushTapPath, queryKeys, type OrgSummary } from '@haulq/client';
 import { QueryCache, QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import {
   createRootRoute,
@@ -31,7 +31,8 @@ import { createRoot } from 'react-dom/client';
 import { AuthGate, useSession } from './components/AuthGate.tsx';
 import { ErrorBoundary } from './components/ErrorBoundary.tsx';
 import { showsTabBar, TabBar, TabBarSpacer } from './components/Shell.tsx';
-import { apiClient, readSession } from './lib/api.ts';
+import { apiClient, readSession, writeSession } from './lib/api.ts';
+import { listenForPush, refreshPushRegistration } from './lib/push.ts';
 import { AccountScreen } from './routes/Account.tsx';
 import { AutopilotScreen } from './routes/autopilot/AutopilotScreen.tsx';
 import { MessageScreen } from './routes/autopilot/MessageScreen.tsx';
@@ -46,6 +47,7 @@ import { ActivityScreen } from './routes/more/ActivityScreen.tsx';
 import { CarrierScreen } from './routes/more/CarrierScreen.tsx';
 import { InsightsScreen } from './routes/more/InsightsScreen.tsx';
 import { IntegrationsScreen } from './routes/more/IntegrationsScreen.tsx';
+import { NotificationsScreen } from './routes/more/NotificationsScreen.tsx';
 import { DriverScreen, NewDriverScreen } from './routes/fleet/DriverScreen.tsx';
 import { DriversScreen } from './routes/fleet/DriversScreen.tsx';
 import { PeopleScreen } from './routes/fleet/PeopleScreen.tsx';
@@ -129,6 +131,7 @@ const newDriverRoute = createRoute({ getParentRoute: () => rootRoute, path: '/dr
 const driverRoute = createRoute({ getParentRoute: () => rootRoute, path: '/drivers/$driverId', component: DriverScreen });
 const insightsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/insights', component: InsightsScreen });
 const activityRoute = createRoute({ getParentRoute: () => rootRoute, path: '/activity', component: ActivityScreen });
+const notificationsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/notifications', component: NotificationsScreen });
 const integrationsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/integrations', component: IntegrationsScreen });
 const carrierRoute = createRoute({ getParentRoute: () => rootRoute, path: '/carrier', component: CarrierScreen });
 const peopleRoute = createRoute({ getParentRoute: () => rootRoute, path: '/people', component: PeopleScreen });
@@ -202,6 +205,7 @@ const routeTree = rootRoute.addChildren([
   activityRoute,
   carrierRoute,
   integrationsRoute,
+  notificationsRoute,
   createLoadRoute,
 ]);
 const router = createRouter({ routeTree });
@@ -234,6 +238,8 @@ CapacitorApp.addListener('appStateChange', ({ isActive }) => {
 let lastOrgId = readSession()?.orgId;
 window.addEventListener('haulq:session', () => {
   const session = readSession();
+  // Signed in (or switched): make sure this phone is registered to them.
+  if (session?.userId) void refreshPushRegistration().catch(() => {});
   if (!session) {
     lastOrgId = undefined;
     queryClient.clear();
@@ -272,6 +278,33 @@ CapacitorApp.addListener('appUrlOpen', ({ url }) => {
   });
   window.location.href = path;
 });
+
+/**
+ * A tapped notification (MOBILE_PARITY_PLAN.md section 7). It opens its path,
+ * checked by `pushTapPath`. If it's about a different carrier than the one on
+ * screen (one login, several carriers), switch to that carrier first, with a
+ * full navigation, because the session listener above resets to `/` on a
+ * switch and would otherwise win the race.
+ */
+listenForPush((data) => {
+  const session = readSession();
+  const path = pushTapPath(data);
+  if (!session?.userId) return;
+  const orgId = pushOrgId(data);
+  if (orgId && orgId !== session.orgId) {
+    const org = queryClient.getQueryData<{ items: OrgSummary[] }>(queryKeys.orgs)?.items.find((o) => o.id === orgId);
+    // Name and role from the cached org list when there is one. On a cold
+    // start there isn't, and `SubscriptionGate` fills the role in; a carrier
+    // this login isn't in is dropped by the same gate.
+    writeSession({ userId: session.userId, orgId, ...(org ? { orgName: org.name, role: org.role } : {}) });
+    window.location.href = path;
+    return;
+  }
+  router.history.push(path);
+});
+
+// Already signed in at launch: refresh this phone's registration.
+if (readSession()?.userId) void refreshPushRegistration().catch(() => {});
 
 /**
  * The in-app browser closed without handing back: the person tapped Done,

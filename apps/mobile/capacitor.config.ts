@@ -108,6 +108,10 @@ const config: CapacitorConfig = {
   plugins: {
     CapacitorHttp: { enabled: true },
     CapacitorCookies: { enabled: true },
+    // Show an alert that arrives while the app is open, too. iOS hides them
+    // in the foreground by default, which reads as "notifications are broken"
+    // to someone looking at the app when a load goes quiet.
+    PushNotifications: { presentationOptions: ['badge', 'sound', 'alert'] },
   },
 };
 
