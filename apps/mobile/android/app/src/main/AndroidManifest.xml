@@ -22,6 +22,15 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
+            <!-- ai.haulq.app://integrations?... : a Motive or mailbox connect handing
+                 back to the app from the in-app browser (apps/api/src/routes/app-return.ts). -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="ai.haulq.app" />
+            </intent-filter>
+
         </activity>
 
         <provider

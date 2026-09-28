@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { signOAuthState, verifyOAuthState } from './state.ts';
+import { readOAuthState, signOAuthState, verifyOAuthState } from './state.ts';
 
 describe('OAuth state signing', () => {
   it('round-trips the org id', () => {
@@ -27,5 +27,20 @@ describe('OAuth state signing', () => {
 
   it('produces a different state each time, even for the same org', () => {
     assert.notEqual(signOAuthState('a-secret', 'org-123'), signOAuthState('a-secret', 'org-123'));
+  });
+
+  it('carries where the connect started, signed with the rest', () => {
+    const app = signOAuthState('a-secret', 'org-123', 'app');
+    assert.deepEqual(readOAuthState('a-secret', app), { orgId: 'org-123', client: 'app' });
+    assert.deepEqual(readOAuthState('a-secret', signOAuthState('a-secret', 'org-123')), { orgId: 'org-123', client: 'web' });
+    assert.equal(verifyOAuthState('a-secret', app), 'org-123');
+  });
+
+  it('refuses a web state edited to claim the app, and an app state with the marker stripped', () => {
+    const [org, nonce, sig] = signOAuthState('a-secret', 'org-123').split('.');
+    assert.equal(readOAuthState('a-secret', `${org}.${nonce}.app.${sig}`), null);
+    const parts = signOAuthState('a-secret', 'org-123', 'app').split('.');
+    assert.equal(readOAuthState('a-secret', `${parts[0]}.${parts[1]}.${parts[3]}`), null);
+    assert.equal(readOAuthState('a-secret', `${parts[0]}.${parts[1]}.web.${parts[3]}`), null);
   });
 });

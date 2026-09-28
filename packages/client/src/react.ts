@@ -43,6 +43,7 @@ import { modeForPosition, type ActionPosition, type MailboxStatus, type Outbound
 import { ApiRequestError } from './client.ts';
 import { CREDENTIAL_WARN_DAYS } from './fleet.ts';
 import type { InsightsResponse, MonthlyUsage } from './insights.ts';
+import type { IntegrationsResponse } from './integrations.ts';
 import type { CursorPage, MembersPage } from './members.ts';
 import type {
   CarrierProfile,
@@ -128,6 +129,7 @@ export const queryKeys = {
   timeline: ['timeline'] as const,
   usage: ['usage'] as const,
   operatingFacts: ['operating-facts'] as const,
+  integrations: ['integrations'] as const,
 };
 
 /**
@@ -448,10 +450,15 @@ export function useMailbox(options: { enabled?: boolean; refetchMs?: number | fa
   });
 }
 
-/** Returns the provider's URL; the caller sends the browser (or the in-app browser) there. */
-export function useConnectMailbox() {
+/**
+ * Returns the provider's URL; the caller sends the browser (or the in-app
+ * browser) there. `from: 'app'` makes Unipile finish on the API's hand-back
+ * page, which opens the mobile app again (`apps/api/src/routes/app-return.ts`).
+ */
+export function useConnectMailbox(options: { from?: 'web' | 'app' } = {}) {
   const client = useApiClient();
-  return useMutation({ mutationFn: () => client.request<{ url: string }>('/v1/mailbox/connect', { method: 'POST' }) });
+  const query = options.from === 'app' ? '?client=app' : '';
+  return useMutation({ mutationFn: () => client.request<{ url: string }>(`/v1/mailbox/connect${query}`, { method: 'POST' }) });
 }
 
 export function useDisconnectMailbox() {
@@ -1071,5 +1078,41 @@ export function useUpdateProfile() {
     mutationFn: (body: Record<string, string | null>) =>
       client.request<CarrierProfile>('/v1/org/profile', { method: 'PATCH', body }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.profile }),
+  });
+}
+
+// --- Integrations (MOBILE_PARITY_PLAN.md M6) ---------------------------------------
+
+/** Connected boards and ELDs (Motive today), and which optional services this deployment has. */
+export function useIntegrations(options: { enabled?: boolean } = {}) {
+  const client = useApiClient();
+  return useQuery({
+    queryKey: queryKeys.integrations,
+    queryFn: () => client.request<IntegrationsResponse>('/v1/integrations'),
+    enabled: options.enabled ?? true,
+  });
+}
+
+/**
+ * Motive's authorize URL. Owner only, and Fleet only (`requireEntitlement`),
+ * so the error can be `not_entitled`. `from: 'app'` makes the callback hand
+ * back to the mobile app instead of the web.
+ */
+export function useConnectMotive(options: { from?: 'web' | 'app' } = {}) {
+  const client = useApiClient();
+  const query = options.from === 'app' ? '?client=app' : '';
+  return useMutation({ mutationFn: () => client.request<{ url: string }>(`/v1/integrations/motive/connect${query}`) });
+}
+
+export function useDisconnectMotive() {
+  const client = useApiClient();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => client.request('/v1/integrations/motive', { method: 'DELETE' }),
+    onSettled: () =>
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.integrations }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.motiveVehicles }),
+      ]),
   });
 }

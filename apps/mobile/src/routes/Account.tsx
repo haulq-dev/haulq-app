@@ -16,7 +16,7 @@
  * stays on the web. See MOBILE_PARITY_PLAN.md section 2.
  */
 
-import { planLabel, ROLE_LABEL, type Role } from '@haulq/client';
+import { canDispatch, planLabel, ROLE_LABEL, type Role } from '@haulq/client';
 import { Link } from '@tanstack/react-router';
 import type { ReactNode } from 'react';
 import { DeleteAccountLink, SignOutLink, SwitchAccountLink, useOrgs, useSession } from '../components/AuthGate.tsx';
@@ -41,6 +41,9 @@ export function AccountScreen() {
               <NavRow to="/insights" label="Insights" hint="What loads made, by broker, lane and truck" />
               <NavRow to="/carrier" label="Carrier and costs" hint="MC and DOT, paperwork email, cost per mile" />
               <NavRow to="/activity" label="Activity" hint="Everything that happened, in plain words" />
+              {canDispatch(role) && (
+                <NavRow to="/integrations" label="Connected services" hint="Motive, and your work mailbox" />
+              )}
             </ul>
           </nav>
           <nav aria-label="Fleet and people" className="hq-card overflow-hidden">
@@ -75,7 +78,7 @@ function NavRow({
   label,
   hint,
 }: {
-  to: '/trucks' | '/drivers' | '/people' | '/insights' | '/carrier' | '/activity';
+  to: '/trucks' | '/drivers' | '/people' | '/insights' | '/carrier' | '/activity' | '/integrations';
   label: string;
   hint: string;
 }) {

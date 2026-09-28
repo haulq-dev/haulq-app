@@ -13,24 +13,44 @@
 
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 
-export function signOAuthState(secret: string, orgId: string): string {
+/**
+ * Where the connect was started from. `app` means the mobile app, whose
+ * in-app browser has to be handed back to the app at the end rather than
+ * left on a web page it isn't signed in to (MOBILE_PARITY_PLAN.md M6).
+ * Signed with everything else, so it can't be flipped to steer a redirect.
+ */
+export type OAuthClient = 'web' | 'app';
+
+/**
+ * `org.nonce.sig` for the web, `org.nonce.app.sig` for the app. The web
+ * shape is unchanged, so a state issued before the app existed still verifies.
+ */
+export function signOAuthState(secret: string, orgId: string, client: OAuthClient = 'web'): string {
   const nonce = randomBytes(16).toString('base64url');
-  const payload = `${orgId}.${nonce}`;
+  const payload = client === 'app' ? `${orgId}.${nonce}.app` : `${orgId}.${nonce}`;
   const signature = createHmac('sha256', secret).update(payload).digest('base64url');
   return `${payload}.${signature}`;
 }
 
-/** Returns the org id, or null if the state was never signed with this secret. */
-export function verifyOAuthState(secret: string, state: string): string | null {
+/** The org id and where the connect started, or null if the state was never signed with this secret. */
+export function readOAuthState(secret: string, state: string): { orgId: string; client: OAuthClient } | null {
   const parts = state.split('.');
-  if (parts.length !== 3) return null;
-  const [orgId, nonce, signature] = parts;
+  if (parts.length !== 3 && parts.length !== 4) return null;
+  const signature = parts[parts.length - 1];
+  const payloadParts = parts.slice(0, -1);
+  const [orgId, nonce, marker] = payloadParts;
   if (!orgId || !nonce || !signature) return null;
+  if (parts.length === 4 && marker !== 'app') return null;
 
-  const expected = createHmac('sha256', secret).update(`${orgId}.${nonce}`).digest('base64url');
+  const expected = createHmac('sha256', secret).update(payloadParts.join('.')).digest('base64url');
   const given = Buffer.from(signature);
   const want = Buffer.from(expected);
   if (given.length !== want.length || !timingSafeEqual(given, want)) return null;
 
-  return orgId;
+  return { orgId, client: parts.length === 4 ? 'app' : 'web' };
+}
+
+/** Returns the org id, or null if the state was never signed with this secret. */
+export function verifyOAuthState(secret: string, state: string): string | null {
+  return readOAuthState(secret, state)?.orgId ?? null;
 }

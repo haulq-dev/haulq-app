@@ -22,8 +22,10 @@
 import { disconnectMailbox, getMailboxConnection, requestMailboxConnection } from '@haulq/db';
 import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
+import { z } from 'zod';
 import { UnipileApiError } from '../integrations/unipile.ts';
 import { HttpError, requireRole, requireScope } from '../plugins/request-context.ts';
+import { appReturnPath } from './app-return.ts';
 
 function requireUnipileConfig(app: FastifyInstance): { notifyUrl: string } {
   if (!app.unipileClient || !app.env.UNIPILE_NOTIFY_URL) {
@@ -35,6 +37,11 @@ function requireUnipileConfig(app: FastifyInstance): { notifyUrl: string } {
   }
   return { notifyUrl: app.env.UNIPILE_NOTIFY_URL };
 }
+
+/** `?client=app` when the mobile app starts the connect; see `app-return.ts`. */
+const ConnectQuerySchema = z.object({
+  client: z.enum(['web', 'app']).optional(),
+});
 
 export async function mailboxRoutes(app: FastifyInstance) {
   const server = app.withTypeProvider<ZodTypeProvider>();
@@ -57,11 +64,17 @@ export async function mailboxRoutes(app: FastifyInstance) {
 
   server.post(
     '/v1/mailbox/connect',
-    { schema: { tags: ['Mailbox'], summary: 'Start connecting a mailbox' } },
+    { schema: { tags: ['Mailbox'], summary: 'Start connecting a mailbox', querystring: ConnectQuerySchema } },
     async (request) => {
       const s = await requireScope(request);
       requireRole(request, 'owner');
       const { notifyUrl } = requireUnipileConfig(app);
+      // Started from the app: finish on this API's hand-back page, which
+      // opens the app again, instead of a web page the in-app browser isn't
+      // signed in to. The notify URL is this API's own public address (see
+      // its note in env.ts), so its origin is where that page lives.
+      const fromApp = request.query.client === 'app';
+      const apiOrigin = new URL(notifyUrl).origin;
 
       await requestMailboxConnection(s);
 
@@ -74,8 +87,12 @@ export async function mailboxRoutes(app: FastifyInstance) {
           // state-signing of HaulQ's own. See `unipile.ts`'s module note.
           name: s.ctx.orgId,
           notifyUrl,
-          successRedirectUrl: `${webOrigin}/autopilot?mailbox=connected`,
-          failureRedirectUrl: `${webOrigin}/autopilot?mailbox=denied`,
+          successRedirectUrl: fromApp
+            ? `${apiOrigin}${appReturnPath({ mailbox: 'connected' })}`
+            : `${webOrigin}/autopilot?mailbox=connected`,
+          failureRedirectUrl: fromApp
+            ? `${apiOrigin}${appReturnPath({ mailbox: 'denied' })}`
+            : `${webOrigin}/autopilot?mailbox=denied`,
         });
         return { url };
       } catch (err) {

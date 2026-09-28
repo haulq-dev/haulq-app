@@ -16,7 +16,8 @@
  */
 
 import { App as CapacitorApp } from '@capacitor/app';
-import { ApiClientProvider, isSubscriptionInactive, queryKeys } from '@haulq/client';
+import { Browser } from '@capacitor/browser';
+import { ApiClientProvider, inAppPath, isSubscriptionInactive, queryKeys } from '@haulq/client';
 import { QueryCache, QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import {
   createRootRoute,
@@ -44,6 +45,7 @@ import { HomeRoute } from './routes/Home.tsx';
 import { ActivityScreen } from './routes/more/ActivityScreen.tsx';
 import { CarrierScreen } from './routes/more/CarrierScreen.tsx';
 import { InsightsScreen } from './routes/more/InsightsScreen.tsx';
+import { IntegrationsScreen } from './routes/more/IntegrationsScreen.tsx';
 import { DriverScreen, NewDriverScreen } from './routes/fleet/DriverScreen.tsx';
 import { DriversScreen } from './routes/fleet/DriversScreen.tsx';
 import { PeopleScreen } from './routes/fleet/PeopleScreen.tsx';
@@ -127,6 +129,7 @@ const newDriverRoute = createRoute({ getParentRoute: () => rootRoute, path: '/dr
 const driverRoute = createRoute({ getParentRoute: () => rootRoute, path: '/drivers/$driverId', component: DriverScreen });
 const insightsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/insights', component: InsightsScreen });
 const activityRoute = createRoute({ getParentRoute: () => rootRoute, path: '/activity', component: ActivityScreen });
+const integrationsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/integrations', component: IntegrationsScreen });
 const carrierRoute = createRoute({ getParentRoute: () => rootRoute, path: '/carrier', component: CarrierScreen });
 const peopleRoute = createRoute({ getParentRoute: () => rootRoute, path: '/people', component: PeopleScreen });
 const createLoadRoute = createRoute({
@@ -198,6 +201,7 @@ const routeTree = rootRoute.addChildren([
   insightsRoute,
   activityRoute,
   carrierRoute,
+  integrationsRoute,
   createLoadRoute,
 ]);
 const router = createRouter({ routeTree });
@@ -245,22 +249,39 @@ window.addEventListener('haulq:session', () => {
 });
 
 /**
- * A deep link opened while the app was already running (or cold-started
- * into one). Native registration for a custom scheme or a Universal/App
- * Link still has to happen in `ios/`/`android/` — this only handles the
- * event once the OS actually hands it to the app. A full navigation rather
- * than route-state plumbing: launching from a link is effectively a cold
- * start anyway, and this keeps `main.tsx` the only place that has to know
- * `CapacitorApp` exists.
+ * A link the OS handed the app, while running or from cold. Two kinds:
+ *
+ *  - **`ai.haulq.app://...`**, the app's own scheme (registered in
+ *    `ios/App/App/Info.plist` and `AndroidManifest.xml`). Today that is a
+ *    Motive or mailbox connect finishing in the in-app browser and handing
+ *    back (`apps/api/src/routes/app-return.ts`). The browser is still on
+ *    screen over the app, so it's closed first.
+ *  - **An https link** to the app's own paths, for when Universal/App Links
+ *    are registered.
+ *
+ * `inAppPath` turns either into a path, and refuses anything else. A full
+ * navigation rather than route-state plumbing: arriving from a link is
+ * effectively a cold start anyway, and this keeps `main.tsx` the only place
+ * that has to know `CapacitorApp` exists.
  */
 CapacitorApp.addListener('appUrlOpen', ({ url }) => {
-  try {
-    const parsed = new URL(url);
-    window.location.href = parsed.pathname + parsed.search;
-  } catch {
-    // Not a URL Capacitor's own docs promise it always is, but a malformed
-    // one should not crash the app that is already running.
-  }
+  const path = inAppPath(url);
+  if (!path) return;
+  void Browser.close().catch(() => {
+    // Not open (a link from Messages, say). Nothing to close.
+  });
+  window.location.href = path;
+});
+
+/**
+ * The in-app browser closed without handing back: the person tapped Done,
+ * or finished on a page that couldn't reopen the app. A connect may still
+ * have gone through on the server, so look again rather than show a stale
+ * "not connected".
+ */
+void Browser.addListener('browserFinished', () => {
+  void queryClient.invalidateQueries({ queryKey: queryKeys.integrations });
+  void queryClient.invalidateQueries({ queryKey: queryKeys.mailbox });
 });
 
 const root = document.getElementById('root');

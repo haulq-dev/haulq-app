@@ -206,12 +206,12 @@ describe('AutopilotScreen — stopping it', () => {
   });
 });
 
-describe('AutopilotScreen — setup lives on the web', () => {
-  it('tells the owner what is left, without a link to follow', async () => {
+describe('AutopilotScreen — what is left to set up', () => {
+  it('sends the owner to connect the mailbox in the app', async () => {
     world({ mailbox: { connected: false, status: 'not_connected', provider: null, connectedAt: null } });
     renderScreen(<AutopilotScreen />);
-    expect(await screen.findByText(/Connect your mailbox from HaulQ on the web/)).toBeInTheDocument();
-    expect(screen.queryByRole('link', { name: /connect|web/i })).not.toBeInTheDocument();
+    expect(await screen.findByText(/Connect your mailbox to get Autopilot started/)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Connect it' })).toHaveAttribute('href', '/integrations');
   });
 
   it('says when Autopilot is not running on the server at all', async () => {

@@ -2,8 +2,9 @@
  * Autopilot on the phone: what it wrote, for the people who approve it.
  * `FEATURE_REQUESTS_PLAN.md` section 10, S4a.
  *
- * An inbox, not a settings page. Setting Autopilot up (the mailbox, how freely
- * each kind of message may act) stays on the web. What lives here is the daily
+ * An inbox, not a settings page. Setting Autopilot up (how freely each kind of
+ * message may act) stays on the web; the mailbox is connected from Connected
+ * services (M6). What lives here is the daily
  * job: read what it wrote, approve or reject what is waiting, tell it whether
  * its previews were right, and stop it if something looks wrong.
  *
@@ -32,7 +33,8 @@ import {
   type OutboundMessage,
   type OutboundSettingsResponse,
 } from '@haulq/client';
-import { useEffect, useState } from 'react';
+import { Link } from '@tanstack/react-router';
+import { useEffect, useState, type ReactNode } from 'react';
 import { useSession } from '../../components/AuthGate.tsx';
 import { Empty, ErrorNote } from '../../components/ui.tsx';
 import { MessageRow, StepUps } from './parts.tsx';
@@ -186,7 +188,11 @@ function SendingStatus({ settings, isOwner }: { settings: OutboundSettingsRespon
   );
 }
 
-/** What is left for the owner to do, and where. Setup is on the web; this only says so, with no link to follow. */
+/**
+ * What is left for the owner to do, and where. The mailbox can be connected
+ * in the app now (Connected services, M6), so that one links there. Choosing
+ * what Autopilot does is still on the web, and only says so.
+ */
 function SetupNote({
   settings,
   mailboxConnected,
@@ -197,14 +203,20 @@ function SetupNote({
   mailboxKnown: boolean;
 }) {
   if (!settings || !mailboxKnown) return null;
-  const notRunning = !settings.autopilotRunning;
-  const text = notRunning
-    ? 'Autopilot is not switched on for this HaulQ server yet, so nothing new will be written until it is.'
-    : mailboxConnected === false
-      ? 'Connect your mailbox from HaulQ on the web to get Autopilot started.'
-      : Object.keys(settings.configured).length === 0
-        ? 'Choose what Autopilot should do from HaulQ on the web.'
-        : null;
-  if (!text) return null;
-  return <p className="hq-card bg-warn-50 px-4 py-3 text-sm text-warn shadow-none">{text}</p>;
+  const note = (children: ReactNode) => <p className="hq-card bg-warn-50 px-4 py-3 text-sm text-warn shadow-none">{children}</p>;
+  if (!settings.autopilotRunning) {
+    return note('Autopilot is not switched on for this HaulQ server yet, so nothing new will be written until it is.');
+  }
+  if (mailboxConnected === false) {
+    return note(
+      <>
+        Connect your mailbox to get Autopilot started.{' '}
+        <Link to="/integrations" className="font-semibold underline">
+          Connect it
+        </Link>
+      </>,
+    );
+  }
+  if (Object.keys(settings.configured).length === 0) return note('Choose what Autopilot should do from HaulQ on the web.');
+  return null;
 }

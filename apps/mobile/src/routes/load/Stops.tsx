@@ -6,10 +6,11 @@
  */
 
 import { useMutation } from '@tanstack/react-query';
-import { toDatetimeLocal, useNearbyStops, type Load, type Stop } from '@haulq/client';
+import { searchOrigins, toDatetimeLocal, useLoadTracking, useNearbyStops, type Load, type Stop } from '@haulq/client';
 import { useState } from 'react';
 import { ApiRequestError, request } from '../../lib/api.ts';
 import { CoordinateLookup } from '../../components/CoordinateLookup.tsx';
+import { RepairShops } from '../../components/RepairShops.tsx';
 import { ErrorNote, Field, Note } from '../../components/ui.tsx';
 import { Section, useRefreshLoad } from './shared.tsx';
 
@@ -163,6 +164,20 @@ export function NearbyStopsSection({ load }: { load: Load }) {
           </div>
         ))
       )}
+    </Section>
+  );
+}
+
+/**
+ * Repair shops near the truck's last position or a stop, from Yelp. See
+ * `components/RepairShops.tsx` for Yelp's display rules and the search budget.
+ */
+export function RepairShopsSection({ load }: { load: Load }) {
+  const tracking = useLoadTracking(load.id);
+  const origins = searchOrigins({ truck: tracking.data?.truck, stops: load.stops });
+  return (
+    <Section title="Repair shops">
+      <RepairShops origins={origins} />
     </Section>
   );
 }

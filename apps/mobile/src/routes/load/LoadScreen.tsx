@@ -26,7 +26,7 @@ import { InvoiceCard } from './Invoice.tsx';
 import { CheckinCodeSection, TrackingLinkSection } from './Links.tsx';
 import { MarginCard, TrackingCard } from './Progress.tsx';
 import { AssignmentControl, StatusControl } from './StatusAndAssignment.tsx';
-import { EditStopsSection, NearbyStopsSection } from './Stops.tsx';
+import { EditStopsSection, NearbyStopsSection, RepairShopsSection } from './Stops.tsx';
 
 /** `/loads/$loadId`: the office screen for office roles, the milestone screen for drivers. */
 export function LoadRoute() {
@@ -105,6 +105,7 @@ function Body({ load, canWrite, canBill }: { load: Load; canWrite: boolean; canB
           <EditStopsSection key={load.id} load={load} />
           <FeasibilitySection load={load} />
           <NearbyStopsSection load={load} />
+          <RepairShopsSection load={load} />
           {load.brokerId && load.brokerName && (
             <BrokerSection key={load.brokerId} load={{ ...load, brokerId: load.brokerId, brokerName: load.brokerName }} />
           )}

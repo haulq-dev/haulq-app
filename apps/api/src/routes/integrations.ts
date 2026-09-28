@@ -38,8 +38,9 @@ import { requireEntitlement } from '../billing/entitlements.ts';
 import { exchangeMotiveCode, motiveAuthorizeUrl } from '../integrations/motive.ts';
 import { suggestMotiveMatches } from '../integrations/motive-match.ts';
 import { accessTokenFor, fetchMotiveVehicles } from '../integrations/motive-sync.ts';
-import { signOAuthState, verifyOAuthState } from '../integrations/state.ts';
+import { readOAuthState, signOAuthState, type OAuthClient } from '../integrations/state.ts';
 import { HttpError, requireRole, requireScope } from '../plugins/request-context.ts';
+import { appReturnPath } from './app-return.ts';
 
 /**
  * The whole fleet, not one page — Motive matching has to check every truck
@@ -96,6 +97,11 @@ function requireDecryptionConfig(app: FastifyInstance) {
   }
   return { publicKey: CREDENTIAL_ENCRYPTION_PUBLIC_KEY, privateKey: CREDENTIAL_ENCRYPTION_PRIVATE_KEY };
 }
+
+/** `?client=app` when the mobile app starts the connect; see `app-return.ts`. */
+const MotiveConnectQuerySchema = z.object({
+  client: z.enum(['web', 'app']).optional(),
+});
 
 const MotiveCallbackQuerySchema = z.object({
   code: z.string().optional(),
@@ -196,7 +202,13 @@ export async function integrationRoutes(app: FastifyInstance) {
    */
   server.get(
     '/v1/integrations/motive/connect',
-    { schema: { tags: ['Integrations'], summary: 'Get the Motive OAuth authorize URL' } },
+    {
+      schema: {
+        tags: ['Integrations'],
+        summary: 'Get the Motive OAuth authorize URL',
+        querystring: MotiveConnectQuerySchema,
+      },
+    },
     async (request) => {
       const s = await requireScope(request);
       requireRole(request, 'owner');
@@ -206,7 +218,9 @@ export async function integrationRoutes(app: FastifyInstance) {
       // The client secret signs state rather than a dedicated secret existing
       // just for this — both stay server-side, and adding a second secret to
       // configure for one HMAC buys nothing.
-      const state = signOAuthState(config.clientSecret, s.ctx.orgId);
+      // Where it started rides in the signed state, so the callback knows
+      // whether to finish on the web or hand back to the app.
+      const state = signOAuthState(config.clientSecret, s.ctx.orgId, request.query.client ?? 'web');
       return { url: motiveAuthorizeUrl(config, state) };
     },
   );
@@ -224,6 +238,16 @@ export async function integrationRoutes(app: FastifyInstance) {
       const q = request.query;
       const webOrigin = app.env.WEB_ORIGIN.replace(/\/$/, '');
 
+      // Where to finish: the web's Integrations screen, or back into the
+      // mobile app when that's where the connect started. Read from the
+      // signed state before anything else, because even a refusal (`error`
+      // from Motive) or a config failure has to land the person somewhere
+      // they're signed in. An unverifiable state finishes on the web.
+      const secret = app.env.MOTIVE_CLIENT_SECRET;
+      const client: OAuthClient = (secret && q.state && readOAuthState(secret, q.state)?.client) || 'web';
+      const finish = (result: 'connected' | 'denied' | 'error' | 'not_configured') =>
+        reply.redirect(client === 'app' ? appReturnPath({ motive: result }) : `${webOrigin}/integrations?motive=${result}`);
+
       // Every exit from here on is a redirect back into the web app, never a
       // raw JSON response — the browser is mid-navigation on Motive's own
       // redirect, not making an API call something can render an error for.
@@ -233,7 +257,7 @@ export async function integrationRoutes(app: FastifyInstance) {
       // back.
       try {
         if (q.error) {
-          return reply.redirect(`${webOrigin}/integrations?motive=denied`);
+          return finish('denied');
         }
 
         const config = requireMotiveConfig(app);
@@ -242,7 +266,7 @@ export async function integrationRoutes(app: FastifyInstance) {
           throw new HttpError(400, 'invalid_request', 'Motive did not send a code and state.');
         }
 
-        const orgId = verifyOAuthState(config.clientSecret, q.state);
+        const orgId = readOAuthState(config.clientSecret, q.state)?.orgId;
         if (!orgId) {
           throw new HttpError(400, 'invalid_state', 'That connection request could not be verified.');
         }
@@ -272,16 +296,14 @@ export async function integrationRoutes(app: FastifyInstance) {
           expiresAt: tokens.expiresAt,
         });
 
-        return reply.redirect(`${webOrigin}/integrations?motive=connected`);
+        return finish('connected');
       } catch (err) {
         const notConfigured = err instanceof HttpError && err.code === 'not_configured';
         app.log.error(
           { err: err instanceof Error ? err.message : String(err) },
           'motive oauth callback failed',
         );
-        return reply.redirect(
-          `${webOrigin}/integrations?motive=${notConfigured ? 'not_configured' : 'error'}`,
-        );
+        return finish(notConfigured ? 'not_configured' : 'error');
       }
     },
   );

@@ -23,6 +23,8 @@ import { ApiRequestError, request } from '../lib/api.ts';
 import { Card, Empty, ErrorNote, Pill } from '../components/ui.tsx';
 import { successFeedback, tapFeedback } from '../lib/haptics.ts';
 import { Paperwork } from '../components/Paperwork.tsx';
+import { RepairShops } from '../components/RepairShops.tsx';
+import { searchOrigins } from '@haulq/client';
 
 interface LoadStop {
   id: string;
@@ -37,6 +39,9 @@ interface LoadStop {
   loadingStartedAt: string | null;
   loadingEndedAt: string | null;
   departedAt: string | null;
+  /** Set when the stop was geocoded. Used as a place to search for repair shops. */
+  lat?: number | null;
+  lng?: number | null;
 }
 
 interface LoadDetailResponse {
@@ -227,6 +232,31 @@ function PositionControl({ loadId }: { loadId: string }) {
   );
 }
 
+/**
+ * Broken down, or a tire gone: repair shops near where the driver is, or a
+ * stop. Behind a tap, so it neither crowds the milestones nor spends a Yelp
+ * search nobody asked for.
+ */
+function Breakdown({ stops }: { stops: LoadStop[] }) {
+  const [open, setOpen] = useState(false);
+  const origins = searchOrigins({
+    truck: null,
+    stops: stops.map((s) => ({ seq: s.seq, type: s.type, city: s.city, state: s.state, lat: s.lat ?? null, lng: s.lng ?? null })),
+  });
+  if (!open) {
+    return (
+      <button type="button" className="hq-btn hq-btn-ghost w-full" onClick={() => setOpen(true)}>
+        Find a repair shop
+      </button>
+    );
+  }
+  return (
+    <Card title="Repair shops">
+      <RepairShops origins={origins} nearMe />
+    </Card>
+  );
+}
+
 export function LoadDetailScreen() {
   const { loadId } = useParams({ from: '/loads/$loadId' });
   const navigate = useNavigate();
@@ -282,6 +312,8 @@ export function LoadDetailScreen() {
       )}
 
       <PositionControl loadId={loadId} />
+
+      <Breakdown stops={data.stops} />
 
       <Paperwork loadId={loadId} forDriver />
     </div>

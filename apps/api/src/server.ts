@@ -62,6 +62,7 @@ import { mailboxRoutes } from './routes/mailbox.ts';
 import { nearbyStopsRoutes } from './routes/nearby-stops.ts';
 import { outboundRoutes } from './routes/outbound.ts';
 import { integrationRoutes } from './routes/integrations.ts';
+import { appReturnRoutes } from './routes/app-return.ts';
 import { driverRoutes } from './routes/drivers.ts';
 import { importRoutes } from './routes/imports.ts';
 import { insightsRoutes } from './routes/insights.ts';
@@ -440,6 +441,7 @@ export async function buildServer(
   await app.register(outboundRoutes);
   await app.register(geocodeRoutes);
   await app.register(integrationRoutes);
+  await app.register(appReturnRoutes);
   await app.register(payRoutes);
   await app.register(insightsRoutes);
   await app.register(usageRoutes);
