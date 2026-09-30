@@ -163,7 +163,7 @@ const TABS: readonly Tab[] = [
     label: 'More',
     icon: AccountIcon,
     // Everything reached from More keeps it lit.
-    isActive: (p) => ['/account', '/trucks', '/drivers', '/people', '/insights', '/activity', '/carrier', '/integrations', '/notifications'].some((prefix) => p.startsWith(prefix)),
+    isActive: (p) => ['/account', '/trucks', '/drivers', '/people', '/insights', '/activity', '/carrier', '/integrations', '/notifications', '/setup'].some((prefix) => p.startsWith(prefix)),
   },
 ];
 

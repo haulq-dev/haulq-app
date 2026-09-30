@@ -45,6 +45,7 @@ export function AccountScreen() {
                 <NavRow to="/integrations" label="Connected services" hint="Motive, and your work mailbox" />
               )}
               <NavRow to="/notifications" label="Notifications" hint="Which alerts this phone gets" />
+              {canDispatch(role) && <NavRow to="/setup" label="Setting up" hint="What's left to set up, and what it unlocks" />}
             </ul>
           </nav>
           <nav aria-label="Fleet and people" className="hq-card overflow-hidden">
@@ -79,7 +80,7 @@ function NavRow({
   label,
   hint,
 }: {
-  to: '/trucks' | '/drivers' | '/people' | '/insights' | '/carrier' | '/activity' | '/integrations' | '/notifications';
+  to: '/trucks' | '/drivers' | '/people' | '/insights' | '/carrier' | '/activity' | '/integrations' | '/notifications' | '/setup';
   label: string;
   hint: string;
 }) {

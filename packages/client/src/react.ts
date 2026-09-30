@@ -53,6 +53,7 @@ import type {
   Invitation,
   MotiveVehicle,
   MotiveVehiclesResponse,
+  OnboardingStatus,
   OperatingFactsResponse,
   OrgSummary,
   Role,
@@ -131,6 +132,7 @@ export const queryKeys = {
   operatingFacts: ['operating-facts'] as const,
   integrations: ['integrations'] as const,
   pushPreferences: ['push-preferences'] as const,
+  onboarding: ['onboarding'] as const,
 };
 
 /**
@@ -1143,4 +1145,22 @@ export function useSetPushPreferences() {
 export function useSendTestPush() {
   const client = useApiClient();
   return useMutation({ mutationFn: () => client.request<{ sent: number }>('/v1/push/test', { method: 'POST' }) });
+}
+
+// --- Setup checklist ------------------------------------------------------------
+
+/**
+ * What a carrier still has to set up, each step with what it unlocks and, while
+ * undone, what that gap is costing. Always refetched on mount: the fixes happen
+ * on other screens (a truck added, costs saved), and coming back to the list
+ * must show them done.
+ */
+export function useOnboarding(options: { enabled?: boolean } = {}) {
+  const client = useApiClient();
+  return useQuery({
+    queryKey: queryKeys.onboarding,
+    queryFn: () => client.request<OnboardingStatus>('/v1/onboarding'),
+    enabled: options.enabled ?? true,
+    refetchOnMount: 'always',
+  });
 }
