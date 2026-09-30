@@ -2,9 +2,10 @@
  * Autopilot on the phone: what it wrote, for the people who approve it.
  * `FEATURE_REQUESTS_PLAN.md` section 10, S4a.
  *
- * An inbox, not a settings page. Setting Autopilot up (how freely each kind of
- * message may act) stays on the web; the mailbox is connected from Connected
- * services (M6). What lives here is the daily
+ * An inbox first. Setting Autopilot up (the switch, how freely each kind of
+ * message may act) is its own screen, `SettingsScreen.tsx`, linked from the
+ * header for the owner and dispatchers; the mailbox is connected from
+ * Connected services (M6). What lives here is the daily
  * job: read what it wrote, approve or reject what is waiting, tell it whether
  * its previews were right, and stop it if something looks wrong.
  *
@@ -16,9 +17,9 @@
  * **Nothing is approved from this list.** Each message opens on its own screen
  * with the whole text and its attachments; Approve is there.
  *
- * Stopping sending is here because it is what someone reaches for in a hurry.
- * Turning it back on is not: that stays on the web, where the mailbox is in
- * front of them. No plan, price or upgrade wording anywhere (Guideline 3.1.1).
+ * Stopping sending is also here, because it is what someone reaches for in a
+ * hurry. Turning it back on is in settings, beside the mailbox it sends from.
+ * No plan, price or upgrade wording anywhere (Guideline 3.1.1).
  */
 
 import {
@@ -86,9 +87,18 @@ export function AutopilotScreen() {
     );
   }
 
+  const canSeeSettings = role === 'owner' || role === 'dispatcher';
+
   return (
     <div className="mx-auto max-w-md space-y-4 px-4 py-6">
-      <h1 className="text-2xl">Autopilot</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl">Autopilot</h1>
+        {canSeeSettings && (
+          <Link to="/autopilot/settings" className="text-sm font-semibold text-brand">
+            Settings ›
+          </Link>
+        )}
+      </div>
 
       <SendingStatus settings={settings.data} isOwner={isOwner} />
       {isOwner && <SetupNote settings={settings.data} mailboxConnected={mailbox.data?.connected} mailboxKnown={!mailbox.isLoading} />}
@@ -144,9 +154,9 @@ const EMPTY: Record<Section, string> = {
 };
 
 /**
- * The master switch, as far as a phone goes. Off is loud, because "did it
- * stop?" has to be answerable at a glance. The owner can stop it here; turning
- * it on stays on the web.
+ * The master switch, at a glance. Off is loud, because "did it stop?" has to
+ * be answerable immediately. The owner can stop it right here; turning it back
+ * on is in settings, next to the mailbox it needs.
  */
 function SendingStatus({ settings, isOwner }: { settings: OutboundSettingsResponse | undefined; isOwner: boolean }) {
   const setSending = useSetSendingEnabled();
@@ -158,8 +168,12 @@ function SendingStatus({ settings, isOwner }: { settings: OutboundSettingsRespon
         <p className="font-semibold text-bad">Sending from your mailbox is OFF</p>
         <p className="text-sm text-slate">
           Nothing leaves your mailbox. Autopilot can still write messages for you to look at.
-          {isOwner && ' Turn it back on from HaulQ on the web.'}
         </p>
+        {isOwner && (
+          <Link to="/autopilot/settings" className="block text-sm font-semibold text-brand">
+            Turn it back on in settings ›
+          </Link>
+        )}
       </div>
     );
   }
@@ -176,7 +190,7 @@ function SendingStatus({ settings, isOwner }: { settings: OutboundSettingsRespon
         className="hq-btn hq-btn-ghost text-bad"
         disabled={setSending.isPending}
         onClick={() => {
-          if (window.confirm('Stop sending? Nothing will leave your mailbox until you turn it back on from HaulQ on the web.')) {
+          if (window.confirm('Stop sending? Nothing will leave your mailbox until you turn it back on in settings.')) {
             setSending.mutate(false);
           }
         }}
@@ -189,9 +203,8 @@ function SendingStatus({ settings, isOwner }: { settings: OutboundSettingsRespon
 }
 
 /**
- * What is left for the owner to do, and where. The mailbox can be connected
- * in the app now (Connected services, M6), so that one links there. Choosing
- * what Autopilot does is still on the web, and only says so.
+ * What is left for the owner to do, each linked to where it's done: the
+ * mailbox in Connected services, the choices in settings.
  */
 function SetupNote({
   settings,
@@ -217,6 +230,15 @@ function SetupNote({
       </>,
     );
   }
-  if (Object.keys(settings.configured).length === 0) return note('Choose what Autopilot should do from HaulQ on the web.');
+  if (Object.keys(settings.configured).length === 0) {
+    return note(
+      <>
+        Choose what Autopilot should do.{' '}
+        <Link to="/autopilot/settings" className="font-semibold underline">
+          Open settings
+        </Link>
+      </>,
+    );
+  }
   return null;
 }

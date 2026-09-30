@@ -37,7 +37,7 @@ function world(overrides: Record<string, unknown> = {}) {
   answerRequests({
     '/v1/orgs': { items: [{ id: 'o', name: 'Acme', role: session.current.role, status: 'active', plan: plan.current }] },
     '/v1/integrations': { items: [], deployment: DEPLOYMENT },
-    '/v1/mailbox': { connected: false, status: 'not_connected', provider: null, connectedAt: null },
+    '/v1/mailbox': { connected: false, status: 'not_connected', provider: null, connectedAt: null, configured: true },
     ...overrides,
   });
 }
@@ -99,6 +99,13 @@ describe('IntegrationsScreen', () => {
     expect(await screen.findByText("Motive tracking isn't included in your carrier's HaulQ plan.")).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Connect Motive' })).not.toBeInTheDocument();
     expect(container.textContent).not.toMatch(/upgrade|subscri|pricing|stripe/i);
+  });
+
+  it('says calmly when mailbox connect is not set up on the server, with no button that can only fail', async () => {
+    world({ '/v1/mailbox': { connected: false, status: 'not_connected', provider: null, connectedAt: null, configured: false } });
+    renderScreen(<IntegrationsScreen />);
+    expect(await screen.findByText(/isn’t ready yet/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Connect your mailbox' })).not.toBeInTheDocument();
   });
 
   it('gives a dispatcher status only', async () => {

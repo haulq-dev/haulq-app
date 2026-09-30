@@ -36,6 +36,7 @@ import { listenForPush, refreshPushRegistration } from './lib/push.ts';
 import { AccountScreen } from './routes/Account.tsx';
 import { AutopilotScreen } from './routes/autopilot/AutopilotScreen.tsx';
 import { MessageScreen } from './routes/autopilot/MessageScreen.tsx';
+import { AutopilotSettingsScreen } from './routes/autopilot/SettingsScreen.tsx';
 import { DocumentScreen } from './routes/documents/DocumentScreen.tsx';
 import { DocumentsScreen } from './routes/documents/DocumentsScreen.tsx';
 import { CheckinScreen, isCheckinRoute } from './routes/Checkin.tsx';
@@ -167,6 +168,11 @@ const autopilotRoute = createRoute({
   path: '/autopilot',
   component: AutopilotScreen,
 });
+const autopilotSettingsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/autopilot/settings',
+  component: AutopilotSettingsScreen,
+});
 const autopilotMessageRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/autopilot/$messageId',
@@ -188,6 +194,7 @@ const invoiceRoute = createRoute({ getParentRoute: () => rootRoute, path: '/pay/
 const routeTree = rootRoute.addChildren([
   accountRoute,
   autopilotRoute,
+  autopilotSettingsRoute,
   autopilotMessageRoute,
   documentsRoute,
   documentRoute,

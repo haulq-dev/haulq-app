@@ -187,6 +187,21 @@ function Mailbox({ isOwner, justConnected }: { isOwner: boolean; justConnected: 
   if (!canRead) return null;
   const m = mailbox.data;
 
+  // Not set up on HaulQ's side: a calm note, not a button that can only fail.
+  if (m && !m.configured) {
+    return (
+      <Card title="Mailbox">
+        <p className="text-sm text-slate">
+          Connecting your own mailbox isn’t ready yet. Rate confirmations still come in when forwarded to your{' '}
+          <Link to="/documents" className="text-brand underline">
+            paperwork email address
+          </Link>
+          .
+        </p>
+      </Card>
+    );
+  }
+
   return (
     <Card title="Mailbox">
       <p className="mb-3 text-sm text-slate">

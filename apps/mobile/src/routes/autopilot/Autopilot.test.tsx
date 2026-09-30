@@ -140,7 +140,10 @@ describe('AutopilotScreen — the inbox', () => {
     renderScreen(<AutopilotScreen />);
     await userEvent.click(await screen.findByRole('tab', { name: /History/ }));
 
-    const subjects = screen.getAllByRole('link').map((a) => a.textContent ?? '');
+    const subjects = screen
+      .getAllByRole('link')
+      .filter((a) => a.getAttribute('href') !== '/autopilot/settings')
+      .map((a) => a.textContent ?? '');
     expect(subjects[0]).toMatch(/Failed one/);
     expect(subjects[1]).toMatch(/Rejected one/);
     expect(subjects[2]).toMatch(/Sent one/);
@@ -189,11 +192,11 @@ describe('AutopilotScreen — stopping it', () => {
     expect(sent('PUT', '/v1/outbound/settings')).toBe(false);
   });
 
-  it('shows OFF loudly, and sends the owner to the web to turn it back on', async () => {
+  it('shows OFF loudly, and links the owner to settings to turn it back on', async () => {
     world({ settings: settings({ sendingEnabled: false }) });
     renderScreen(<AutopilotScreen />);
     expect(await screen.findByText('Sending from your mailbox is OFF')).toBeInTheDocument();
-    expect(screen.getByText(/Turn it back on from HaulQ on the web/)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Turn it back on in settings/ })).toHaveAttribute('href', '/autopilot/settings');
     expect(screen.queryByRole('button', { name: 'Stop sending' })).not.toBeInTheDocument();
   });
 
@@ -223,7 +226,8 @@ describe('AutopilotScreen — what is left to set up', () => {
   it('asks an owner with nothing chosen to choose', async () => {
     world({ settings: settings({ configured: {} }) });
     renderScreen(<AutopilotScreen />);
-    expect(await screen.findByText(/Choose what Autopilot should do from HaulQ on the web/)).toBeInTheDocument();
+    expect(await screen.findByText(/Choose what Autopilot should do/)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Open settings' })).toHaveAttribute('href', '/autopilot/settings');
   });
 });
 
