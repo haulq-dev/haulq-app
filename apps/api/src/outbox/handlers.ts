@@ -468,6 +468,19 @@ function loadProposalReadyHandler(deps: HandlerDeps): OutboxHandler {
       return;
     }
 
+    // No filename on the lock screen: it often carries the broker's name.
+    await pushToUsers(deps, {
+      userIds: recipients.map((r) => r.userId),
+      category: 'proposals',
+      message: {
+        title: 'Rate confirmation',
+        body: 'HaulQ read a new one as a load. Check it and create.',
+        path: `/proposals/${notice.proposalId}`,
+        orgId: message.orgId,
+        collapseId: collapse(message),
+      },
+    });
+
     for (const recipient of recipients) {
       const email = loadProposalReadyEmail(
         {

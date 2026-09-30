@@ -21,6 +21,7 @@ type Role = 'owner' | 'dispatcher' | 'driver' | 'accountant';
 export const PUSH_CATEGORIES = [
   { id: 'assigned', label: 'A load assigned to you', roles: ['driver'] },
   { id: 'load_quiet', label: 'A load went quiet', roles: ['owner', 'dispatcher'] },
+  { id: 'proposals', label: 'A rate confirmation is ready to become a load', roles: ['owner', 'dispatcher'] },
   { id: 'detention', label: 'Detention started at a stop', roles: ['owner', 'dispatcher'] },
   { id: 'documents', label: "A document doesn't match its load", roles: ['owner', 'dispatcher'] },
   { id: 'broker_authority', label: "A broker's authority changed", roles: ['owner', 'dispatcher'] },

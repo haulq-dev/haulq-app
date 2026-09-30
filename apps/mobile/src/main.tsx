@@ -48,6 +48,8 @@ import { CarrierScreen } from './routes/more/CarrierScreen.tsx';
 import { InsightsScreen } from './routes/more/InsightsScreen.tsx';
 import { IntegrationsScreen } from './routes/more/IntegrationsScreen.tsx';
 import { NotificationsScreen } from './routes/more/NotificationsScreen.tsx';
+import { ProposalScreen } from './routes/proposals/ProposalScreen.tsx';
+import { ProposalsScreen } from './routes/proposals/ProposalsScreen.tsx';
 import { DriverScreen, NewDriverScreen } from './routes/fleet/DriverScreen.tsx';
 import { DriversScreen } from './routes/fleet/DriversScreen.tsx';
 import { PeopleScreen } from './routes/fleet/PeopleScreen.tsx';
@@ -131,6 +133,8 @@ const newDriverRoute = createRoute({ getParentRoute: () => rootRoute, path: '/dr
 const driverRoute = createRoute({ getParentRoute: () => rootRoute, path: '/drivers/$driverId', component: DriverScreen });
 const insightsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/insights', component: InsightsScreen });
 const activityRoute = createRoute({ getParentRoute: () => rootRoute, path: '/activity', component: ActivityScreen });
+const proposalsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/proposals', component: ProposalsScreen });
+const proposalRoute = createRoute({ getParentRoute: () => rootRoute, path: '/proposals/$proposalId', component: ProposalScreen });
 const notificationsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/notifications', component: NotificationsScreen });
 const integrationsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/integrations', component: IntegrationsScreen });
 const carrierRoute = createRoute({ getParentRoute: () => rootRoute, path: '/carrier', component: CarrierScreen });
@@ -206,6 +210,8 @@ const routeTree = rootRoute.addChildren([
   carrierRoute,
   integrationsRoute,
   notificationsRoute,
+  proposalsRoute,
+  proposalRoute,
   createLoadRoute,
 ]);
 const router = createRouter({ routeTree });

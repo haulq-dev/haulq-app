@@ -33,6 +33,7 @@ import {
 import { useEffect, useState } from 'react';
 import { useSession } from '../components/AuthGate.tsx';
 import { PushPrompt } from '../components/PushPrompt.tsx';
+import { ProposalsBanner } from './proposals/ProposalsScreen.tsx';
 import { Card, Chip, Empty, ErrorNote, LoadMore, Money, Pill } from '../components/ui.tsx';
 
 /** Typing pause before a search re-queries the list. */
@@ -69,6 +70,7 @@ export function LoadsScreen() {
       </div>
 
       <PushPrompt forDriver={false} />
+      <ProposalsBanner />
 
       <input
         type="search"

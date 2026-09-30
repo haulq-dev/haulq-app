@@ -131,7 +131,8 @@ const TABS: readonly Tab[] = [
     to: '/',
     label: 'Loads',
     icon: LoadsIcon,
-    isActive: (p) => p === '/' || p.startsWith('/loads'),
+    // Rate confirmations become loads, so reviewing one is Loads work.
+    isActive: (p) => p === '/' || p.startsWith('/loads') || p.startsWith('/proposals'),
   },
   {
     to: '/documents',

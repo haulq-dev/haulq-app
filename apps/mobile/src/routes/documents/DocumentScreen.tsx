@@ -35,6 +35,7 @@ import { useState } from 'react';
 import { DocumentPreview } from '../../components/DocumentPreview.tsx';
 import { Card, ErrorNote, Field, Pill } from '../../components/ui.tsx';
 import { request } from '../../lib/api.ts';
+import { RateConfirmationAction } from '../proposals/ProposalsScreen.tsx';
 
 const when = (iso: string) =>
   new Date(iso).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
@@ -75,6 +76,10 @@ function Body({ document }: { document: DocumentRow }) {
       </header>
 
       <DocumentPreview id={document.id} contentType={document.contentType} filename={document.filename} />
+
+      {/* A rate confirmation no load owns yet may be a new load: review what
+          HaulQ read, or have it read now. Owners and dispatchers only. */}
+      {document.kind === 'rate_confirmation' && !document.loadId && <RateConfirmationAction documentId={document.id} />}
 
       <Card title="Load">
         <AttachControl document={document} />

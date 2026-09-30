@@ -163,6 +163,15 @@ suite('push from outbox handlers', () => {
     assert.ok((await pendingOutboxTopics(db, orgId)).includes('load.driver_assigned'));
   });
 
+  it('tells owners and dispatchers a rate confirmation is ready, opening its review, with no filename on the lock screen', async () => {
+    await handlers['load_proposal.created']!(
+      msg('load_proposal.created', { proposalId: 'P1', filename: 'TQL-ratecon-88213.pdf', stops: 2 }),
+    );
+    assert.deepEqual(recipients(), [TOKENS.owner, TOKENS.dispatcher].sort());
+    assert.equal(push.sent[0]!.message.path, '/proposals/P1');
+    assert.doesNotMatch(`${push.sent[0]!.message.title} ${push.sent[0]!.message.body}`, /TQL|88213/);
+  });
+
   it('does nothing at all without a push sender', async () => {
     const deps: HandlerDeps = { mailer: new FakeMailer(), webOrigin: 'x', db, storage: {} as never, reader: {} as never, log: { info: () => {}, warn: () => {} } };
     await buildOutboxHandlers(deps)['invoice.paid']!(msg('invoice.paid', { reference: 1, loadReference: 2 }));

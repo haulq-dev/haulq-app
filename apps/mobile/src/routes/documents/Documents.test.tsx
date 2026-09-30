@@ -12,6 +12,7 @@ vi.mock('../../lib/haptics.ts', () => ({ tapFeedback: vi.fn(), successFeedback: 
 vi.mock('@tanstack/react-router', () => ({
   Link: ({ children, to }: { children: React.ReactNode; to: string }) => <a href={to}>{children}</a>,
   useParams: () => ({ documentId: 'D1' }),
+  useNavigate: () => vi.fn(),
 }));
 
 import { request } from '../../lib/api.ts';
@@ -82,6 +83,7 @@ describe('DocumentScreen', () => {
       '/v1/documents/D1': { document: aDoc({ loadId: null, validation: null }) },
       '/v1/documents/D1/attach': (o: { body: unknown }) => attached.push(o.body),
       '/v1/loads': { items: [aLoad()] },
+      '/v1/load-proposals': { items: [] },
     });
     renderScreen(<DocumentScreen />);
 
