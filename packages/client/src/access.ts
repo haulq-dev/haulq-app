@@ -10,6 +10,16 @@
 import { ApiRequestError } from './client.ts';
 import type { OrgPlan, OrgStatus } from './types.ts';
 
+/**
+ * The office roles: everyone but a driver. The account-wide screens
+ * (insights, pay, activity, the carrier's costs, people) are theirs; the API
+ * refuses a driver on the money ones. A driver works from their own loads
+ * and their paperwork.
+ */
+export function isOfficeRole(role: string | undefined): boolean {
+  return role === 'owner' || role === 'dispatcher' || role === 'accountant';
+}
+
 /** Loads, trucks, drivers, feasibility: the dispatch surface. */
 export function canDispatch(role: string | undefined): boolean {
   return role === 'owner' || role === 'dispatcher';

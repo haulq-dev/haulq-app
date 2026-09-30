@@ -290,15 +290,29 @@ export interface FirstRunStep {
 }
 
 /** The three-step checklist shown until it is done. */
+/**
+ * Whether connecting a mailbox is offered at all. Hidden while this deployment
+ * has no mailbox provider (`configured` false): a button that can only fail
+ * is worse than none, and email forwarding already brings rate confirmations
+ * in. Unknown (still loading, or an older API without the field) counts as
+ * available, so nothing flickers away on a deployment that has it.
+ */
+export function mailboxOffered(mailbox: Pick<MailboxStatus, 'configured'> | undefined): boolean {
+  return mailbox?.configured !== false;
+}
+
 export function firstRunSteps(input: {
-  mailbox: Pick<MailboxStatus, 'connected'> | undefined;
+  mailbox: (Pick<MailboxStatus, 'connected'> & Partial<Pick<MailboxStatus, 'configured'>>) | undefined;
   settings: Pick<OutboundSettingsResponse, 'configured' | 'actions'> | undefined;
   messages: readonly OutboundMessage[];
 }): FirstRunStep[] {
   const available = input.settings?.actions.filter((a) => a.available) ?? [];
   const chosen = available.length > 0 && available.every((a) => positionFor(input.settings!, a.type) !== 'off');
+  const mailboxStep: FirstRunStep[] =
+    input.mailbox?.configured === false ? [] : [{ key: 'mailbox', label: 'Connect your mailbox', done: input.mailbox?.connected === true }];
   return [
-    { key: 'mailbox', label: 'Connect your mailbox', done: input.mailbox?.connected === true },
+    // Only a step while there's a mailbox to connect (`mailboxOffered`).
+    ...mailboxStep,
     { key: 'choose', label: 'Choose how each kind of message is handled — “Show me first” is the safe start', done: chosen },
     { key: 'review', label: 'Look over the first messages it writes', done: input.messages.length > 0 },
   ];

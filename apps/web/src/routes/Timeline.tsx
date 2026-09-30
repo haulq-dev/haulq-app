@@ -10,16 +10,8 @@
  * took should be visibly different from one a person took.
  */
 
-import { useInfiniteQuery } from '@tanstack/react-query';
-import { request, type TimelineEntry } from '../lib/api.ts';
+import { actorLabel, useTimeline } from '@haulq/client';
 import { Card, Empty, ErrorNote, LoadMore, Pill } from '../components/ui.tsx';
-
-const ACTOR_LABEL: Record<string, string> = {
-  user: 'you',
-  agent: 'HaulQ',
-  system: 'HaulQ',
-  integration: 'a connected service',
-};
 
 function when(iso: string): string {
   const date = new Date(iso);
@@ -31,15 +23,8 @@ function when(iso: string): string {
 }
 
 export function TimelineScreen() {
-  const timeline = useInfiniteQuery({
-    queryKey: ['timeline'],
-    queryFn: ({ pageParam }: { pageParam: string | undefined }) =>
-      request<{ items: TimelineEntry[]; nextCursor: string | null }>(
-        `/v1/timeline?${new URLSearchParams({ limit: '100', ...(pageParam ? { before: pageParam } : {}) })}`,
-      ),
-    initialPageParam: undefined as string | undefined,
-    getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
-  });
+  // Shared with the mobile app: the same pages, and a short page is the last.
+  const timeline = useTimeline();
 
   const items = timeline.data?.pages.flatMap((p) => p.items) ?? [];
 
@@ -88,7 +73,7 @@ export function TimelineScreen() {
                 </span>
               ) : (
                 <span className="field-label ml-20 shrink-0 text-mute sm:ml-0">
-                  {ACTOR_LABEL[entry.actorType] ?? entry.actorType}
+                  {actorLabel(entry.actorType)}
                 </span>
               )}
             </li>

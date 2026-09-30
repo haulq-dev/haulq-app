@@ -9,52 +9,37 @@
  * The rules below are enforced in `packages/db/src/repositories/members.ts`, not
  * here. This screen disables controls to explain why an action is unavailable;
  * the repository is what refuses it. A UI-only rule is a rule the next surface
- * forgets.
+ * forgets. The display rules (`memberControls`, `invitableRoles`) and every
+ * request come from `@haulq/client`, shared with the mobile app's People screen.
  */
 
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
 import {
+  canDispatch,
+  invitableRoles,
+  invitationExpiry,
   isPlaceholderEmail,
-  request,
+  memberControls,
+  ROLE_HINT,
+  ROLE_LABEL,
   ROLES,
-  type Driver,
+  useChangeRole,
+  useDriverList,
+  useInvitations,
+  useInvite,
+  useMembers,
+  useRemoveMember,
+  useRevokeInvitation,
   type Invitation,
   type Member,
   type Role,
-} from '../lib/api.ts';
+} from '@haulq/client';
+import { useState } from 'react';
 import { useOrgs, useSession } from '../components/AuthGate.tsx';
 import { Card, Empty, ErrorNote, Field, LoadMore, Pill } from '../components/ui.tsx';
 
-interface CursorPage<T> {
-  items: T[];
-  nextCursor: string | null;
-}
-
-interface MembersPageResponse {
-  members: CursorPage<Member>;
-  invitations: CursorPage<Invitation>;
-}
-
-const ROLE_HINT: Record<Role, string> = {
-  owner: 'Everything, including billing, members and the carrier authority.',
-  dispatcher: 'Books loads, manages trucks and drivers. No billing.',
-  driver: 'Their own loads and documents.',
-  accountant: 'Invoices, settlements and reports. Cannot book.',
-};
-
 function when(iso: string | null): string {
   if (!iso) return '—';
-  return new Date(iso).toLocaleDateString('en-US', {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-  });
-}
-
-/** Days until `iso`, negative once it has passed. */
-function daysUntil(iso: string): number {
-  return Math.ceil((new Date(iso).getTime() - Date.now()) / 86_400_000);
+  return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
 /**
@@ -64,99 +49,63 @@ function daysUntil(iso: string): number {
  * hash, so there is no second chance to read it — losing it means revoking and
  * re-inviting. That is why this is a full-width panel with a copy button rather
  * than a toast, and why it does not auto-dismiss.
- *
- * There is deliberately no accept link here. `/v1/invitations/:token/accept`
- * exists on the API, but the web app has no screen mounted at that path yet, so
- * a constructed URL would 404 and look like a broken invitation rather than a
- * missing feature.
  */
 function TokenPanel({ email, token }: { email: string; token: string }) {
   const [copied, setCopied] = useState(false);
+  const link = `${window.location.origin}/invite/${encodeURIComponent(token)}`;
 
   const copy = async () => {
     try {
-      await navigator.clipboard.writeText(token);
+      await navigator.clipboard.writeText(link);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
       // Clipboard access is denied over plain http and in some embedded
-      // browsers. The token is selectable text either way, so this is a
-      // convenience failing, not the feature failing.
+      // browsers. The link is selectable text either way.
       setCopied(false);
     }
   };
 
   return (
     <div className="border-l-2 border-brand bg-brand-50 p-4">
-      <p className="field-label text-brand">Send this to {email}</p>
+      <p className="field-label text-brand">Send this link to {email}</p>
       <p className="mt-2 max-w-prose text-sm text-slate">
-        This is the only time this token is shown — only its hash is stored. If
-        it is lost, revoke the invitation and send a new one.
+        This is the only time this link is shown — only its hash is stored. If it is lost, withdraw the invitation and send a new one. It opens in the
+        HaulQ app or a browser, whichever they have.
       </p>
       <div className="mt-3 flex flex-wrap items-center gap-2">
-        <code className="num min-w-0 flex-1 border border-line bg-white px-3 py-2 text-xs break-all">
-          {token}
-        </code>
+        <code className="num min-w-0 flex-1 border border-line bg-white px-3 py-2 text-xs break-all">{link}</code>
         <button className="hq-btn hq-btn-primary shrink-0" onClick={() => void copy()}>
           {copied ? 'Copied' : 'Copy'}
         </button>
       </div>
-      <p className="mt-2 text-xs text-mute">
-        Delivery is manual until email sending is wired up, at which point the
-        invitation sends itself and this panel goes away.
-      </p>
     </div>
   );
 }
 
-function InviteForm({ canInviteOwner }: { canInviteOwner: boolean }) {
+function InviteForm({ myRole }: { myRole: string | undefined }) {
+  const roles = invitableRoles(myRole);
   const [email, setEmail] = useState('');
   const [role, setRole] = useState<Role>('driver');
   const [driverId, setDriverId] = useState('');
   const [issued, setIssued] = useState<{ email: string; token: string } | null>(null);
-
-  // Only fetched once the form needs it — a `driver`-role invite is the one
-  // case where the invitation has to name a specific roster row, so the
-  // driver app's own account can be linked to it the moment they accept (see
-  // `orgInvitations.driverId`'s own note in `packages/db/src/schema/tenancy.ts`).
-  const drivers = useQuery({
-    queryKey: ['drivers', 'for-invite'],
-    queryFn: () => request<{ items: Driver[] }>('/v1/drivers'),
-    enabled: role === 'driver',
-  });
-
-  const queryClient = useQueryClient();
-  const invite = useMutation({
-    mutationFn: () =>
-      request<{ invitation: Invitation; token: string }>('/v1/members/invites', {
-        body: { email, role, ...(role === 'driver' && driverId ? { driverId } : {}) },
-      }),
-    onSuccess: async (res) => {
-      setIssued({ email: res.invitation.email, token: res.token });
-      setEmail('');
-      setDriverId('');
-      await queryClient.invalidateQueries({ queryKey: ['members'] });
-    },
-  });
+  const invite = useInvite();
+  // A driver invite can name the roster row this login will control, so the
+  // app knows which loads are theirs the moment they accept. Only rows no
+  // login controls yet.
+  const drivers = useDriverList();
+  const unlinked = (drivers.data?.pages.flatMap((p) => p.items) ?? []).filter((d) => !d.userId);
 
   return (
     <Card title="Invite someone">
       <p className="mb-4 max-w-prose text-sm text-slate">
-        You invite an email address, not an existing user — most people you
-        invite will not have a HaulQ account yet. Whoever holds the link joins,
-        even if they sign in with a different address, and both are recorded on
-        the timeline.
+        You invite an email address, not an existing user — most people you invite will not have a HaulQ account yet. Whoever holds the link joins,
+        even if they sign in with a different address, and both are recorded on the timeline.
       </p>
 
       <div className="grid gap-5 sm:grid-cols-2">
         <Field label="Email">
-          <input
-            className="hq-input"
-            type="email"
-            autoComplete="off"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-          />
+          <input className="hq-input" type="email" autoComplete="off" value={email} onChange={(e) => setEmail(e.target.value)} />
         </Field>
         <Field label="Role" hint={ROLE_HINT[role]}>
           <select
@@ -167,26 +116,18 @@ function InviteForm({ canInviteOwner }: { canInviteOwner: boolean }) {
               setDriverId('');
             }}
           >
-            {ROLES.map((r) => (
-              <option key={r} value={r} disabled={r === 'owner' && !canInviteOwner}>
-                {r}
-                {r === 'owner' && !canInviteOwner ? ' — owners only' : ''}
+            {roles.map((r) => (
+              <option key={r} value={r}>
+                {ROLE_LABEL[r]}
               </option>
             ))}
           </select>
         </Field>
-        {role === 'driver' && (
-          <Field
-            label="Driver"
-            hint="Optional — link this login to a roster row now, so the driver app knows which loads are theirs the moment they accept. Leave blank to add them to the roster later."
-          >
-            <select
-              className="hq-input"
-              value={driverId}
-              onChange={(e) => setDriverId(e.target.value)}
-            >
+        {role === 'driver' && unlinked.length > 0 && (
+          <Field label="Driver" hint="Optional — link this login to a roster row now, so their loads show the moment they accept.">
+            <select className="hq-input" value={driverId} onChange={(e) => setDriverId(e.target.value)}>
               <option value="">Not linked yet</option>
-              {(drivers.data?.items ?? []).map((d) => (
+              {unlinked.map((d) => (
                 <option key={d.id} value={d.id}>
                   {d.fullName}
                 </option>
@@ -199,8 +140,19 @@ function InviteForm({ canInviteOwner }: { canInviteOwner: boolean }) {
       <div className="mt-5">
         <button
           className="hq-btn hq-btn-brand"
-          disabled={!email || invite.isPending}
-          onClick={() => invite.mutate()}
+          disabled={!email.trim() || invite.isPending}
+          onClick={() =>
+            invite.mutate(
+              { email: email.trim(), role, ...(role === 'driver' && driverId ? { driverId } : {}) },
+              {
+                onSuccess: (res) => {
+                  setIssued({ email: res.invitation.email, token: res.token });
+                  setEmail('');
+                  setDriverId('');
+                },
+              },
+            )
+          }
         >
           {invite.isPending ? 'Sending…' : 'Create invitation'}
         </button>
@@ -217,35 +169,11 @@ function InviteForm({ canInviteOwner }: { canInviteOwner: boolean }) {
   );
 }
 
-function MemberRow({
-  member,
-  isYou,
-  canManage,
-  ownerCount,
-}: {
-  member: Member;
-  isYou: boolean;
-  canManage: boolean;
-  ownerCount: number;
-}) {
-  const queryClient = useQueryClient();
-  const refresh = () => queryClient.invalidateQueries({ queryKey: ['members'] });
-
-  const changeRole = useMutation({
-    mutationFn: (role: Role) =>
-      request(`/v1/members/${member.userId}`, { method: 'PATCH', body: { role } }),
-    onSuccess: refresh,
-  });
-
-  const remove = useMutation({
-    mutationFn: () =>
-      request(`/v1/members/${member.userId}`, { method: 'DELETE' }),
-    onSuccess: refresh,
-  });
-
-  // The last owner cannot be demoted or removed: it would leave an account
-  // nobody can administer, and no screen exists that could fix it.
-  const lastOwner = member.role === 'owner' && ownerCount <= 1;
+function MemberRow({ member, me, ownerCount }: { member: Member; me: { userId: string | undefined; role: string | undefined }; ownerCount: number }) {
+  const controls = memberControls(member, me, ownerCount);
+  const changeRole = useChangeRole();
+  const remove = useRemoveMember();
+  const isYou = member.userId === me.userId;
 
   return (
     <tr>
@@ -254,40 +182,36 @@ function MemberRow({
           {member.fullName ?? <span className="text-mute">No name yet</span>}
           {isYou && <span className="field-label ml-2 text-mute">you</span>}
         </span>
-        <span className="block text-xs break-all text-mute">
-          {isPlaceholderEmail(member.email) ? 'Address not synced yet' : member.email}
-        </span>
+        <span className="block text-xs break-all text-mute">{isPlaceholderEmail(member.email) ? 'Address not synced yet' : member.email}</span>
       </td>
       <td>
-        {canManage && !lastOwner ? (
+        {controls.changeRole ? (
           <select
             className="hq-input w-auto py-1 text-sm"
             value={member.role}
             disabled={changeRole.isPending}
-            onChange={(e) => changeRole.mutate(e.target.value as Role)}
+            onChange={(e) => changeRole.mutate({ userId: member.userId, role: e.target.value as Role })}
           >
             {ROLES.map((r) => (
               <option key={r} value={r}>
-                {r}
+                {ROLE_LABEL[r]}
               </option>
             ))}
           </select>
         ) : (
-          <Pill tone={member.role === 'owner' ? 'ok' : 'neutral'}>{member.role}</Pill>
+          <Pill tone={member.role === 'owner' ? 'ok' : 'neutral'}>{ROLE_LABEL[member.role]}</Pill>
         )}
-        {lastOwner && (
-          <span className="mt-1 block text-xs text-mute">
-            The only owner. Promote someone else first.
-          </span>
-        )}
+        {controls.lastOwner && <span className="mt-1 block text-xs text-mute">The only owner. Promote someone else first.</span>}
       </td>
       <td className="text-slate">{when(member.acceptedAt)}</td>
       <td>
-        {canManage && !lastOwner && !isYou && (
+        {controls.remove && (
           <button
             className="hq-btn hq-btn-ghost text-bad"
             disabled={remove.isPending}
-            onClick={() => remove.mutate()}
+            onClick={() => {
+              if (window.confirm(`Remove ${member.fullName ?? member.email} from this account?`)) remove.mutate(member.userId);
+            }}
           >
             {remove.isPending ? 'Removing…' : 'Remove'}
           </button>
@@ -299,39 +223,22 @@ function MemberRow({
 }
 
 function InvitationRow({ invitation, canManage }: { invitation: Invitation; canManage: boolean }) {
-  const queryClient = useQueryClient();
-  const revoke = useMutation({
-    mutationFn: () =>
-      request(`/v1/members/invites/${invitation.id}`, { method: 'DELETE' }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['members'] }),
-  });
-
-  const left = daysUntil(invitation.expiresAt);
+  const revoke = useRevokeInvitation();
+  const expiry = invitationExpiry(invitation.expiresAt);
+  const color = expiry.tone === 'bad' ? 'text-bad' : expiry.tone === 'warn' ? 'text-warn' : 'text-slate';
 
   return (
     <tr>
       <td className="font-medium break-all">{invitation.email}</td>
       <td>
-        <Pill>{invitation.role}</Pill>
+        <Pill>{ROLE_LABEL[invitation.role]}</Pill>
       </td>
       <td>
-        {left < 0 ? (
-          <span className="text-sm text-bad">Expired</span>
-        ) : left <= 2 ? (
-          <span className="text-sm text-warn">
-            {left === 0 ? 'Expires today' : `${left}d left`}
-          </span>
-        ) : (
-          <span className="text-sm text-slate">{left}d left</span>
-        )}
+        <span className={`text-sm ${color}`}>{expiry.label}</span>
       </td>
       <td>
         {canManage && (
-          <button
-            className="hq-btn hq-btn-ghost text-bad"
-            disabled={revoke.isPending}
-            onClick={() => revoke.mutate()}
-          >
+          <button className="hq-btn hq-btn-ghost text-bad" disabled={revoke.isPending} onClick={() => revoke.mutate(invitation.id)}>
             {revoke.isPending ? 'Withdrawing…' : 'Withdraw'}
           </button>
         )}
@@ -344,40 +251,18 @@ function InvitationRow({ invitation, canManage }: { invitation: Invitation; canM
 export function MembersScreen() {
   const session = useSession();
   const orgs = useOrgs();
-
-  const members = useInfiniteQuery({
-    queryKey: ['members', 'list'],
-    queryFn: ({ pageParam }: { pageParam: string | undefined }) =>
-      request<MembersPageResponse>(
-        `/v1/members${pageParam ? `?membersCursor=${encodeURIComponent(pageParam)}` : ''}`,
-      ),
-    initialPageParam: undefined as string | undefined,
-    getNextPageParam: (lastPage) => lastPage.members.nextCursor ?? undefined,
-  });
-
-  const invitationsQuery = useInfiniteQuery({
-    queryKey: ['members', 'invitations'],
-    queryFn: ({ pageParam }: { pageParam: string | undefined }) =>
-      request<MembersPageResponse>(
-        `/v1/members${pageParam ? `?invitationsCursor=${encodeURIComponent(pageParam)}` : ''}`,
-      ),
-    initialPageParam: undefined as string | undefined,
-    getNextPageParam: (lastPage) => lastPage.invitations.nextCursor ?? undefined,
-  });
+  const members = useMembers();
+  const invitationsQuery = useInvitations();
 
   /**
-   * The caller's role in the carrier they are currently in.
-   *
-   * Read from `/v1/orgs` rather than stored in the session, for the same reason
-   * the API re-reads membership on every request: a role change has to take
-   * effect without the person signing out and back in.
+   * The caller's role in the carrier they are currently in. Read from
+   * `/v1/orgs` rather than stored in the session, for the same reason the API
+   * re-reads membership on every request: a role change has to take effect
+   * without the person signing out and back in.
    */
-  const myRole = orgs.data?.items.find((o) => o.id === session?.orgId)?.role as
-    | Role
-    | undefined;
-
-  const canInvite = myRole === 'owner' || myRole === 'dispatcher';
-  const canManage = myRole === 'owner';
+  const myRole = orgs.data?.items.find((o) => o.id === session?.orgId)?.role;
+  const me = { userId: session?.userId, role: myRole };
+  const canInvite = canDispatch(myRole);
 
   const list = members.data?.pages.flatMap((p) => p.members.items) ?? [];
   const invitations = invitationsQuery.data?.pages.flatMap((p) => p.invitations.items) ?? [];
@@ -388,19 +273,17 @@ export function MembersScreen() {
       <div>
         <h1 className="text-3xl">People</h1>
         <p className="mt-1 max-w-prose text-slate">
-          Who can act in this account. Roles decide what each person sees and
-          can do, and they are read fresh on every request — a change takes
-          effect immediately, not at their next sign-in.
+          Who can act in this account. Roles decide what each person sees and can do, and they are read fresh on every request — a change takes effect
+          immediately, not at their next sign-in.
         </p>
       </div>
 
       {canInvite ? (
-        <InviteForm canInviteOwner={canManage} />
+        <InviteForm myRole={myRole} />
       ) : (
         <Card>
           <p className="text-sm text-slate">
-            Only an owner or dispatcher can invite people. You are signed in as{' '}
-            <strong>{myRole ?? 'a member'}</strong>.
+            Only an owner or dispatcher can invite people. You are signed in as <strong>{myRole ? ROLE_LABEL[myRole as Role] : 'a member'}</strong>.
           </p>
         </Card>
       )}
@@ -423,32 +306,20 @@ export function MembersScreen() {
               </thead>
               <tbody>
                 {list.map((member) => (
-                  <MemberRow
-                    key={member.userId}
-                    member={member}
-                    isYou={member.userId === session?.userId}
-                    canManage={canManage}
-                    ownerCount={ownerCount}
-                  />
+                  <MemberRow key={member.userId} member={member} me={me} ownerCount={ownerCount} />
                 ))}
               </tbody>
             </table>
           </div>
         )}
 
-        <LoadMore
-          onClick={() => members.fetchNextPage()}
-          loading={members.isFetchingNextPage}
-          hasMore={members.hasNextPage}
-        />
+        <LoadMore onClick={() => void members.fetchNextPage()} loading={members.isFetchingNextPage} hasMore={members.hasNextPage} />
       </Card>
 
       <Card title="Invited, not yet joined">
         {invitationsQuery.isError && <ErrorNote error={invitationsQuery.error} />}
         {invitationsQuery.isLoading && <Empty>Loading…</Empty>}
-        {invitationsQuery.data && invitations.length === 0 && (
-          <Empty>No invitations outstanding.</Empty>
-        )}
+        {invitationsQuery.data && invitations.length === 0 && <Empty>No invitations outstanding.</Empty>}
 
         {invitations.length > 0 && (
           <div className="overflow-x-auto">
@@ -463,11 +334,7 @@ export function MembersScreen() {
               </thead>
               <tbody>
                 {invitations.map((invitation) => (
-                  <InvitationRow
-                    key={invitation.id}
-                    invitation={invitation}
-                    canManage={canInvite}
-                  />
+                  <InvitationRow key={invitation.id} invitation={invitation} canManage={canInvite} />
                 ))}
               </tbody>
             </table>
@@ -475,7 +342,7 @@ export function MembersScreen() {
         )}
 
         <LoadMore
-          onClick={() => invitationsQuery.fetchNextPage()}
+          onClick={() => void invitationsQuery.fetchNextPage()}
           loading={invitationsQuery.isFetchingNextPage}
           hasMore={invitationsQuery.hasNextPage}
         />

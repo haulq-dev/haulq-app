@@ -25,86 +25,22 @@
  * marks on this screen.
  */
 
-import { useQuery } from '@tanstack/react-query';
+import {
+  perMile,
+  useInsights,
+  wholeDollars as money,
+  type ActionQueue,
+  type BreakdownRow,
+  type PaymentPerformance,
+} from '@haulq/client';
 import { Link } from '@tanstack/react-router';
 import { useState, type ReactNode } from 'react';
-import { request } from '../lib/api.ts';
 import { Card, Empty, ErrorNote, Num } from '../components/ui.tsx';
-
-interface Summary {
-  loadCount: number;
-  measurableCount: number;
-  revenueCents: number;
-  loadedMiles: number;
-  deadheadMiles: number;
-  revenuePerTotalMileCents: number | null;
-  revenuePerLoadedMileCents: number | null;
-  deadheadRatio: number | null;
-  costPerMileCents: number | null;
-  factsReconciledAt: string | null;
-  periodDays: number;
-}
-
-interface BreakdownRow {
-  key: string;
-  label: string;
-  loadCount: number;
-  revenueCents: number;
-  totalMiles: number;
-  revenuePerTotalMileCents: number | null;
-  basis: 'actual' | 'expected' | 'mixed';
-}
-
-interface PaymentPerformance {
-  paidInvoiceCount: number;
-  avgDaysToPayment: number | null;
-  lateCount: number;
-  exceptionRate: number | null;
-  factoringRejectedCount: number;
-  periodDays: number;
-}
-
-interface DeliveredNotInvoiced {
-  loadId: string;
-  reference: number;
-  brokerName: string | null;
-  daysSinceDelivered: number;
-}
-
-interface OverdueInvoice {
-  invoiceId: string;
-  reference: number;
-  loadReference: number;
-  brokerName: string | null;
-  totalCents: number;
-  daysOverdue: number;
-}
-
-interface ActionQueue {
-  deliveredNotInvoiced: DeliveredNotInvoiced[];
-  overdueInvoices: OverdueInvoice[];
-}
-
-interface InsightsResponse {
-  summary: Summary;
-  byBroker: BreakdownRow[];
-  byLane: BreakdownRow[];
-  byTruck: BreakdownRow[];
-  payment: PaymentPerformance;
-  actionQueue: ActionQueue;
-}
 
 const WINDOWS = [30, 90, 180, 365] as const;
 
-const money = (cents: number) =>
-  new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    maximumFractionDigits: 0,
-  }).format(cents / 100);
-
-const perMile = (cents: number | null) =>
-  cents === null ? '—' : `$${(cents / 100).toFixed(2)}`;
+// Types, money formatting and the request are `@haulq/client`'s, shared with
+// the mobile app's Insights screen.
 
 /**
  * A headline number. No plot, so no hover layer — there is nothing to reveal
@@ -372,10 +308,7 @@ function PaymentPerformanceCard({ payment: p }: { payment: PaymentPerformance })
 export function InsightsScreen() {
   const [days, setDays] = useState<number>(90);
 
-  const data = useQuery({
-    queryKey: ['insights', days],
-    queryFn: () => request<InsightsResponse>(`/v1/insights?days=${days}`),
-  });
+  const data = useInsights(days);
 
   const s = data.data?.summary;
 

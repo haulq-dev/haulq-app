@@ -8,138 +8,59 @@
  * **Invoices don't get a status dropdown.** `loads.status` has nine values
  * and legitimate skips, so `Loads.tsx` needs `nextStatuses` to build a menu.
  * `invoice_status` has four and moves in one direction — draft → sent → paid,
- * with void as the one branch — so the actions are three named buttons
- * instead. `canTransitionInvoice` still decides whether Void is offered at
- * all, same reasoning as the loads screen: a paid invoice does not get an
- * option that only exists to fail.
+ * with void as the one branch — so the actions are named buttons instead.
+ * `invoiceActions` decides which a role sees, the same rule the mobile app
+ * uses: a paid invoice does not get an option that only exists to fail.
  *
  * **Selecting a row, not expanding one.** An invoice's detail — its line
  * items, its payments, its factoring packets — is too much for a table cell
  * and too much for every row at once. One invoice selected at a time, shown
  * below the table, keeps the table scannable and the detail readable.
+ *
+ * Types, money parsing, role rules and every request come from
+ * `@haulq/client`'s `pay.ts` and its hooks, shared with the mobile app.
  */
 
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
 import {
-  canTransitionInvoice,
-  INVOICE_STATUSES,
-  type FactoringPacketStatus,
-  type InvoiceStatus,
-} from '@haulq/contracts';
-import { request } from '../lib/api.ts';
+  AGING_LABEL,
+  balanceDue,
+  canManageMoney,
+  canWritePay,
+  centsToInput,
+  INVOICE_STATUS_LABEL,
+  INVOICE_STATUS_TONE,
+  invoiceActions,
+  lineItemsBody,
+  PACKET_STATUS_TONE,
+  parseDollars,
+  settleablePackets,
+  useAddFactoringCompany,
+  useAssemblePacket,
+  useFactoringCompanies,
+  useFactoringPackets,
+  useGenerateInvoice,
+  useInvoiceableLoads,
+  useInvoicePayments,
+  useInvoices,
+  useMarkInvoiceSent,
+  useRecordPayment,
+  useReceivablesAging,
+  useRespondToPacket,
+  useSubmitPacket,
+  useVoidInvoice,
+  type AgingBucket,
+  type DraftLineItem,
+  type FactoringCompany,
+  type FactoringPacket,
+  type Invoice,
+  type PaymentSource,
+} from '@haulq/client';
+import { INVOICE_STATUSES, type InvoiceStatus } from '@haulq/contracts';
+import { useState } from 'react';
 import { useOrgs, useSession } from '../components/AuthGate.tsx';
 import { Card, Empty, ErrorNote, Field, LoadMore, Money, Num, Pill } from '../components/ui.tsx';
 
-// ---------------------------------------------------------------------------
-// Shapes the API returns
-// ---------------------------------------------------------------------------
-
-interface LineItem {
-  code: string;
-  description: string;
-  amountCents: number;
-  currency: string;
-}
-
-interface Invoice {
-  id: string;
-  loadId: string;
-  reference: number;
-  status: InvoiceStatus;
-  sourceDocumentId: string | null;
-  lineItems: LineItem[];
-  totalAmount: number;
-  totalCurrency: string;
-  dueAt: string | null;
-  sentAt: string | null;
-  paidAt: string | null;
-  voidedAt: string | null;
-  voidReason: string | null;
-}
-
-interface InvoicesResponse {
-  items: Invoice[];
-  counts: Record<string, number>;
-  nextCursor: string | null;
-}
-
-interface FactoringCompaniesResponse {
-  items: FactoringCompany[];
-  nextCursor: string | null;
-}
-
-interface Payment {
-  id: string;
-  invoiceId: string;
-  paymentAmount: number;
-  paymentCurrency: string;
-  source: 'factor' | 'broker_direct';
-  receivedAt: string;
-  reference: string | null;
-  notes: string | null;
-  factoringPacketId: string | null;
-}
-
-interface FactoringCompany {
-  id: string;
-  name: string;
-  email: string | null;
-  phone: string | null;
-  submissionMethod: string;
-  active: boolean;
-}
-
-interface FactoringPacket {
-  id: string;
-  invoiceId: string;
-  factoringCompanyId: string;
-  status: FactoringPacketStatus;
-  submittedAt: string | null;
-  respondedAt: string | null;
-  rejectionReason: string | null;
-}
-
-interface AgingBucket {
-  bucket: string;
-  count: number;
-  totalCents: number;
-}
-
-interface LoadOption {
-  id: string;
-  reference: number;
-  brokerName: string | null;
-  status: string;
-}
-
-const AGING_LABEL: Record<string, string> = {
-  current: 'Current',
-  past_1_30: '1–30 days late',
-  past_31_60: '31–60 days late',
-  past_61_90: '61–90 days late',
-  past_over_90: 'Over 90 days late',
-};
-
-const INVOICE_STATUS_TONE: Record<InvoiceStatus, 'ok' | 'warn' | 'neutral'> = {
-  draft: 'neutral',
-  sent: 'warn',
-  paid: 'ok',
-  void: 'neutral',
-};
-
-const PACKET_STATUS_TONE: Record<FactoringPacketStatus, 'ok' | 'warn' | 'neutral'> = {
-  assembling: 'neutral',
-  submitted: 'warn',
-  accepted: 'ok',
-  rejected: 'warn',
-  funded: 'ok',
-};
-
-const pretty = (s: string) => s.replace(/_/g, ' ');
-
-/** A headline number, same shape as `Insights.tsx`'s `Stat` — kept local
- *  rather than shared, per `ui.tsx`'s own note on premature abstraction. */
+/** A headline number, same shape as `Insights.tsx`'s `Stat` — kept local per `ui.tsx`'s note on premature abstraction. */
 function AgingTile({ bucket, count, totalCents }: AgingBucket) {
   const overdue = bucket !== 'current';
   return (
@@ -159,20 +80,13 @@ function AgingTile({ bucket, count, totalCents }: AgingBucket) {
 // Per-invoice actions
 // ---------------------------------------------------------------------------
 
+/** Records that the invoice went to the broker. It emails nothing; Autopilot's invoice email is what delivers one. */
 function SendControl({ invoice }: { invoice: Invoice }) {
-  const queryClient = useQueryClient();
-  const send = useMutation({
-    mutationFn: () => request(`/v1/invoices/${invoice.id}/send`, { method: 'POST' }),
-    onSuccess: () => queryClient.invalidateQueries(),
-  });
+  const send = useMarkInvoiceSent();
   return (
     <>
-      <button
-        className="hq-btn hq-btn-primary"
-        disabled={send.isPending}
-        onClick={() => send.mutate()}
-      >
-        {send.isPending ? 'Sending…' : 'Send'}
+      <button className="hq-btn hq-btn-primary" disabled={send.isPending} onClick={() => send.mutate(invoice.id)} title="Records that you sent it to the broker">
+        {send.isPending ? 'Saving…' : 'Mark sent'}
       </button>
       <ErrorNote error={send.error} />
     </>
@@ -180,19 +94,9 @@ function SendControl({ invoice }: { invoice: Invoice }) {
 }
 
 function VoidControl({ invoice }: { invoice: Invoice }) {
-  const queryClient = useQueryClient();
   const [reason, setReason] = useState('');
   const [open, setOpen] = useState(false);
-  const void_ = useMutation({
-    mutationFn: () => request(`/v1/invoices/${invoice.id}/void`, { method: 'POST', body: { reason } }),
-    onSuccess: async () => {
-      setOpen(false);
-      setReason('');
-      await queryClient.invalidateQueries();
-    },
-  });
-
-  if (!canTransitionInvoice(invoice.status, 'void').allowed) return null;
+  const void_ = useVoidInvoice();
 
   if (!open) {
     return (
@@ -204,16 +108,21 @@ function VoidControl({ invoice }: { invoice: Invoice }) {
 
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <input
-        className="hq-input w-auto py-1 text-sm"
-        placeholder="Why is this voided?"
-        value={reason}
-        onChange={(e) => setReason(e.target.value)}
-      />
+      <input className="hq-input w-auto py-1 text-sm" placeholder="Why is this voided?" value={reason} onChange={(e) => setReason(e.target.value)} />
       <button
         className="hq-btn hq-btn-ghost text-bad"
         disabled={!reason.trim() || void_.isPending}
-        onClick={() => void_.mutate()}
+        onClick={() =>
+          void_.mutate(
+            { id: invoice.id, reason: reason.trim() },
+            {
+              onSuccess: () => {
+                setOpen(false);
+                setReason('');
+              },
+            },
+          )
+        }
       >
         Confirm void
       </button>
@@ -225,79 +134,47 @@ function VoidControl({ invoice }: { invoice: Invoice }) {
   );
 }
 
-function RecordPaymentControl({
-  invoice,
-  packets,
-}: {
-  invoice: Invoice;
-  packets: FactoringPacket[];
-}) {
-  const queryClient = useQueryClient();
+/** Starts at what is still owed after any partial payments, so the common case is one click. */
+function RecordPaymentControl({ invoice, owedCents, packets }: { invoice: Invoice; owedCents: number; packets: FactoringPacket[] }) {
   const [open, setOpen] = useState(false);
-  const [amount, setAmount] = useState(() => (invoice.totalAmount / 100).toFixed(2));
-  const [source, setSource] = useState<'broker_direct' | 'factor'>('broker_direct');
+  const [amount, setAmount] = useState(() => centsToInput(owedCents));
+  const [source, setSource] = useState<PaymentSource>('broker_direct');
   const [factoringPacketId, setFactoringPacketId] = useState('');
   const [reference, setReference] = useState('');
-
-  const record = useMutation({
-    mutationFn: () =>
-      request(`/v1/invoices/${invoice.id}/payments`, {
-        method: 'POST',
-        body: {
-          amount: { amount: Math.round(Number(amount) * 100), currency: invoice.totalCurrency },
-          source,
-          ...(source === 'factor' && factoringPacketId ? { factoringPacketId } : {}),
-          ...(reference ? { reference } : {}),
-        },
-      }),
-    onSuccess: async () => {
-      setOpen(false);
-      await queryClient.invalidateQueries();
-    },
-  });
-
-  if (invoice.status !== 'sent') return null;
-
-  const acceptedPackets = packets.filter((p) => p.status === 'accepted' || p.status === 'submitted');
+  const record = useRecordPayment();
 
   if (!open) {
     return (
-      <button className="hq-btn hq-btn-primary" onClick={() => setOpen(true)}>
+      <button
+        className="hq-btn hq-btn-primary"
+        onClick={() => {
+          setAmount(centsToInput(owedCents));
+          setOpen(true);
+        }}
+      >
         Record payment
       </button>
     );
   }
 
+  const cents = parseDollars(amount);
+
   return (
     <div className="mt-2 grid gap-3 border border-line bg-wash p-3 sm:grid-cols-4">
-      <Field label="Amount ($)">
-        <input
-          className="hq-input"
-          data-numeric="true"
-          inputMode="decimal"
-          value={amount}
-          onChange={(e) => setAmount(e.target.value)}
-        />
+      <Field label="Amount ($)" {...(cents === null && amount ? { hint: 'Not an amount, like 2400.00.' } : {})}>
+        <input className="hq-input" data-numeric="true" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} />
       </Field>
       <Field label="Source">
-        <select
-          className="hq-input"
-          value={source}
-          onChange={(e) => setSource(e.target.value as typeof source)}
-        >
+        <select className="hq-input" value={source} onChange={(e) => setSource(e.target.value as PaymentSource)}>
           <option value="broker_direct">Broker, direct</option>
           <option value="factor">Factor</option>
         </select>
       </Field>
       {source === 'factor' && (
         <Field label="Which packet" hint="Marks it funded once recorded.">
-          <select
-            className="hq-input"
-            value={factoringPacketId}
-            onChange={(e) => setFactoringPacketId(e.target.value)}
-          >
+          <select className="hq-input" value={factoringPacketId} onChange={(e) => setFactoringPacketId(e.target.value)}>
             <option value="">Not tracked</option>
-            {acceptedPackets.map((p) => (
+            {packets.map((p) => (
               <option key={p.id} value={p.id}>
                 Packet {p.id.slice(0, 8)}
               </option>
@@ -312,8 +189,20 @@ function RecordPaymentControl({
       <div className="flex items-end gap-2 sm:col-span-4">
         <button
           className="hq-btn hq-btn-brand"
-          disabled={!amount || Number(amount) <= 0 || record.isPending}
-          onClick={() => record.mutate()}
+          disabled={cents === null || cents <= 0 || record.isPending}
+          onClick={() =>
+            record.mutate(
+              {
+                invoiceId: invoice.id,
+                amountCents: cents!,
+                currency: invoice.totalCurrency,
+                source,
+                ...(source === 'factor' && factoringPacketId ? { factoringPacketId } : {}),
+                ...(reference.trim() ? { reference: reference.trim() } : {}),
+              },
+              { onSuccess: () => setOpen(false) },
+            )
+          }
         >
           {record.isPending ? 'Recording…' : 'Record payment'}
         </button>
@@ -332,42 +221,17 @@ function RecordPaymentControl({
 // Factoring, for the selected invoice
 // ---------------------------------------------------------------------------
 
-function AssemblePacket({
-  invoice,
-  companies,
-}: {
-  invoice: Invoice;
-  companies: FactoringCompany[];
-}) {
-  const queryClient = useQueryClient();
+function AssemblePacket({ invoice, companies }: { invoice: Invoice; companies: FactoringCompany[] }) {
   const [factoringCompanyId, setFactoringCompanyId] = useState('');
-  const assemble = useMutation({
-    mutationFn: () =>
-      request(`/v1/factoring-packets`, {
-        method: 'POST',
-        body: { invoiceId: invoice.id, factoringCompanyId, documentIds: [] },
-      }),
-    onSuccess: async () => {
-      setFactoringCompanyId('');
-      await queryClient.invalidateQueries();
-    },
-  });
+  const assemble = useAssemblePacket();
 
   if (companies.length === 0) {
-    return (
-      <p className="text-sm text-mute">
-        Add a factoring company below before assembling a packet.
-      </p>
-    );
+    return <p className="text-sm text-mute">Add a factoring company below before assembling a packet.</p>;
   }
 
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <select
-        className="hq-input w-auto"
-        value={factoringCompanyId}
-        onChange={(e) => setFactoringCompanyId(e.target.value)}
-      >
+      <select className="hq-input w-auto" value={factoringCompanyId} onChange={(e) => setFactoringCompanyId(e.target.value)}>
         <option value="">Choose a factor…</option>
         {companies.map((c) => (
           <option key={c.id} value={c.id}>
@@ -378,7 +242,7 @@ function AssemblePacket({
       <button
         className="hq-btn hq-btn-primary"
         disabled={!factoringCompanyId || assemble.isPending}
-        onClick={() => assemble.mutate()}
+        onClick={() => assemble.mutate({ invoiceId: invoice.id, factoringCompanyId }, { onSuccess: () => setFactoringCompanyId('') })}
       >
         Assemble packet
       </button>
@@ -387,43 +251,27 @@ function AssemblePacket({
   );
 }
 
-function PacketRow({ packet, companyName }: { packet: FactoringPacket; companyName: string }) {
-  const queryClient = useQueryClient();
+function PacketRow({ packet, companyName, canRespond }: { packet: FactoringPacket; companyName: string; canRespond: boolean }) {
   const [rejecting, setRejecting] = useState(false);
   const [reason, setReason] = useState('');
-
-  const submit = useMutation({
-    mutationFn: () => request(`/v1/factoring-packets/${packet.id}/submit`, { method: 'POST' }),
-    onSuccess: () => queryClient.invalidateQueries(),
-  });
-  const respond = useMutation({
-    mutationFn: (body: { outcome: 'accepted' | 'rejected'; reason?: string }) =>
-      request(`/v1/factoring-packets/${packet.id}/response`, { method: 'POST', body }),
-    onSuccess: async () => {
-      setRejecting(false);
-      setReason('');
-      await queryClient.invalidateQueries();
-    },
-  });
+  const submit = useSubmitPacket();
+  const respond = useRespondToPacket();
 
   return (
     <div className="flex flex-wrap items-center gap-3 border-t border-line py-2 first:border-t-0">
       <span className="min-w-32 text-sm font-medium">{companyName}</span>
-      <Pill tone={PACKET_STATUS_TONE[packet.status]}>{pretty(packet.status)}</Pill>
+      <Pill tone={PACKET_STATUS_TONE[packet.status]}>{packet.status}</Pill>
 
       {packet.status === 'assembling' && (
-        <button className="hq-btn hq-btn-ghost" disabled={submit.isPending} onClick={() => submit.mutate()}>
+        <button className="hq-btn hq-btn-ghost" disabled={submit.isPending} onClick={() => submit.mutate(packet.id)}>
           Mark submitted
         </button>
       )}
 
-      {packet.status === 'submitted' && !rejecting && (
+      {/* The factor's answer is a money decision: owner or accountant, as the API requires. */}
+      {packet.status === 'submitted' && canRespond && !rejecting && (
         <>
-          <button
-            className="hq-btn hq-btn-ghost text-ok"
-            disabled={respond.isPending}
-            onClick={() => respond.mutate({ outcome: 'accepted' })}
-          >
+          <button className="hq-btn hq-btn-ghost text-ok" disabled={respond.isPending} onClick={() => respond.mutate({ id: packet.id, outcome: 'accepted' })}>
             Accepted
           </button>
           <button className="hq-btn hq-btn-ghost text-bad" onClick={() => setRejecting(true)}>
@@ -443,7 +291,17 @@ function PacketRow({ packet, companyName }: { packet: FactoringPacket; companyNa
           <button
             className="hq-btn hq-btn-ghost text-bad"
             disabled={!reason.trim() || respond.isPending}
-            onClick={() => respond.mutate({ outcome: 'rejected', reason })}
+            onClick={() =>
+              respond.mutate(
+                { id: packet.id, outcome: 'rejected', reason: reason.trim() },
+                {
+                  onSuccess: () => {
+                    setRejecting(false);
+                    setReason('');
+                  },
+                },
+              )
+            }
           >
             Confirm
           </button>
@@ -453,9 +311,7 @@ function PacketRow({ packet, companyName }: { packet: FactoringPacket; companyNa
         </>
       )}
 
-      {packet.status === 'rejected' && packet.rejectionReason && (
-        <span className="text-xs text-mute">{packet.rejectionReason}</span>
-      )}
+      {packet.status === 'rejected' && packet.rejectionReason && <span className="text-xs text-mute">{packet.rejectionReason}</span>}
 
       <ErrorNote error={submit.error ?? respond.error} />
     </div>
@@ -466,25 +322,12 @@ function PacketRow({ packet, companyName }: { packet: FactoringPacket; companyNa
 // Invoice detail — line items, payments, factoring
 // ---------------------------------------------------------------------------
 
-function InvoiceDetail({
-  invoice,
-  companies,
-  canManageMoney,
-}: {
-  invoice: Invoice;
-  companies: FactoringCompany[];
-  canManageMoney: boolean;
-}) {
-  const payments = useQuery({
-    queryKey: ['invoice-payments', invoice.id],
-    queryFn: () => request<{ items: Payment[] }>(`/v1/invoices/${invoice.id}/payments`),
-  });
-  const packets = useQuery({
-    queryKey: ['factoring-packets', invoice.id],
-    queryFn: () => request<{ items: FactoringPacket[] }>(`/v1/factoring-packets?invoiceId=${invoice.id}`),
-  });
-
+function InvoiceDetail({ invoice, companies, role }: { invoice: Invoice; companies: FactoringCompany[]; role: string | undefined }) {
+  const payments = useInvoicePayments(invoice.id);
+  const packets = useFactoringPackets(invoice.id);
+  const actions = invoiceActions(invoice, role);
   const companyName = (id: string) => companies.find((c) => c.id === id)?.name ?? 'Unknown factor';
+  const owed = payments.data ? balanceDue(invoice, payments.data) : invoice.totalAmount;
 
   return (
     <Card title={`Invoice ${invoice.reference}`}>
@@ -496,60 +339,63 @@ function InvoiceDetail({
               {invoice.lineItems.map((item, i) => (
                 <tr key={i}>
                   <td className="text-sm">{item.description}</td>
-                  <td className="text-right"><Money cents={item.amountCents} /></td>
+                  <td className="text-right">
+                    <Money cents={item.amountCents} />
+                  </td>
                 </tr>
               ))}
               <tr>
                 <td className="text-sm font-medium">Total</td>
-                <td className="text-right font-medium"><Money cents={invoice.totalAmount} /></td>
+                <td className="text-right font-medium">
+                  <Money cents={invoice.totalAmount} />
+                </td>
               </tr>
             </tbody>
           </table>
 
-          {invoice.voidReason && (
-            <p className="mt-3 border-l-2 border-line bg-wash px-3 py-2 text-sm text-slate">
-              Voided: {invoice.voidReason}
-            </p>
-          )}
+          {invoice.voidReason && <p className="mt-3 border-l-2 border-line bg-wash px-3 py-2 text-sm text-slate">Voided: {invoice.voidReason}</p>}
 
           <h3 className="field-label mb-2 mt-6 text-mute">Payments</h3>
-          {payments.data && payments.data.items.length === 0 && (
-            <Empty>No payments recorded yet.</Empty>
-          )}
-          {payments.data && payments.data.items.length > 0 && (
+          <ErrorNote error={payments.error} />
+          {payments.data && payments.data.length === 0 && <Empty>No payments recorded yet.</Empty>}
+          {payments.data && payments.data.length > 0 && (
             <ul className="space-y-1.5">
-              {payments.data.items.map((p) => (
+              {payments.data.map((p) => (
                 <li key={p.id} className="flex items-center justify-between text-sm">
                   <span>
                     <Money cents={p.paymentAmount} />{' '}
                     <span className="text-mute">
-                      · {p.source === 'factor' ? 'factor' : 'broker, direct'} ·{' '}
-                      {new Date(p.receivedAt).toLocaleDateString()}
+                      · {p.source === 'factor' ? 'factor' : 'broker, direct'} · {new Date(p.receivedAt).toLocaleDateString()}
                     </span>
                   </span>
                   {p.reference && <span className="num text-xs text-mute">{p.reference}</span>}
                 </li>
               ))}
+              {invoice.status === 'sent' && (
+                <li className="flex items-center justify-between border-t border-line pt-1.5 text-sm font-medium">
+                  <span>Still owed</span>
+                  <Money cents={owed} />
+                </li>
+              )}
             </ul>
           )}
 
-          {canManageMoney && (
+          {actions.recordPayment && (
             <div className="mt-3">
-              <RecordPaymentControl invoice={invoice} packets={packets.data?.items ?? []} />
+              <RecordPaymentControl invoice={invoice} owedCents={owed} packets={settleablePackets(packets.data ?? [])} />
             </div>
           )}
         </div>
 
         <div>
           <h3 className="field-label mb-2 text-mute">Factoring</h3>
-          {packets.data && packets.data.items.length === 0 && (
-            <Empty>No factoring packet started for this invoice.</Empty>
-          )}
-          {packets.data?.items.map((packet) => (
-            <PacketRow key={packet.id} packet={packet} companyName={companyName(packet.factoringCompanyId)} />
+          <ErrorNote error={packets.error} />
+          {packets.data && packets.data.length === 0 && <Empty>No factoring packet started for this invoice.</Empty>}
+          {packets.data?.map((packet) => (
+            <PacketRow key={packet.id} packet={packet} companyName={companyName(packet.factoringCompanyId)} canRespond={canManageMoney(role)} />
           ))}
 
-          {canManageMoney && invoice.status !== 'draft' && invoice.status !== 'void' && (
+          {actions.startPacket && (
             <div className="mt-3">
               <AssemblePacket invoice={invoice} companies={companies} />
             </div>
@@ -564,97 +410,53 @@ function InvoiceDetail({
 // Generating an invoice
 // ---------------------------------------------------------------------------
 
-interface DraftLineItem {
-  code: string;
-  description: string;
-  amount: string;
-}
-
 const EMPTY_LINE_ITEM: DraftLineItem = { code: 'linehaul', description: '', amount: '' };
 
-function GenerateInvoice({ loads, onDone }: { loads: LoadOption[]; onDone: () => void }) {
+function GenerateInvoice({ onDone }: { onDone: () => void }) {
+  const loads = useInvoiceableLoads();
+  const generate = useGenerateInvoice();
   const [loadId, setLoadId] = useState('');
   const [items, setItems] = useState<DraftLineItem[]>([EMPTY_LINE_ITEM]);
-  const queryClient = useQueryClient();
 
-  const generate = useMutation({
-    mutationFn: () =>
-      request<Invoice>('/v1/invoices', {
-        body: {
-          loadId,
-          lineItems: items
-            .filter((i) => i.description.trim() && i.amount)
-            .map((i) => ({
-              code: i.code,
-              description: i.description,
-              amountCents: Math.round(Number(i.amount) * 100),
-            })),
-        },
-      }),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries();
-      onDone();
-    },
-  });
-
-  const setItem = (i: number, patch: Partial<DraftLineItem>) =>
-    setItems((prev) => prev.map((item, idx) => (idx === i ? { ...item, ...patch } : item)));
-
-  const ready =
-    loadId && items.some((i) => i.description.trim() && Number(i.amount) > 0);
+  const setItem = (i: number, patch: Partial<DraftLineItem>) => setItems((prev) => prev.map((item, idx) => (idx === i ? { ...item, ...patch } : item)));
+  const body = lineItemsBody(items);
+  const ready = loadId !== '' && 'items' in body;
 
   return (
     <Card title="Generate an invoice">
       <Field label="Load">
         <select className="hq-input" value={loadId} onChange={(e) => setLoadId(e.target.value)}>
           <option value="">Choose a delivered load…</option>
-          {loads.map((l) => (
+          {(loads.data ?? []).map((l) => (
             <option key={l.id} value={l.id}>
               Load {l.reference} — {l.brokerName ?? 'no broker'}
             </option>
           ))}
         </select>
       </Field>
+      <ErrorNote error={loads.error} />
 
       <div className="mt-5 space-y-3">
         {items.map((item, i) => (
           <div key={i} className="grid items-end gap-3 sm:grid-cols-[1fr_1fr_140px_auto]">
             <Field label="Code">
-              <input
-                className="hq-input"
-                value={item.code}
-                onChange={(e) => setItem(i, { code: e.target.value })}
-              />
+              <input className="hq-input" value={item.code} onChange={(e) => setItem(i, { code: e.target.value })} />
             </Field>
             <Field label="Description">
-              <input
-                className="hq-input"
-                value={item.description}
-                onChange={(e) => setItem(i, { description: e.target.value })}
-              />
+              <input className="hq-input" value={item.description} onChange={(e) => setItem(i, { description: e.target.value })} />
             </Field>
             <Field label="Amount ($)">
-              <input
-                className="hq-input"
-                data-numeric="true"
-                inputMode="decimal"
-                value={item.amount}
-                onChange={(e) => setItem(i, { amount: e.target.value })}
-              />
+              <input className="hq-input" data-numeric="true" inputMode="decimal" value={item.amount} onChange={(e) => setItem(i, { amount: e.target.value })} />
             </Field>
-            <button
-              className="hq-btn hq-btn-ghost"
-              disabled={items.length === 1}
-              onClick={() => setItems((prev) => prev.filter((_, idx) => idx !== i))}
-            >
+            <button className="hq-btn hq-btn-ghost" disabled={items.length === 1} onClick={() => setItems((prev) => prev.filter((_, idx) => idx !== i))}>
               Remove
             </button>
           </div>
         ))}
-        <button
-          className="hq-btn hq-btn-ghost"
-          onClick={() => setItems((prev) => [...prev, { ...EMPTY_LINE_ITEM, code: 'fuel_surcharge' }])}
-        >
+        {'invalidRow' in body && (
+          <p className="text-sm text-bad">Line {body.invalidRow + 1} needs a description and an amount above zero, like 2400.00.</p>
+        )}
+        <button className="hq-btn hq-btn-ghost" onClick={() => setItems((prev) => [...prev, { ...EMPTY_LINE_ITEM, code: 'fuel_surcharge' }])}>
           + Add line item
         </button>
       </div>
@@ -663,7 +465,7 @@ function GenerateInvoice({ loads, onDone }: { loads: LoadOption[]; onDone: () =>
         <button
           className="hq-btn hq-btn-brand"
           disabled={!ready || generate.isPending}
-          onClick={() => generate.mutate()}
+          onClick={() => 'items' in body && generate.mutate({ loadId, lineItems: body.items }, { onSuccess: onDone })}
         >
           {generate.isPending ? 'Generating…' : 'Generate invoice'}
         </button>
@@ -681,42 +483,19 @@ function GenerateInvoice({ loads, onDone }: { loads: LoadOption[]; onDone: () =>
 // Factoring companies
 // ---------------------------------------------------------------------------
 
-function FactoringCompanies({
-  companies,
-  canManageMoney,
-  onLoadMore,
-  loadingMore,
-  hasMore,
-}: {
-  companies: FactoringCompany[];
-  canManageMoney: boolean;
-  onLoadMore: () => void;
-  loadingMore: boolean;
-  hasMore: boolean;
-}) {
+function FactoringCompanies({ canAdd }: { canAdd: boolean }) {
+  const companies = useFactoringCompanies();
+  const create = useAddFactoringCompany();
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
-  const queryClient = useQueryClient();
-
-  const create = useMutation({
-    mutationFn: () =>
-      request('/v1/factoring-companies', {
-        body: { name, ...(email ? { email } : {}) },
-      }),
-    onSuccess: async () => {
-      setName('');
-      setEmail('');
-      setAdding(false);
-      await queryClient.invalidateQueries();
-    },
-  });
+  const list = companies.data?.pages.flatMap((p) => p.items) ?? [];
 
   return (
     <Card
       title="Factoring companies"
       action={
-        canManageMoney &&
+        canAdd &&
         !adding && (
           <button className="hq-btn hq-btn-ghost" onClick={() => setAdding(true)}>
             + Add
@@ -724,11 +503,12 @@ function FactoringCompanies({
         )
       }
     >
-      {companies.length === 0 && !adding && <Empty>No factoring companies on file yet.</Empty>}
+      <ErrorNote error={companies.error} />
+      {companies.isSuccess && list.length === 0 && !adding && <Empty>No factoring companies on file yet.</Empty>}
 
-      {companies.length > 0 && (
+      {list.length > 0 && (
         <ul className="space-y-1.5">
-          {companies.map((c) => (
+          {list.map((c) => (
             <li key={c.id} className="flex items-center justify-between text-sm">
               <span>{c.name}</span>
               <span className="text-xs text-mute">{c.email ?? c.submissionMethod}</span>
@@ -749,7 +529,18 @@ function FactoringCompanies({
             <button
               className="hq-btn hq-btn-brand"
               disabled={!name.trim() || create.isPending}
-              onClick={() => create.mutate()}
+              onClick={() =>
+                create.mutate(
+                  { name: name.trim(), ...(email.trim() ? { email: email.trim() } : {}) },
+                  {
+                    onSuccess: () => {
+                      setName('');
+                      setEmail('');
+                      setAdding(false);
+                    },
+                  },
+                )
+              }
             >
               Add
             </button>
@@ -763,9 +554,15 @@ function FactoringCompanies({
         </div>
       )}
 
-      <LoadMore onClick={onLoadMore} loading={loadingMore} hasMore={hasMore} />
+      <LoadMore onClick={() => void companies.fetchNextPage()} loading={companies.isFetchingNextPage} hasMore={companies.hasNextPage} />
     </Card>
   );
+}
+
+/** The companies for the selected invoice's factoring section; the same cached list the card shows. */
+function useCompanyList(): FactoringCompany[] {
+  const companies = useFactoringCompanies();
+  return companies.data?.pages.flatMap((p) => p.items) ?? [];
 }
 
 // ---------------------------------------------------------------------------
@@ -779,54 +576,15 @@ export function PayScreen() {
   const session = useSession();
   const orgs = useOrgs();
 
-  const invoices = useInfiniteQuery({
-    queryKey: ['invoices', filter],
-    queryFn: ({ pageParam }: { pageParam: string | undefined }) =>
-      request<InvoicesResponse>(
-        `/v1/invoices?${new URLSearchParams({
-          ...(filter ? { status: filter } : {}),
-          ...(pageParam ? { cursor: pageParam } : {}),
-        })}`,
-      ),
-    initialPageParam: undefined as string | undefined,
-    getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
-  });
-  const aging = useQuery({
-    queryKey: ['receivables-aging'],
-    queryFn: () => request<{ buckets: AgingBucket[] }>('/v1/invoices/receivables-aging'),
-  });
-  const companies = useInfiniteQuery({
-    queryKey: ['factoring-companies'],
-    queryFn: ({ pageParam }: { pageParam: string | undefined }) =>
-      request<FactoringCompaniesResponse>(
-        `/v1/factoring-companies${pageParam ? `?cursor=${encodeURIComponent(pageParam)}` : ''}`,
-      ),
-    initialPageParam: undefined as string | undefined,
-    getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
-  });
-  // Delivered and invoiced loads: the load has to have gotten far enough to
-  // bill, and a load already at `invoiced` may have had its first invoice
-  // voided and be waiting on a reissue.
-  const loads = useQuery({
-    queryKey: ['loads', 'invoiceable'],
-    queryFn: () => request<{ items: LoadOption[] }>('/v1/loads?status=delivered,invoiced&limit=200'),
-  });
+  const invoices = useInvoices(filter);
+  const aging = useReceivablesAging();
+  const companies = useCompanyList();
 
-  const myRole = orgs.data?.items.find((o) => o.id === session?.orgId)?.role;
-  const canWrite = myRole === 'owner' || myRole === 'dispatcher' || myRole === 'accountant';
-  const canManageMoney = myRole === 'owner' || myRole === 'accountant';
+  const role = orgs.data?.items.find((o) => o.id === session?.orgId)?.role;
+  const canWrite = canWritePay(role);
 
   const items = invoices.data?.pages.flatMap((p) => p.items) ?? [];
   const counts = invoices.data?.pages[0]?.counts ?? {};
-  const companiesList = companies.data?.pages.flatMap((p) => p.items) ?? [];
-
-  // Loads that already carry an open (non-void) invoice do not belong in the
-  // picker — generating a second would only bounce off `already_invoiced`.
-  const openInvoiceLoadIds = new Set(
-    items.filter((i) => i.status !== 'void').map((i) => i.loadId),
-  );
-  const invoiceableLoads = (loads.data?.items ?? []).filter((l) => !openInvoiceLoadIds.has(l.id));
-
   const selected = items.find((i) => i.id === selectedId) ?? null;
 
   return (
@@ -834,10 +592,7 @@ export function PayScreen() {
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="text-3xl">Pay</h1>
-          <p className="mt-1 max-w-prose text-slate">
-            Invoices generated from delivered loads, sent, factored where you use
-            one, and tracked through to paid.
-          </p>
+          <p className="mt-1 max-w-prose text-slate">Invoices generated from delivered loads, sent, factored where you use one, and tracked through to paid.</p>
         </div>
         {canWrite && !generating && (
           <button className="hq-btn hq-btn-primary" onClick={() => setGenerating(true)}>
@@ -848,15 +603,13 @@ export function PayScreen() {
 
       {aging.data && (
         <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-5">
-          {aging.data.buckets.map((b) => (
+          {aging.data.map((b) => (
             <AgingTile key={b.bucket} {...b} />
           ))}
         </div>
       )}
 
-      {generating && (
-        <GenerateInvoice loads={invoiceableLoads} onDone={() => setGenerating(false)} />
-      )}
+      {generating && <GenerateInvoice onDone={() => setGenerating(false)} />}
 
       <div className="flex flex-wrap gap-1.5">
         <button
@@ -871,7 +624,7 @@ export function PayScreen() {
             className={`field-label border px-3 py-2 ${filter === s ? 'border-ink bg-wash text-ink' : 'border-line text-mute hover:text-ink'}`}
             onClick={() => setFilter(s)}
           >
-            {pretty(s)} <Num value={counts[s] ?? 0} />
+            {INVOICE_STATUS_LABEL[s]} <Num value={counts[s] ?? 0} />
           </button>
         ))}
       </div>
@@ -879,9 +632,7 @@ export function PayScreen() {
       <Card>
         {invoices.isError && <ErrorNote error={invoices.error} />}
         {invoices.isLoading && <Empty>Loading…</Empty>}
-        {invoices.data && items.length === 0 && (
-          <Empty>{filter ? `Nothing at ${pretty(filter)}.` : 'No invoices yet.'}</Empty>
-        )}
+        {invoices.data && items.length === 0 && <Empty>{filter ? `No invoices ${INVOICE_STATUS_LABEL[filter]}.` : 'No invoices yet.'}</Empty>}
 
         {items.length > 0 && (
           <div className="overflow-x-auto">
@@ -896,63 +647,42 @@ export function PayScreen() {
                 </tr>
               </thead>
               <tbody>
-                {items.map((invoice) => (
-                  <tr
-                    key={invoice.id}
-                    className={selectedId === invoice.id ? 'bg-wash' : undefined}
-                  >
-                    <td>
-                      <button
-                        className="num block text-left font-medium hover:underline"
-                        onClick={() => setSelectedId(invoice.id)}
-                      >
-                        {invoice.reference}
-                      </button>
-                    </td>
-                    <td>
-                      <Pill tone={INVOICE_STATUS_TONE[invoice.status]}>{pretty(invoice.status)}</Pill>
-                    </td>
-                    <td><Money cents={invoice.totalAmount} /></td>
-                    <td className="text-sm text-slate">
-                      {invoice.dueAt ? new Date(invoice.dueAt).toLocaleDateString() : '—'}
-                    </td>
-                    <td>
-                      {canWrite && (
+                {items.map((invoice) => {
+                  const actions = invoiceActions(invoice, role);
+                  return (
+                    <tr key={invoice.id} className={selectedId === invoice.id ? 'bg-wash' : undefined}>
+                      <td>
+                        <button className="num block text-left font-medium hover:underline" onClick={() => setSelectedId(invoice.id)}>
+                          {invoice.reference}
+                        </button>
+                      </td>
+                      <td>
+                        <Pill tone={INVOICE_STATUS_TONE[invoice.status]}>{INVOICE_STATUS_LABEL[invoice.status]}</Pill>
+                      </td>
+                      <td>
+                        <Money cents={invoice.totalAmount} />
+                      </td>
+                      <td className="text-sm text-slate">{invoice.dueAt ? new Date(invoice.dueAt).toLocaleDateString() : '—'}</td>
+                      <td>
                         <div className="flex flex-wrap items-center gap-2">
-                          {invoice.status === 'draft' && <SendControl invoice={invoice} />}
-                          {canManageMoney && <VoidControl invoice={invoice} />}
+                          {actions.markSent && <SendControl invoice={invoice} />}
+                          {actions.void && <VoidControl invoice={invoice} />}
                         </div>
-                      )}
-                    </td>
-                  </tr>
-                ))}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
         )}
 
-        <LoadMore
-          onClick={() => invoices.fetchNextPage()}
-          loading={invoices.isFetchingNextPage}
-          hasMore={invoices.hasNextPage}
-        />
+        <LoadMore onClick={() => void invoices.fetchNextPage()} loading={invoices.isFetchingNextPage} hasMore={invoices.hasNextPage} />
       </Card>
 
-      {selected && (
-        <InvoiceDetail
-          invoice={selected}
-          companies={companiesList}
-          canManageMoney={canManageMoney}
-        />
-      )}
+      {selected && <InvoiceDetail invoice={selected} companies={companies} role={role} />}
 
-      <FactoringCompanies
-        companies={companiesList}
-        canManageMoney={canManageMoney}
-        onLoadMore={() => companies.fetchNextPage()}
-        loadingMore={companies.isFetchingNextPage}
-        hasMore={companies.hasNextPage}
-      />
+      <FactoringCompanies canAdd={canManageMoney(role)} />
     </div>
   );
 }

@@ -101,10 +101,12 @@ describe('IntegrationsScreen', () => {
     expect(container.textContent).not.toMatch(/upgrade|subscri|pricing|stripe/i);
   });
 
-  it('says calmly when mailbox connect is not set up on the server, with no button that can only fail', async () => {
+  it('hides the mailbox entirely while the server has no mailbox provider', async () => {
     world({ '/v1/mailbox': { connected: false, status: 'not_connected', provider: null, connectedAt: null, configured: false } });
     renderScreen(<IntegrationsScreen />);
-    expect(await screen.findByText(/isn’t ready yet/)).toBeInTheDocument();
+    expect(await screen.findByText('Motive')).toBeInTheDocument();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByText('Mailbox')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Connect your mailbox' })).not.toBeInTheDocument();
   });
 

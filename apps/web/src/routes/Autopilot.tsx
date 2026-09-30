@@ -24,6 +24,7 @@ import {
   evidenceView,
   fileSize,
   firstRunSteps,
+  mailboxOffered,
   groupMessages,
   messageAge,
   positionAllowed,
@@ -153,7 +154,14 @@ export function AutopilotScreen() {
 
       <ErrorNote error={settings.error ?? messages.error} />
 
-      {canConfigure && <FirstRun settings={settings.data} messages={messages.data ?? []} mailboxConnected={mailbox.data?.connected} onGoToSettings={() => setTab('settings')} />}
+      {canConfigure && (
+        <FirstRun
+          settings={settings.data}
+          messages={messages.data ?? []}
+          mailbox={mailbox.data}
+          onGoToSettings={() => setTab('settings')}
+        />
+      )}
 
       <div role="tablist" className="flex flex-wrap gap-1 border-b border-line">
         {tabs.map((t) => (
@@ -234,16 +242,16 @@ export function AutopilotScreen() {
 function FirstRun({
   settings,
   messages,
-  mailboxConnected,
+  mailbox,
   onGoToSettings,
 }: {
   settings: OutboundSettingsResponse | undefined;
   messages: OutboundMessage[];
-  mailboxConnected: boolean | undefined;
+  mailbox: ReturnType<typeof useMailbox>['data'];
   onGoToSettings: () => void;
 }) {
   if (!settings) return null;
-  const steps = firstRunSteps({ mailbox: mailboxConnected === undefined ? undefined : { connected: mailboxConnected }, settings, messages });
+  const steps = firstRunSteps({ mailbox, settings, messages });
   if (steps.every((s) => s.done)) return null;
   return (
     <Card title="Getting started">
@@ -520,7 +528,12 @@ function SettingsPanel({
     <div className="space-y-6">
       {!canConfigure && <p className="text-sm text-mute">Only the owner can change these. You can see how they are set.</p>}
       <MailboxCard mailbox={mailbox} loading={mailboxLoading} redirect={redirect} canConfigure={canConfigure} />
-      <SendingSwitch settings={settings} mailboxConnected={mailbox?.connected === true} canConfigure={canConfigure} />
+      <SendingSwitch
+        settings={settings}
+        mailboxConnected={mailbox?.connected === true}
+        mailboxAvailable={mailboxOffered(mailbox)}
+        canConfigure={canConfigure}
+      />
       <ActionsCard settings={settings} evidence={evidence} canConfigure={canConfigure} />
     </div>
   );
@@ -542,21 +555,10 @@ function MailboxCard({
   const connected = mailbox?.connected === true;
   // Back from the provider but not confirmed yet: say so rather than "not connected".
   const finishing = !connected && (mailbox?.status === 'pending' || redirect === 'connected');
-  // Work in progress on every deployment today. Forwarding a rate confirmation
-  // by email (the Documents screen) already works and does not need this.
-  const configured = mailbox?.configured === true;
 
-  if (!loading && !configured) {
-    return (
-      <Card title="Your mailbox">
-        <p className="max-w-prose text-sm text-slate">
-          Connecting your own mailbox is not ready yet, so there is nothing to turn on here. In the meantime,
-          forward rate confirmations, BOLs and PODs by email — see <Link to="/documents" className="text-brand underline">Documents</Link> for
-          the address.
-        </p>
-      </Card>
-    );
-  }
+  // No mailbox provider on this deployment yet: nothing to show at all.
+  // Forwarding by email (Documents) already brings rate confirmations in.
+  if (!mailboxOffered(mailbox)) return null;
 
   return (
     <Card title="Your mailbox">
@@ -617,7 +619,17 @@ function MailboxCard({
  * control someone reaches for in a hurry, and "did it stop?" must be answerable
  * at a glance.
  */
-function SendingSwitch({ settings, mailboxConnected, canConfigure }: { settings: OutboundSettingsResponse; mailboxConnected: boolean; canConfigure: boolean }) {
+function SendingSwitch({
+  settings,
+  mailboxConnected,
+  mailboxAvailable,
+  canConfigure,
+}: {
+  settings: OutboundSettingsResponse;
+  mailboxConnected: boolean;
+  mailboxAvailable: boolean;
+  canConfigure: boolean;
+}) {
   const setSending = useSetSendingEnabled();
   const on = settings.sendingEnabled;
   return (
@@ -630,7 +642,9 @@ function SendingSwitch({ settings, mailboxConnected, canConfigure }: { settings:
               ? 'Messages you have approved, and anything set to send automatically, go out. Turn this off and nothing leaves, whatever else is set.'
               : mailboxConnected
                 ? 'Nothing leaves your mailbox. Autopilot can still write messages for you to look at.'
-                : 'Connect a mailbox first. Until then nothing can be sent.'}
+                : mailboxAvailable
+                  ? 'Connect a mailbox first. Until then nothing can be sent.'
+                  : 'Sending from your own email isn’t available yet. Autopilot can still write messages for you to look at.'}
           </p>
         </div>
         {canConfigure && (

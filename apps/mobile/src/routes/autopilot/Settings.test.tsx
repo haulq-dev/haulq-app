@@ -122,10 +122,12 @@ describe('AutopilotSettingsScreen', () => {
     expect(screen.queryByRole('button', { name: 'Send myself a test message' })).not.toBeInTheDocument();
   });
 
-  it('says calmly when mailbox sending is not set up on the server', async () => {
-    world({ mailbox: { ...MAILBOX, connected: false, configured: false } });
+  it('hides the mailbox while the server has no mailbox provider, and says why sending cannot go on', async () => {
+    world({ settings: settings({ sendingEnabled: false }), mailbox: { ...MAILBOX, connected: false, configured: false } });
     renderScreen(<AutopilotSettingsScreen />);
-    expect(await screen.findByText(/isn’t ready yet/)).toBeInTheDocument();
+    expect(await screen.findByText(/Sending from your own email isn’t available yet/)).toBeInTheDocument();
+    expect(screen.queryByText('Your mailbox')).not.toBeInTheDocument();
+    expect(screen.getByRole('switch', { name: 'Turn sending on' })).toBeDisabled();
   });
 
   it('sends the owner a test message', async () => {

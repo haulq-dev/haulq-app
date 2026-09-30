@@ -6,72 +6,53 @@
  * freight and why. Its header stated the problem this screen exists to solve:
  * every value here fails silently. A missing liftgate flag hides every load
  * that mentions one, and nothing tells the carrier that is happening.
+ *
+ * The capability list, the form ↔ request rules, Motive matching and every
+ * request come from `@haulq/client`'s `fleet.ts` and its hooks, shared with the
+ * mobile app, so the two can't disagree about what a truck form sends.
  */
 
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
 import {
-  ApiRequestError,
-  request,
+  canDispatch,
+  capabilityLabels,
+  EMPTY_TRUCK_FORM,
+  EQUIPMENT_OPTIONS,
+  equipmentLabel,
+  isMotiveNotConnected,
+  TRUCK_CAPABILITIES,
+  truckBody,
+  truckToForm,
+  unmatchedMotiveVehicles,
+  useCreateTruck,
+  useCreateTruckFromMotive,
+  useMotiveVehicles,
+  useSetMotiveVehicle,
+  useSetTruckActive,
+  useTruckList,
+  useUpdateTruck,
   type MotiveMatchSuggestion,
   type MotiveVehicle,
-  type MotiveVehiclesResponse,
   type Truck,
-} from '../lib/api.ts';
+  type TruckFormValues,
+} from '@haulq/client';
+import { useState } from 'react';
+import { useOrgs, useSession } from '../components/AuthGate.tsx';
 import { Card, Empty, ErrorNote, Field, LoadMore, Num, Pill } from '../components/ui.tsx';
 
-const CAPABILITIES = [
-  { key: 'liftgate', label: 'Liftgate', hint: 'Loads requiring one are hidden without this' },
-  { key: 'palletJack', label: 'Pallet jack', hint: 'Carried on the truck, not at the dock' },
-  { key: 'driverAssist', label: 'Driver helps load', hint: 'Hand-unload, lumper work' },
-  { key: 'twicCard', label: 'TWIC card', hint: 'Ports and secure facilities' },
-  { key: 'hazmatEndorsement', label: 'Hazmat', hint: 'Placarded freight' },
-  { key: 'securementGear', label: 'Straps and load bars', hint: 'Most trucks have these' },
-  { key: 'dockHigh', label: 'Dock high', hint: 'Straight trucks often are not' },
-  { key: 'teamDrivers', label: 'Team drivers', hint: 'Two drivers available' },
-] as const;
-
-const EQUIPMENT = [
-  'STRAIGHT_BOX',
-  'DRY_VAN',
-  'REEFER',
-  'FLATBED',
-  'POWER_ONLY',
-  'OTHER',
-] as const;
-
-const pretty = (equipment: string) =>
-  equipment.toLowerCase().replace(/_/g, ' ');
-
-function useSetMotiveVehicle(truckId: string) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (motiveVehicleId: number | null) =>
-      request(`/v1/trucks/${truckId}/motive-vehicle`, {
-        method: 'PATCH',
-        body: { motiveVehicleId },
-      }),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries();
-    },
-  });
-}
-
 /**
- * The Motive vehicle match, editable inline. With a fetched vehicle list
- * this is a picker of real names — "12", "Unit 12" — never a raw id a
- * carrier has to go find in Motive's own dashboard first. Falls back to
- * the old numeric field only when Motive is not connected or the vehicle
- * list could not be fetched, so nothing regresses for an org that has not
- * connected yet.
+ * The Motive vehicle match, editable inline. With a fetched vehicle list this
+ * is a picker of real names — "12", "Unit 12" — never a raw id a carrier has
+ * to go find in Motive's own dashboard first. Falls back to a numeric field
+ * only when Motive is not connected or the list could not be fetched.
  */
-function MotiveVehicleCell({ truck, vehicles }: { truck: Truck; vehicles: MotiveVehicle[] | null }) {
+function MotiveVehicleCell({ truck, vehicles, canWrite }: { truck: Truck; vehicles: MotiveVehicle[] | null; canWrite: boolean }) {
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(String(truck.motiveVehicleId ?? ''));
-  const save = useSetMotiveVehicle(truck.id);
-
+  const save = useSetMotiveVehicle();
   const current = vehicles?.find((v) => v.id === truck.motiveVehicleId);
+  const label = truck.motiveVehicleId !== null ? <span>{current ? current.number : truck.motiveVehicleId}</span> : <span className="text-sm text-mute">Not matched</span>;
 
+  if (!canWrite) return label;
   if (!editing) {
     return (
       <button
@@ -81,14 +62,12 @@ function MotiveVehicleCell({ truck, vehicles }: { truck: Truck; vehicles: Motive
           setEditing(true);
         }}
       >
-        {truck.motiveVehicleId !== null ? (
-          <span>{current ? current.number : truck.motiveVehicleId}</span>
-        ) : (
-          <span className="text-sm text-mute">Not matched</span>
-        )}
+        {label}
       </button>
     );
   }
+
+  const set = (motiveVehicleId: number | null) => save.mutate({ truckId: truck.id, motiveVehicleId }, { onSuccess: () => setEditing(false) });
 
   if (vehicles) {
     return (
@@ -97,11 +76,7 @@ function MotiveVehicleCell({ truck, vehicles }: { truck: Truck; vehicles: Motive
           className="hq-input w-40 py-1 text-sm"
           autoFocus
           defaultValue={truck.motiveVehicleId !== null ? String(truck.motiveVehicleId) : ''}
-          onChange={(e) => {
-            save.mutate(e.target.value ? Number(e.target.value) : null, {
-              onSuccess: () => setEditing(false),
-            });
-          }}
+          onChange={(e) => set(e.target.value ? Number(e.target.value) : null)}
           disabled={save.isPending}
         >
           <option value="">Not matched</option>
@@ -131,11 +106,7 @@ function MotiveVehicleCell({ truck, vehicles }: { truck: Truck; vehicles: Motive
         onChange={(e) => setValue(e.target.value)}
         placeholder="Vehicle id"
       />
-      <button
-        className="hq-btn hq-btn-ghost px-2 py-1 text-xs"
-        disabled={save.isPending}
-        onClick={() => save.mutate(value.trim() ? Number(value) : null, { onSuccess: () => setEditing(false) })}
-      >
+      <button className="hq-btn hq-btn-ghost px-2 py-1 text-xs" disabled={save.isPending} onClick={() => set(value.trim() ? Number(value) : null)}>
         Save
       </button>
       <button className="hq-btn hq-btn-ghost px-2 py-1 text-xs" onClick={() => setEditing(false)}>
@@ -147,235 +118,111 @@ function MotiveVehicleCell({ truck, vehicles }: { truck: Truck; vehicles: Motive
 }
 
 /**
- * Suggested matches waiting for a one-click confirm — the actual
- * hands-off path for the common case where a fleet already calls a Motive
- * vehicle the same thing HaulQ calls the truck. Never applied
+ * Suggested matches waiting for a one-click confirm. Never applied
  * automatically; see `integrations/motive-match.ts` on the API side for why.
  */
 function MotiveMatchSuggestions({ suggestions }: { suggestions: MotiveMatchSuggestion[] }) {
+  const save = useSetMotiveVehicle();
   if (suggestions.length === 0) return null;
 
   return (
     <Card title="Motive matches to review">
-      <p className="mb-3 max-w-prose text-sm text-slate">
-        These trucks and Motive vehicles look like the same unit. Confirm the
-        ones that are right — nothing is matched until you do.
-      </p>
+      <p className="mb-3 max-w-prose text-sm text-slate">These trucks and Motive vehicles look like the same unit. Confirm the ones that are right — nothing is matched until you do.</p>
       <ul className="space-y-2">
         {suggestions.map((s) => (
-          <SuggestionRow key={s.truckId} suggestion={s} />
+          <li key={s.truckId} className="flex flex-wrap items-center justify-between gap-2 border border-line p-2.5">
+            <span>
+              <span className="font-medium">{s.truckLabel}</span>
+              <span className="mx-2 text-mute">→</span>
+              <span>Motive {s.motiveVehicleNumber}</span>
+            </span>
+            <button
+              className="hq-btn hq-btn-brand px-3 py-1 text-xs"
+              disabled={save.isPending}
+              onClick={() => save.mutate({ truckId: s.truckId, motiveVehicleId: s.motiveVehicleId })}
+            >
+              {save.isPending && save.variables?.truckId === s.truckId ? 'Matching…' : 'Confirm match'}
+            </button>
+          </li>
         ))}
       </ul>
+      <ErrorNote error={save.error} />
     </Card>
   );
 }
 
-function SuggestionRow({ suggestion }: { suggestion: MotiveMatchSuggestion }) {
-  const save = useSetMotiveVehicle(suggestion.truckId);
-  return (
-    <li className="flex flex-wrap items-center justify-between gap-2 border border-line p-2.5">
-      <span>
-        <span className="font-medium">{suggestion.truckLabel}</span>
-        <span className="mx-2 text-mute">→</span>
-        <span>Motive {suggestion.motiveVehicleNumber}</span>
-      </span>
-      <div className="flex items-center gap-2">
-        <button
-          className="hq-btn hq-btn-brand px-3 py-1 text-xs"
-          disabled={save.isPending}
-          onClick={() => save.mutate(suggestion.motiveVehicleId)}
-        >
-          {save.isPending ? 'Matching…' : 'Confirm match'}
-        </button>
-        <ErrorNote error={save.error} />
-      </div>
-    </li>
-  );
-}
-
 /**
- * A Motive vehicle no existing truck was suggested for — either the fleet
- * genuinely has a truck Motive knows about that HaulQ does not yet, or its
- * label just does not resemble anything in `motive-match.ts`'s comparison.
- * Either way, one click creates the truck and matches it in the same step,
- * rather than making someone copy the vehicle number into "Add a truck" by
- * hand and then find it again in the picker below.
- */
-function CreateFromMotiveRow({ vehicle }: { vehicle: MotiveVehicle }) {
-  const queryClient = useQueryClient();
-  const create = useMutation({
-    mutationFn: async () => {
-      const truck = await request<Truck>('/v1/trucks', {
-        body: { label: vehicle.number, equipment: 'STRAIGHT_BOX', capabilities: {} },
-      });
-      await request(`/v1/trucks/${truck.id}/motive-vehicle`, {
-        method: 'PATCH',
-        body: { motiveVehicleId: vehicle.id },
-      });
-    },
-    onSuccess: async () => {
-      await queryClient.invalidateQueries();
-    },
-  });
-
-  return (
-    <li className="flex flex-wrap items-center justify-between gap-2 border border-line p-2.5">
-      <span>
-        Motive {vehicle.number}
-        {vehicle.vin ? <span className="ml-2 text-sm text-mute">VIN ···{vehicle.vin.slice(-6)}</span> : null}
-      </span>
-      <div className="flex items-center gap-2">
-        <button
-          className="hq-btn hq-btn-ghost px-3 py-1 text-xs"
-          disabled={create.isPending}
-          onClick={() => create.mutate()}
-        >
-          {create.isPending ? 'Creating…' : 'Create truck'}
-        </button>
-        <ErrorNote error={create.error} />
-      </div>
-    </li>
-  );
-}
-
-/**
- * Every Motive vehicle nothing in HaulQ claims yet: not a truck's current
- * match, and not already offered as a suggestion above (that one already
- * has its own one-click path). Left off entirely once empty rather than
- * shown with a "nothing here" placeholder — this card is only useful while
- * it has rows.
+ * Motive vehicles nothing in HaulQ claims yet. One click creates the truck and
+ * matches it in the same step. Left off entirely once empty.
  */
 function UnmatchedMotiveVehicles({ vehicles }: { vehicles: MotiveVehicle[] }) {
+  const create = useCreateTruckFromMotive();
   if (vehicles.length === 0) return null;
 
   return (
     <Card title="Motive vehicles with no HaulQ truck">
-      <p className="mb-3 max-w-prose text-sm text-slate">
-        These are on the Motive account but nothing here matches them yet.
-        Create a truck for one to start tracking it.
-      </p>
+      <p className="mb-3 max-w-prose text-sm text-slate">These are on the Motive account but nothing here matches them yet. Create a truck for one to start tracking it.</p>
       <ul className="space-y-2">
         {vehicles.map((v) => (
-          <CreateFromMotiveRow key={v.id} vehicle={v} />
+          <li key={v.id} className="flex flex-wrap items-center justify-between gap-2 border border-line p-2.5">
+            <span>
+              Motive {v.number}
+              {v.vin ? <span className="ml-2 text-sm text-mute">VIN ···{v.vin.slice(-6)}</span> : null}
+            </span>
+            <button className="hq-btn hq-btn-ghost px-3 py-1 text-xs" disabled={create.isPending} onClick={() => create.mutate(v)}>
+              {create.isPending && create.variables?.id === v.id ? 'Creating…' : 'Create truck'}
+            </button>
+          </li>
         ))}
       </ul>
+      <ErrorNote error={create.error} />
     </Card>
   );
 }
 
-interface TruckFormValues {
-  label: string;
-  equipment: string;
-  maxWeightLbs: string;
-  maxLengthFt: string;
-  boxHeightIn: string;
-  boxWidthIn: string;
-  shortHaulExempt: boolean;
-  capabilities: Record<string, boolean>;
-}
-
-const EMPTY_TRUCK_FORM: TruckFormValues = {
-  label: '',
-  equipment: 'STRAIGHT_BOX',
-  maxWeightLbs: '',
-  maxLengthFt: '',
-  boxHeightIn: '',
-  boxWidthIn: '',
-  shortHaulExempt: false,
-  capabilities: {},
-};
-
 /** The fields `AddTruck` and `EditTruck` share — same inputs either way, only what happens on submit differs. */
-function TruckFields({
-  values,
-  onChange,
-}: {
-  values: TruckFormValues;
-  onChange: (values: TruckFormValues) => void;
-}) {
+function TruckFields({ values, onChange }: { values: TruckFormValues; onChange: (values: TruckFormValues) => void }) {
+  const number = (key: 'maxWeightLbs' | 'maxLengthFt' | 'boxHeightIn' | 'boxWidthIn', label: string, hint?: string) => (
+    <Field label={label} {...(hint ? { hint } : {})}>
+      <input className="hq-input" data-numeric="true" inputMode="numeric" value={values[key]} onChange={(e) => onChange({ ...values, [key]: e.target.value })} />
+    </Field>
+  );
+
   return (
     <>
       <div className="grid gap-5 sm:grid-cols-4">
         <Field label="Label" hint="What you call it. “Unit 12”, “the white box”.">
-          <input
-            className="hq-input"
-            value={values.label}
-            onChange={(e) => onChange({ ...values, label: e.target.value })}
-          />
+          <input className="hq-input" value={values.label} onChange={(e) => onChange({ ...values, label: e.target.value })} />
         </Field>
         <Field label="Equipment">
-          <select
-            className="hq-input"
-            value={values.equipment}
-            onChange={(e) => onChange({ ...values, equipment: e.target.value })}
-          >
-            {EQUIPMENT.map((e) => (
-              <option key={e} value={e}>
-                {pretty(e)}
+          <select className="hq-input" value={values.equipment} onChange={(e) => onChange({ ...values, equipment: e.target.value })}>
+            {EQUIPMENT_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
               </option>
             ))}
           </select>
         </Field>
-        <Field label="Max weight (lbs)">
-          <input
-            className="hq-input"
-            data-numeric="true"
-            inputMode="numeric"
-            value={values.maxWeightLbs}
-            onChange={(e) => onChange({ ...values, maxWeightLbs: e.target.value })}
-          />
-        </Field>
-        <Field label="Max length (ft)">
-          <input
-            className="hq-input"
-            data-numeric="true"
-            inputMode="numeric"
-            value={values.maxLengthFt}
-            onChange={(e) => onChange({ ...values, maxLengthFt: e.target.value })}
-          />
-        </Field>
+        {number('maxWeightLbs', 'Max weight (lbs)')}
+        {number('maxLengthFt', 'Max length (ft)')}
       </div>
 
       <div className="mt-5 grid gap-5 sm:grid-cols-4">
-        <Field label="Box height (in)" hint="Overall vehicle height — bridge clearance, not cargo space.">
-          <input
-            className="hq-input"
-            data-numeric="true"
-            inputMode="numeric"
-            value={values.boxHeightIn}
-            onChange={(e) => onChange({ ...values, boxHeightIn: e.target.value })}
-          />
-        </Field>
-        <Field label="Box width (in)" hint="Overall vehicle width.">
-          <input
-            className="hq-input"
-            data-numeric="true"
-            inputMode="numeric"
-            value={values.boxWidthIn}
-            onChange={(e) => onChange({ ...values, boxWidthIn: e.target.value })}
-          />
-        </Field>
+        {number('boxHeightIn', 'Box height (in)', 'Overall vehicle height — bridge clearance, not cargo space.')}
+        {number('boxWidthIn', 'Box width (in)', 'Overall vehicle width.')}
       </div>
 
       <fieldset className="mt-6">
         <legend className="field-label mb-1 text-slate">What it can do</legend>
-        <p className="mb-3 max-w-prose text-sm text-slate">
-          These decide which loads are matched to this truck. Leaving one off
-          hides the loads that need it, without saying so.
-        </p>
+        <p className="mb-3 max-w-prose text-sm text-slate">These decide which loads are matched to this truck. Leaving one off hides the loads that need it, without saying so.</p>
         <div className="grid gap-2 sm:grid-cols-2">
-          {CAPABILITIES.map((c) => (
-            <label
-              key={c.key}
-              className="flex cursor-pointer items-start gap-2.5 border border-line p-2.5 hover:border-ink"
-            >
+          {TRUCK_CAPABILITIES.map((c) => (
+            <label key={c.key} className="flex cursor-pointer items-start gap-2.5 border border-line p-2.5 hover:border-ink">
               <input
                 type="checkbox"
                 className="mt-0.5 accent-[--color-brand]"
                 checked={values.capabilities[c.key] ?? false}
-                onChange={(e) =>
-                  onChange({ ...values, capabilities: { ...values.capabilities, [c.key]: e.target.checked } })
-                }
+                onChange={(e) => onChange({ ...values, capabilities: { ...values.capabilities, [c.key]: e.target.checked } })}
               />
               <span>
                 <span className="block text-sm font-medium">{c.label}</span>
@@ -394,52 +241,34 @@ function TruckFields({
           onChange={(e) => onChange({ ...values, shortHaulExempt: e.target.checked })}
         />
         <span>
-          <span className="block text-sm font-medium">
-            Runs under the 150 air-mile short-haul exemption
-          </span>
-          <span className="block text-xs text-mute">
-            Common for straight trucks. It means ELD coverage is patchy, so
-            HaulQ falls back to the driver app for position.
-          </span>
+          <span className="block text-sm font-medium">Runs under the 150 air-mile short-haul exemption</span>
+          <span className="block text-xs text-mute">Common for straight trucks. It means ELD coverage is patchy, so HaulQ falls back to the driver app for position.</span>
         </span>
       </label>
     </>
   );
 }
 
+/** A number that isn't a whole positive number is named, rather than sent to bounce off the API. */
+function InvalidNote({ values, mode }: { values: TruckFormValues; mode: 'create' | 'update' }) {
+  const result = truckBody(values, mode);
+  return 'invalid' in result && values.label.trim() ? <p className="mt-3 text-sm text-bad">{result.invalid} needs a whole number.</p> : null;
+}
+
 function AddTruck({ onDone }: { onDone: () => void }) {
   const [values, setValues] = useState<TruckFormValues>(EMPTY_TRUCK_FORM);
-
-  const queryClient = useQueryClient();
-  const create = useMutation({
-    mutationFn: () =>
-      request<Truck>('/v1/trucks', {
-        body: {
-          label: values.label,
-          equipment: values.equipment,
-          ...(values.maxWeightLbs ? { maxWeightLbs: Number(values.maxWeightLbs) } : {}),
-          ...(values.maxLengthFt ? { maxLengthFt: Number(values.maxLengthFt) } : {}),
-          ...(values.boxHeightIn ? { boxHeightIn: Number(values.boxHeightIn) } : {}),
-          ...(values.boxWidthIn ? { boxWidthIn: Number(values.boxWidthIn) } : {}),
-          shortHaulExempt: values.shortHaulExempt,
-          capabilities: values.capabilities,
-        },
-      }),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries();
-      onDone();
-    },
-  });
+  const create = useCreateTruck();
+  const result = truckBody(values, 'create');
 
   return (
     <Card title="Add a truck">
       <TruckFields values={values} onChange={setValues} />
-
+      <InvalidNote values={values} mode="create" />
       <div className="mt-6 flex gap-3">
         <button
           className="hq-btn hq-btn-brand"
-          disabled={!values.label || create.isPending}
-          onClick={() => create.mutate()}
+          disabled={!('body' in result) || create.isPending}
+          onClick={() => 'body' in result && create.mutate(result.body, { onSuccess: onDone })}
         >
           {create.isPending ? 'Adding…' : 'Add truck'}
         </button>
@@ -447,97 +276,50 @@ function AddTruck({ onDone }: { onDone: () => void }) {
           Cancel
         </button>
       </div>
-
       <ErrorNote error={create.error} />
     </Card>
   );
 }
 
 function EditTruck({ truck, onDone }: { truck: Truck; onDone: () => void }) {
-  const [values, setValues] = useState<TruckFormValues>({
-    label: truck.label,
-    equipment: truck.equipment,
-    maxWeightLbs: truck.maxWeightLbs !== null ? String(truck.maxWeightLbs) : '',
-    maxLengthFt: truck.maxLengthFt !== null ? String(truck.maxLengthFt) : '',
-    boxHeightIn: truck.boxHeightIn !== null ? String(truck.boxHeightIn) : '',
-    boxWidthIn: truck.boxWidthIn !== null ? String(truck.boxWidthIn) : '',
-    shortHaulExempt: truck.shortHaulExempt,
-    capabilities: truck.capabilities ?? {},
-  });
-
-  const queryClient = useQueryClient();
-  const save = useMutation({
-    mutationFn: () =>
-      request<Truck>(`/v1/trucks/${truck.id}`, {
-        method: 'PATCH',
-        body: {
-          label: values.label,
-          equipment: values.equipment,
-          maxWeightLbs: values.maxWeightLbs ? Number(values.maxWeightLbs) : null,
-          maxLengthFt: values.maxLengthFt ? Number(values.maxLengthFt) : null,
-          boxHeightIn: values.boxHeightIn ? Number(values.boxHeightIn) : null,
-          boxWidthIn: values.boxWidthIn ? Number(values.boxWidthIn) : null,
-          shortHaulExempt: values.shortHaulExempt,
-          capabilities: values.capabilities,
-        },
-      }),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries();
-      onDone();
-    },
-  });
+  const [values, setValues] = useState<TruckFormValues>(() => truckToForm(truck));
+  const update = useUpdateTruck();
+  const result = truckBody(values, 'update');
 
   return (
     <Card title={`Edit ${truck.label}`}>
       <TruckFields values={values} onChange={setValues} />
-
+      <InvalidNote values={values} mode="update" />
       <div className="mt-6 flex gap-3">
         <button
           className="hq-btn hq-btn-brand"
-          disabled={!values.label || save.isPending}
-          onClick={() => save.mutate()}
+          disabled={!('body' in result) || update.isPending}
+          onClick={() => 'body' in result && update.mutate({ id: truck.id, body: result.body }, { onSuccess: onDone })}
         >
-          {save.isPending ? 'Saving…' : 'Save changes'}
+          {update.isPending ? 'Saving…' : 'Save changes'}
         </button>
         <button className="hq-btn hq-btn-ghost" onClick={onDone}>
           Cancel
         </button>
       </div>
-
-      <ErrorNote error={save.error} />
+      <ErrorNote error={update.error} />
     </Card>
   );
 }
 
 /**
- * Delete, in this app's sense: take the truck out of service, not erase it.
- * `contracts`' `SetTruckActiveSchema` has the reasoning — a truck stays
- * referenced by loads, drivers and telemetry for as long as it was ever
- * run. Deactivating needs a confirm step the way `StatusControl`'s cancel
- * does in `Loads.tsx`; reactivating does not, since nothing is lost by it.
+ * Delete, in this app's sense: take the truck out of service, not erase it —
+ * a truck stays referenced by loads, drivers and telemetry for as long as it
+ * was ever run. Taking one out asks first; putting it back does not.
  */
 function TruckActiveControl({ truck }: { truck: Truck }) {
-  const queryClient = useQueryClient();
   const [confirming, setConfirming] = useState(false);
   const [reason, setReason] = useState('');
-
-  const setActive = useMutation({
-    mutationFn: (input: { active: boolean; reason?: string }) =>
-      request(`/v1/trucks/${truck.id}/active`, { method: 'PATCH', body: input }),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries();
-      setConfirming(false);
-      setReason('');
-    },
-  });
+  const setActive = useSetTruckActive();
 
   if (!truck.active) {
     return (
-      <button
-        className="hq-btn hq-btn-ghost px-2 py-1 text-xs"
-        disabled={setActive.isPending}
-        onClick={() => setActive.mutate({ active: true })}
-      >
+      <button className="hq-btn hq-btn-ghost px-2 py-1 text-xs" disabled={setActive.isPending} onClick={() => setActive.mutate({ id: truck.id, active: true })}>
         {setActive.isPending ? 'Reactivating…' : 'Reactivate'}
       </button>
     );
@@ -546,16 +328,21 @@ function TruckActiveControl({ truck }: { truck: Truck }) {
   if (confirming) {
     return (
       <div className="flex flex-wrap items-center gap-1.5">
-        <input
-          className="hq-input w-32 py-1 text-xs"
-          placeholder="Reason (optional)"
-          value={reason}
-          onChange={(e) => setReason(e.target.value)}
-        />
+        <input className="hq-input w-32 py-1 text-xs" placeholder="Reason (optional)" value={reason} onChange={(e) => setReason(e.target.value)} />
         <button
           className="hq-btn hq-btn-ghost px-2 py-1 text-xs text-bad"
           disabled={setActive.isPending}
-          onClick={() => setActive.mutate({ active: false, ...(reason.trim() ? { reason: reason.trim() } : {}) })}
+          onClick={() =>
+            setActive.mutate(
+              { id: truck.id, active: false, ...(reason.trim() ? { reason: reason.trim() } : {}) },
+              {
+                onSuccess: () => {
+                  setConfirming(false);
+                  setReason('');
+                },
+              },
+            )
+          }
         >
           {setActive.isPending ? 'Removing…' : 'Confirm'}
         </button>
@@ -568,10 +355,7 @@ function TruckActiveControl({ truck }: { truck: Truck }) {
   }
 
   return (
-    <button
-      className="hq-btn hq-btn-ghost px-2 py-1 text-xs text-bad"
-      onClick={() => setConfirming(true)}
-    >
+    <button className="hq-btn hq-btn-ghost px-2 py-1 text-xs text-bad" onClick={() => setConfirming(true)}>
       Delete
     </button>
   );
@@ -580,39 +364,27 @@ function TruckActiveControl({ truck }: { truck: Truck }) {
 export function TrucksScreen() {
   const [adding, setAdding] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const trucks = useInfiniteQuery({
-    queryKey: ['trucks', 'list'],
-    queryFn: ({ pageParam }: { pageParam: string | undefined }) =>
-      request<{ items: Truck[]; nextCursor: string | null }>(
-        `/v1/trucks${pageParam ? `?cursor=${encodeURIComponent(pageParam)}` : ''}`,
-      ),
-    initialPageParam: undefined as string | undefined,
-    getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
-  });
+  const session = useSession();
+  const orgs = useOrgs();
+  const canWrite = canDispatch(orgs.data?.items.find((o) => o.id === session?.orgId)?.role);
+
+  const trucks = useTruckList();
   const truckItems = trucks.data?.pages.flatMap((p) => p.items) ?? [];
 
-  // 409 (`not_connected`) is the expected answer for an org that has not
-  // connected Motive yet, not a failure worth retrying or showing an error
-  // for — the picker just falls back to the manual field below.
-  const motive = useQuery({
-    queryKey: ['motive-vehicles'],
-    queryFn: () => request<MotiveVehiclesResponse>('/v1/integrations/motive/vehicles'),
-    retry: false,
-  });
-  const motiveNotConnected =
-    motive.isError && motive.error instanceof ApiRequestError && motive.error.code === 'not_connected';
+  // 409 `not_connected` is the expected answer for an org that has not
+  // connected Motive yet, not a failure worth showing — the picker falls back
+  // to the manual field. Motive is only readable by owner and dispatcher.
+  const motive = useMotiveVehicles({ enabled: canWrite });
+  const motiveNotConnected = motive.isError && isMotiveNotConnected(motive.error);
   const vehicles = motive.data?.vehicles ?? null;
-
-  const matchedVehicleIds = new Set(truckItems.map((t) => t.motiveVehicleId).filter((id) => id !== null));
-  const suggestedVehicleIds = new Set(motive.data?.suggestions.map((s) => s.motiveVehicleId) ?? []);
-  const unmatchedVehicles =
-    vehicles?.filter((v) => !matchedVehicleIds.has(v.id) && !suggestedVehicleIds.has(v.id)) ?? [];
+  const unmatched = motive.data ? unmatchedMotiveVehicles(motive.data.vehicles, truckItems, motive.data.suggestions) : [];
+  const editing = truckItems.find((t) => t.id === editingId);
 
   return (
     <div className="space-y-6">
       <div className="flex items-end justify-between gap-4">
         <h1 className="text-3xl">Trucks</h1>
-        {!adding && (
+        {canWrite && !adding && (
           <button className="hq-btn hq-btn-primary" onClick={() => setAdding(true)}>
             Add a truck
           </button>
@@ -620,24 +392,16 @@ export function TrucksScreen() {
       </div>
 
       {adding && <AddTruck onDone={() => setAdding(false)} />}
-
-      {editingId &&
-        (() => {
-          const editing = truckItems.find((t) => t.id === editingId);
-          if (!editing) return null;
-          return <EditTruck truck={editing} onDone={() => setEditingId(null)} />;
-        })()}
+      {editing && <EditTruck key={editing.id} truck={editing} onDone={() => setEditingId(null)} />}
 
       {motive.data && <MotiveMatchSuggestions suggestions={motive.data.suggestions} />}
-      {motive.data && <UnmatchedMotiveVehicles vehicles={unmatchedVehicles} />}
+      {motive.data && <UnmatchedMotiveVehicles vehicles={unmatched} />}
       {motive.isError && !motiveNotConnected && <ErrorNote error={motive.error} />}
 
       <Card>
         {trucks.isError && <ErrorNote error={trucks.error} />}
         {trucks.isLoading && <Empty>Loading…</Empty>}
-        {trucks.data && truckItems.length === 0 && (
-          <Empty>No trucks yet. Nothing can be matched or assigned until one exists.</Empty>
-        )}
+        {trucks.data && truckItems.length === 0 && <Empty>No trucks yet. Nothing can be matched or assigned until one exists.</Empty>}
 
         {truckItems.length > 0 && (
           <div className="overflow-x-auto">
@@ -658,15 +422,12 @@ export function TrucksScreen() {
                       </span>
                     )}
                   </th>
-                  <th className="field-label">Actions</th>
+                  {canWrite && <th className="field-label">Actions</th>}
                 </tr>
               </thead>
               <tbody>
                 {truckItems.map((truck) => {
-                  const enabled = Object.entries(truck.capabilities ?? {})
-                    .filter(([, on]) => on)
-                    .map(([k]) => CAPABILITIES.find((c) => c.key === k)?.label ?? k);
-
+                  const enabled = capabilityLabels(truck.capabilities);
                   return (
                     <tr key={truck.id} className={!truck.active ? 'opacity-60' : undefined}>
                       <td className="font-medium">
@@ -677,14 +438,8 @@ export function TrucksScreen() {
                           </span>
                         )}
                       </td>
-                      <td className="text-slate">{pretty(truck.equipment)}</td>
-                      <td>
-                        {truck.maxWeightLbs ? (
-                          <Num value={truck.maxWeightLbs} />
-                        ) : (
-                          <span className="text-mute">—</span>
-                        )}
-                      </td>
+                      <td className="text-slate">{equipmentLabel(truck.equipment) ?? truck.equipment}</td>
+                      <td>{truck.maxWeightLbs ? <Num value={truck.maxWeightLbs} /> : <span className="text-mute">—</span>}</td>
                       <td>
                         {enabled.length ? (
                           <span className="flex flex-wrap gap-1.5">
@@ -693,25 +448,22 @@ export function TrucksScreen() {
                             ))}
                           </span>
                         ) : (
-                          <span className="text-sm text-warn">
-                            Nothing set — loads needing equipment may be hidden
-                          </span>
+                          <span className="text-sm text-warn">Nothing set — loads needing equipment may be hidden</span>
                         )}
                       </td>
                       <td>
-                        <MotiveVehicleCell truck={truck} vehicles={vehicles} />
+                        <MotiveVehicleCell truck={truck} vehicles={vehicles} canWrite={canWrite} />
                       </td>
-                      <td>
-                        <div className="flex flex-wrap items-center gap-1.5">
-                          <button
-                            className="hq-btn hq-btn-ghost px-2 py-1 text-xs"
-                            onClick={() => setEditingId(truck.id)}
-                          >
-                            Edit
-                          </button>
-                          <TruckActiveControl truck={truck} />
-                        </div>
-                      </td>
+                      {canWrite && (
+                        <td>
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <button className="hq-btn hq-btn-ghost px-2 py-1 text-xs" onClick={() => setEditingId(truck.id)}>
+                              Edit
+                            </button>
+                            <TruckActiveControl truck={truck} />
+                          </div>
+                        </td>
+                      )}
                     </tr>
                   );
                 })}
@@ -720,11 +472,7 @@ export function TrucksScreen() {
           </div>
         )}
 
-        <LoadMore
-          onClick={() => trucks.fetchNextPage()}
-          loading={trucks.isFetchingNextPage}
-          hasMore={trucks.hasNextPage}
-        />
+        <LoadMore onClick={() => void trucks.fetchNextPage()} loading={trucks.isFetchingNextPage} hasMore={trucks.hasNextPage} />
       </Card>
     </div>
   );

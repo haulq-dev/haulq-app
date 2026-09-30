@@ -8,6 +8,7 @@ import {
   defaultTab,
   evidenceView,
   firstRunSteps,
+  mailboxOffered,
   groupMessages,
   messageAge,
   modeForPosition,
@@ -155,6 +156,14 @@ describe('first run', () => {
       messages: [msg()],
     });
     assert.deepEqual(done.map((s) => s.done), [true, true, true]);
+  });
+
+  it('leaves out the mailbox step while this deployment has no mailbox provider', () => {
+    const steps = firstRunSteps({ mailbox: { connected: false, configured: false }, settings: { configured: {}, actions }, messages: [] });
+    assert.deepEqual(steps.map((s) => s.key), ['choose', 'review']);
+    assert.equal(mailboxOffered({ configured: false }), false);
+    assert.equal(mailboxOffered({ configured: true }), true);
+    assert.equal(mailboxOffered(undefined), true);
   });
 
   it('opens on what is waiting, else on settings for a new or returning owner, else on approvals', () => {

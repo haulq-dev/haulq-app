@@ -244,15 +244,17 @@ describe('AutopilotScreen — settings', () => {
     expect(screen.getByRole('button', { name: 'Connect mailbox' })).toBeEnabled();
   });
 
-  it('says mailbox connect is a work in progress, and points at email forwarding instead, when this deployment has no provider set up', async () => {
+  it('hides mailbox connect entirely while this deployment has no provider set up', async () => {
     renderScreen({
       settings: settings({ sendingEnabled: false }),
       mailbox: { connected: false, status: 'not_connected', provider: null, connectedAt: null, configured: false },
     });
     await userEvent.click(await screen.findByRole('tab', { name: 'Settings' }));
-    expect(await screen.findByText(/not ready yet/)).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Documents' })).toBeInTheDocument();
+    expect(await screen.findByText(/Sending from your own email isn’t available yet/)).toBeInTheDocument();
+    expect(screen.queryByText('Your mailbox')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Connect mailbox' })).not.toBeInTheDocument();
+    // Nor is connecting one a first-run step.
+    expect(screen.queryByText('Connect your mailbox')).not.toBeInTheDocument();
   });
 });
 

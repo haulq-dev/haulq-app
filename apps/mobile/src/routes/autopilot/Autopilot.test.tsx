@@ -210,6 +210,13 @@ describe('AutopilotScreen — stopping it', () => {
 });
 
 describe('AutopilotScreen — what is left to set up', () => {
+  it('does not ask for a mailbox the server cannot connect', async () => {
+    world({ mailbox: { connected: false, status: 'not_connected', provider: null, connectedAt: null, configured: false } as never });
+    renderScreen(<AutopilotScreen />);
+    await screen.findByRole('tab', { name: /Needs your OK/ });
+    expect(screen.queryByText(/Connect your mailbox/)).not.toBeInTheDocument();
+  });
+
   it('sends the owner to connect the mailbox in the app', async () => {
     world({ mailbox: { connected: false, status: 'not_connected', provider: null, connectedAt: null } });
     renderScreen(<AutopilotScreen />);

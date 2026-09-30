@@ -22,6 +22,7 @@ import {
   actionTitle,
   canConfigureOutbound,
   evidenceView,
+  mailboxOffered,
   positionAllowed,
   positionFor,
   previewReason,
@@ -71,7 +72,12 @@ export function AutopilotSettingsScreen() {
           <Mailbox data={mailbox.data} loading={mailbox.isLoading} canConfigure={canConfigure} />
           {settings.data && (
             <>
-              <SendingSwitch settings={settings.data} mailboxConnected={mailbox.data?.connected === true} canConfigure={canConfigure} />
+              <SendingSwitch
+                settings={settings.data}
+                mailboxConnected={mailbox.data?.connected === true}
+                mailboxAvailable={mailboxOffered(mailbox.data)}
+                canConfigure={canConfigure}
+              />
               <Actions settings={settings.data} evidence={evidence.data} canConfigure={canConfigure} />
             </>
           )}
@@ -97,22 +103,8 @@ function Mailbox({
   loading: boolean;
   canConfigure: boolean;
 }) {
-  if (loading || !data) return null;
-
-  if (!data.configured) {
-    return (
-      <Card title="Your mailbox">
-        <p className="text-sm text-slate">
-          Sending from your own mailbox isn’t ready yet, so there’s nothing to turn on here. Rate confirmations still come in when forwarded
-          to your{' '}
-          <Link to="/documents" className="text-brand underline">
-            paperwork email address
-          </Link>
-          .
-        </p>
-      </Card>
-    );
-  }
+  // Hidden entirely while there's no mailbox provider on HaulQ's side.
+  if (loading || !data || !mailboxOffered(data)) return null;
 
   return (
     <Card title="Your mailbox">
@@ -138,10 +130,12 @@ function Mailbox({
 function SendingSwitch({
   settings,
   mailboxConnected,
+  mailboxAvailable,
   canConfigure,
 }: {
   settings: OutboundSettingsResponse;
   mailboxConnected: boolean;
+  mailboxAvailable: boolean;
   canConfigure: boolean;
 }) {
   const setSending = useSetSendingEnabled();
@@ -156,7 +150,9 @@ function SendingSwitch({
             ? 'Messages you approve, and anything set to send automatically, go out. Turn this off and nothing leaves, whatever else is set.'
             : mailboxConnected
               ? 'Nothing leaves your mailbox. Autopilot can still write messages for you to look at.'
-              : 'Connect a mailbox first. Until then nothing can be sent.'}
+              : mailboxAvailable
+                ? 'Connect a mailbox first. Until then nothing can be sent.'
+                : 'Sending from your own email isn’t available yet. Autopilot can still write messages for you to look at.'}
         </p>
       </div>
       {canConfigure && (

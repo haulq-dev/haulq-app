@@ -7,7 +7,7 @@
  * someone demoing this and taking it for a real account switcher.
  */
 
-import { canReviewOutbound, usePendingApprovalCount } from '@haulq/client';
+import { canReviewOutbound, usePendingApprovalCount, isOfficeRole } from '@haulq/client';
 import { Link, useRouterState } from '@tanstack/react-router';
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
@@ -47,6 +47,9 @@ const PRIMARY_NAV = [
  * something to do.
  */
 const AUTOPILOT_NAV = { to: '/autopilot', label: 'Autopilot' } as const;
+
+/** What a driver's nav keeps: their own loads and their paperwork. */
+const DRIVER_NAV = new Set<string>(['/loads', '/documents']);
 
 const FLEET_NAV = [
   { to: '/trucks', label: 'Trucks' },
@@ -193,6 +196,22 @@ function MenuIcon({ open }: { open: boolean }) {
 /** One item in either the inline row or the mobile drawer. */
 type NavItem = { to: string; label: string; badge?: number };
 
+/**
+ * Which nav a role gets. A driver sees their loads and their paperwork,
+ * nothing account-wide: Insights, Pay, Activity, costs and people are the
+ * office's, and the API refuses a driver on the money ones, so a link would
+ * only lead to an error. Autopilot is added separately (it also needs a paid
+ * account).
+ */
+export function navFor(role: string | undefined): { primary: NavItem[]; fleet: readonly NavItem[]; account: readonly NavItem[] } {
+  const office = isOfficeRole(role);
+  return {
+    primary: office ? [...PRIMARY_NAV] : PRIMARY_NAV.filter((item) => DRIVER_NAV.has(item.to)),
+    fleet: office ? FLEET_NAV : [],
+    account: office ? ACCOUNT_NAV : [],
+  };
+}
+
 function isActive(pathname: string, to: string): boolean {
   return pathname.startsWith(to);
 }
@@ -276,12 +295,12 @@ export function Shell({ children }: { children: ReactNode }) {
   // unpaid one is shown the plans screen instead of anything in the nav).
   const showAutopilot = canReviewOutbound(currentOrg?.role) && currentOrg?.status === 'active';
   const pending = usePendingApprovalCount({ enabled: showAutopilot });
-  const primaryNav: NavItem[] = [
-    ...PRIMARY_NAV,
-    ...(showAutopilot ? [{ ...AUTOPILOT_NAV, badge: pending.data ?? 0 }] : []),
-  ];
+  const sections = navFor(currentOrg?.role);
+  const primaryNav: NavItem[] = [...sections.primary, ...(showAutopilot ? [{ ...AUTOPILOT_NAV, badge: pending.data ?? 0 }] : [])];
+  const fleetNav = sections.fleet;
+  const accountNav = sections.account;
   /** Every item, flattened: the mobile drawer has room for a flat list and nothing to gain from nesting it. */
-  const allNav: NavItem[] = [...primaryNav, ...FLEET_NAV, ...ACCOUNT_NAV];
+  const allNav: NavItem[] = [...primaryNav, ...fleetNav, ...accountNav];
 
   /**
    * The saved org isn't one this login belongs to. That happens when a
@@ -381,8 +400,8 @@ export function Shell({ children }: { children: ReactNode }) {
               on PRIMARY_NAV for why this is three groups, not one flat row. */}
           <nav className="hidden items-center gap-1 md:flex">
             {primaryNav.map((item) => navLink(item, false))}
-            <NavDropdown label="Fleet" items={FLEET_NAV} pathname={pathname} />
-            <NavDropdown label="Account" items={ACCOUNT_NAV} pathname={pathname} />
+            {fleetNav.length > 0 && <NavDropdown label="Fleet" items={fleetNav} pathname={pathname} />}
+            {accountNav.length > 0 && <NavDropdown label="Account" items={accountNav} pathname={pathname} />}
           </nav>
 
           <div className="ml-auto flex shrink-0 items-center gap-1">

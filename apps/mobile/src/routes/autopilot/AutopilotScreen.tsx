@@ -26,6 +26,7 @@ import {
   canConfigureOutbound,
   canReviewOutbound,
   groupMessages,
+  mailboxOffered,
   useMailbox,
   useOutboundEvidence,
   useOutboundMessages,
@@ -101,7 +102,14 @@ export function AutopilotScreen() {
       </div>
 
       <SendingStatus settings={settings.data} isOwner={isOwner} />
-      {isOwner && <SetupNote settings={settings.data} mailboxConnected={mailbox.data?.connected} mailboxKnown={!mailbox.isLoading} />}
+      {isOwner && (
+        <SetupNote
+          settings={settings.data}
+          mailboxConnected={mailbox.data?.connected}
+          mailboxAvailable={mailboxOffered(mailbox.data)}
+          mailboxKnown={!mailbox.isLoading}
+        />
+      )}
       <ErrorNote error={settings.error ?? messages.error} />
 
       <div role="tablist" className="flex gap-1 rounded-[var(--radius-sm)] bg-card p-1 shadow-[inset_0_0_0_1px_var(--color-line)]">
@@ -209,10 +217,13 @@ function SendingStatus({ settings, isOwner }: { settings: OutboundSettingsRespon
 function SetupNote({
   settings,
   mailboxConnected,
+  mailboxAvailable,
   mailboxKnown,
 }: {
   settings: OutboundSettingsResponse | undefined;
   mailboxConnected: boolean | undefined;
+  /** False while there's no mailbox provider on HaulQ's side: then there's nothing to connect. */
+  mailboxAvailable: boolean;
   mailboxKnown: boolean;
 }) {
   if (!settings || !mailboxKnown) return null;
@@ -220,7 +231,7 @@ function SetupNote({
   if (!settings.autopilotRunning) {
     return note('Autopilot is not switched on for this HaulQ server yet, so nothing new will be written until it is.');
   }
-  if (mailboxConnected === false) {
+  if (mailboxAvailable && mailboxConnected === false) {
     return note(
       <>
         Connect your mailbox to get Autopilot started.{' '}

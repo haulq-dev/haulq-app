@@ -1,9 +1,9 @@
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor } from '@testing-library/react';
+import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { request } from '../lib/api.ts';
 import { InsightsScreen } from './Insights.tsx';
+import { renderScreen as renderWithClient } from '../test-utils.tsx';
 
 vi.mock('../lib/api.ts', async () => {
   const actual = await vi.importActual<typeof import('../lib/api.ts')>('../lib/api.ts');
@@ -53,12 +53,7 @@ function aResponse(overrides: Partial<Record<string, unknown>> = {}) {
 }
 
 function renderScreen() {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(
-    <QueryClientProvider client={client}>
-      <InsightsScreen />
-    </QueryClientProvider>,
-  );
+  return renderWithClient(<InsightsScreen />);
 }
 
 describe('InsightsScreen — action queue', () => {

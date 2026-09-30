@@ -42,7 +42,7 @@ export function AccountScreen() {
               <NavRow to="/carrier" label="Carrier and costs" hint="MC and DOT, paperwork email, cost per mile" />
               <NavRow to="/activity" label="Activity" hint="Everything that happened, in plain words" />
               {canDispatch(role) && (
-                <NavRow to="/integrations" label="Connected services" hint="Motive, and your work mailbox" />
+                <NavRow to="/integrations" label="Connected services" hint="Motive, and other services" />
               )}
               <NavRow to="/notifications" label="Notifications" hint="Which alerts this phone gets" />
               {canDispatch(role) && <NavRow to="/setup" label="Setting up" hint="What's left to set up, and what it unlocks" />}
