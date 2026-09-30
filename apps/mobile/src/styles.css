@@ -133,6 +133,28 @@ h3 {
     outline-offset: 0;
   }
 
+  /* iOS draws date and time inputs as a native control with its own sizing.
+     Left alone, it ignores `width: 100%` and runs off the right edge of the
+     card, and an empty one collapses to almost no height, so it reads as a
+     blank white strip rather than a field. `appearance: none` makes it size
+     like the other inputs; the min-height keeps an empty one field-sized;
+     the value is left-aligned to match every other input. */
+  .hq-input[type='date'],
+  .hq-input[type='datetime-local'],
+  .hq-input[type='time'] {
+    -webkit-appearance: none;
+    appearance: none;
+    display: block;
+    min-width: 0;
+    max-width: 100%;
+    min-height: 3rem;
+    text-align: left;
+  }
+  .hq-input::-webkit-date-and-time-value {
+    text-align: left;
+    min-height: 1.5rem;
+  }
+
   /* The one thing a WebView never gives you for free: a native-feeling
      tap. Fast scale-down on press, same idea iOS's own UIKit controls use,
      restored by `active:scale-100` in markup rather than a CSS reset here —
