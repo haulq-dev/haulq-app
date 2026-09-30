@@ -701,6 +701,15 @@ export async function removeMember(s: Scope, userId: string): Promise<void> {
       );
     }
 
+    // Removing yourself is refused here, not only hidden in the screens. Both
+    // apps once hid the button by comparing against a session id that, under
+    // Clerk, was a placeholder, so an owner could remove their own access. A
+    // second owner removes you. Checked after the last-owner rule, whose
+    // explanation says more when both apply.
+    if (tx.ctx.actor.type === 'user' && tx.ctx.actor.id === userId) {
+      throw new MemberError('self_removal', `user ${userId} tried to remove themselves`, 'You can’t remove yourself. Another owner can.');
+    }
+
     // Deleted rather than suspended. `org_memberships` is the access model, not
     // a record of who was ever here — the event log is that, and it keeps the
     // removal with its actor and timestamp.

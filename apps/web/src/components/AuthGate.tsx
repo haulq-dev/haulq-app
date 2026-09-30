@@ -99,7 +99,8 @@ export interface OrgSummary {
 export function useOrgs() {
   return useQuery({
     queryKey: ['orgs'],
-    queryFn: () => request<{ items: OrgSummary[] }>('/v1/orgs'),
+    // `userId` is this login's HaulQ user id: which member row is "you".
+    queryFn: () => request<{ items: OrgSummary[]; userId?: string }>('/v1/orgs'),
   });
 }
 

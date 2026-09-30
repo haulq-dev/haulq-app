@@ -9,7 +9,7 @@ import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 
-const session = { current: { userId: 'me', orgId: 'o', orgName: 'Acme' } };
+const session = { current: { userId: 'clerk', orgId: 'o', orgName: 'Acme' } };
 const role = { current: 'owner' };
 
 vi.mock('../lib/api.ts', async () => {
@@ -18,7 +18,11 @@ vi.mock('../lib/api.ts', async () => {
 });
 vi.mock('../components/AuthGate.tsx', () => ({
   useSession: () => session.current,
-  useOrgs: () => ({ isLoading: false, data: { items: [{ id: 'o', name: 'Acme', role: role.current, status: 'active', plan: 'fleet' }] } }),
+  useOrgs: () => ({
+    isLoading: false,
+    // `userId` is the real one; the session's is Clerk's placeholder, as in production.
+    data: { userId: 'me', items: [{ id: 'o', name: 'Acme', role: role.current, status: 'active', plan: 'fleet' }] },
+  }),
 }));
 vi.mock('@tanstack/react-router', () => ({
   Link: ({ children, to }: { children: React.ReactNode; to: string }) => <a href={to}>{children}</a>,
@@ -141,6 +145,29 @@ describe('Pay (web)', () => {
 });
 
 describe('People (web)', () => {
+  it('never offers removing yourself, even when another owner exists', async () => {
+    answerRequests({
+      '/v1/members': {
+        members: {
+          items: [
+            { userId: 'me', email: 'me@example.com', fullName: 'Me Owner', role: 'owner', acceptedAt: null },
+            { userId: 'other', email: 'o@example.com', fullName: 'Other Owner', role: 'owner', acceptedAt: null },
+          ],
+          nextCursor: null,
+        },
+        invitations: { items: [], nextCursor: null },
+      },
+      '/v1/drivers': { items: [], nextCursor: null },
+    });
+    renderScreen(<MembersScreen />);
+
+    const mine = (await screen.findByText('Me Owner')).closest('tr')!;
+    expect(within(mine).getByText('you')).toBeInTheDocument();
+    expect(within(mine).queryByRole('button', { name: 'Remove' })).not.toBeInTheDocument();
+    const theirs = screen.getByText('Other Owner').closest('tr')!;
+    expect(within(theirs).getByRole('button', { name: 'Remove' })).toBeInTheDocument();
+  });
+
   it('protects the only owner, and hands out an invite link', async () => {
     answerRequests({
       '/v1/members': {

@@ -13,7 +13,11 @@ vi.mock('../../lib/api.ts', async () => {
 });
 vi.mock('../../lib/haptics.ts', () => ({ tapFeedback: vi.fn(), successFeedback: vi.fn() }));
 vi.mock('../../lib/share.ts', () => ({ shareOrCopy: vi.fn().mockResolvedValue('shared'), WEB_ORIGIN: 'https://app.haulq.ai' }));
-vi.mock('../../components/AuthGate.tsx', () => ({ useSession: () => session.current }));
+vi.mock('../../components/AuthGate.tsx', () => ({
+  useSession: () => session.current,
+  // The real user id, which the session may not carry under Clerk.
+  useOrgs: () => ({ data: { items: [], userId: 'me' } }),
+}));
 vi.mock('@tanstack/react-router', () => ({
   Link: ({ children, to }: { children: React.ReactNode; to: string }) => <a href={to}>{children}</a>,
   useParams: () => params.current,

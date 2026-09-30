@@ -62,6 +62,7 @@ const STATUS: Record<string, number> = {
   already_member: 409,
   already_accepted: 409,
   last_owner: 409,
+  self_removal: 409,
   driver_already_linked: 409,
   revoked: 410,
   expired: 410,
@@ -259,7 +260,10 @@ export async function memberRoutes(app: FastifyInstance) {
       if (!authed) {
         throw new HttpError(401, 'unauthenticated', 'Sign in to see your accounts.');
       }
-      return { items: await orgsForUser(app.db, authed.actor.id) };
+      // `userId` is who is asking. The apps need it to tell which member row
+      // is "you" (no removing yourself, no demoting yourself by accident); a
+      // Clerk session in the browser only knows its Clerk id.
+      return { items: await orgsForUser(app.db, authed.actor.id), userId: authed.actor.id };
     },
   );
 }

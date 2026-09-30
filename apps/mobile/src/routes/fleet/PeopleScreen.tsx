@@ -35,13 +35,16 @@ import {
 } from '@haulq/client';
 import { Link } from '@tanstack/react-router';
 import { useState } from 'react';
-import { useSession } from '../../components/AuthGate.tsx';
+import { useOrgs, useSession } from '../../components/AuthGate.tsx';
 import { InviteLink } from '../../components/InviteLink.tsx';
 import { Card, Empty, ErrorNote, Field, LoadMore, Pill } from '../../components/ui.tsx';
 
 export function PeopleScreen() {
   const session = useSession();
-  const me = { userId: session?.userId, role: session?.role };
+  // From `/v1/orgs`: the session's user id can be a placeholder under Clerk,
+  // which never matched your own row.
+  const orgs = useOrgs();
+  const me = { userId: orgs.data?.userId ?? session?.userId, role: session?.role };
   const members = useMembers();
   const invitations = useInvitations();
   const memberList = members.data?.pages.flatMap((p) => p.members.items) ?? [];

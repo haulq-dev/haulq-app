@@ -261,7 +261,9 @@ export function MembersScreen() {
    * without the person signing out and back in.
    */
   const myRole = orgs.data?.items.find((o) => o.id === session?.orgId)?.role;
-  const me = { userId: session?.userId, role: myRole };
+  // From `/v1/orgs`, not the session: under Clerk the session's user id is a
+  // placeholder, so comparing against it never found your own row.
+  const me = { userId: orgs.data?.userId ?? session?.userId, role: myRole };
   const canInvite = canDispatch(myRole);
 
   const list = members.data?.pages.flatMap((p) => p.members.items) ?? [];

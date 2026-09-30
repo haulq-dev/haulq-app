@@ -144,7 +144,8 @@ export function useOrgs(options: { enabled?: boolean } = {}) {
   const client = useApiClient();
   return useQuery({
     queryKey: queryKeys.orgs,
-    queryFn: () => client.request<{ items: OrgSummary[] }>('/v1/orgs'),
+    // `userId` is this login's HaulQ user id: which member row is "you".
+    queryFn: () => client.request<{ items: OrgSummary[]; userId?: string }>('/v1/orgs'),
     enabled: options.enabled ?? true,
   });
 }
