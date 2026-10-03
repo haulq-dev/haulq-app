@@ -16,7 +16,9 @@
  * `--role dispatcher` instead of the default owner, if the reviewer should not
  * see the money controls. `--activate` marks the kept carrier active when it
  * is still trialing (a manual comp; nothing gets past the paywall otherwise).
- * `--include-loads` also retires other carriers that have loads.
+ * `--include-loads` also retires other carriers that have loads, and
+ * `--include-comped` ones that are active with no Stripe subscription.
+ * `--keep` can name a carrier the login isn't in yet; it is added.
  */
 
 import { closeDatabase, createDatabase } from '@haulq/db';
@@ -36,7 +38,7 @@ async function main() {
   const role = (arg('role') ?? 'owner') as (typeof ROLES)[number];
   if (!email || !keep || !ROLES.includes(role)) {
     console.log(
-      'Usage: prepare-review-account.ts --email <login email> --keep "<carrier name or id prefix>" [--user user_...] [--role owner|dispatcher] [--activate] [--include-loads] [--apply]',
+      'Usage: prepare-review-account.ts --email <login email> --keep "<carrier name or id prefix>" [--user user_...] [--role owner|dispatcher] [--activate] [--include-loads] [--include-comped] [--apply]',
     );
     process.exitCode = 1;
     return;
@@ -51,6 +53,7 @@ async function main() {
       role,
       activate: flag('activate'),
       includeLoads: flag('include-loads'),
+      includeComped: flag('include-comped'),
       ...(arg('user') ? { user: arg('user')! } : {}),
       apply: flag('apply'),
       log: (l) => console.log(l),

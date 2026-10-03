@@ -20,6 +20,7 @@ import {
   getTestUser,
   inviteMember,
   orgsForUser,
+  retireRefusal,
   setTestOrgStatus,
   testScope,
   upsertUserFromIdentity,
@@ -231,5 +232,87 @@ suite('prepareReviewAccount with several user rows for one email', () => {
       orgs.map((o) => ({ id: o.id, role: o.role, status: o.status })),
       [{ id: orgIds.keep, role: 'owner', status: 'active' }],
     );
+  });
+});
+
+/**
+ * The second fix of 2026-10-02: the reviewer belongs in the well-stocked demo
+ * carrier someone else owns, not the one-load carrier it was comped into.
+ * `--keep` finds a carrier the login isn't in and adds it; `--include-comped`
+ * retires the comped one so the picker doesn't come back.
+ */
+suite('prepareReviewAccount keeping a carrier the login is not in', () => {
+  let db: Database;
+  let reviewer: string;
+  let email: string;
+  let stocker: string;
+  const orgIds: Record<string, string> = {};
+  const lines: string[] = [];
+  const log = (l: string) => lines.push(l);
+
+  before(async () => {
+    db = createDatabase({ url: url! });
+    reviewer = (await createTestUser(db)).id;
+    email = (await getTestUser(db, reviewer))!.email;
+    stocker = (await createTestUser(db)).id;
+
+    orgIds.stocked = (await createTestOrg(db, 'Demo (test data) external')).id;
+    await setTestOrgStatus(db, { orgId: orgIds.stocked, status: 'active' });
+    await addTestMembership(db, { orgId: orgIds.stocked, userId: stocker, role: 'owner' });
+
+    orgIds.comped = (await createTestOrg(db, 'Demo comped')).id;
+    await setTestOrgStatus(db, { orgId: orgIds.comped, status: 'active' });
+    await addTestMembership(db, { orgId: orgIds.comped, userId: reviewer, role: 'owner' });
+    await createLoad(testScope(db, orgIds.comped, { type: 'user', id: reviewer }), {
+      stops: [
+        { type: 'pickup', city: 'Wichita', state: 'KS' },
+        { type: 'delivery', city: 'Denver', state: 'CO' },
+      ],
+    });
+  });
+
+  after(async () => {
+    for (const id of Object.values(orgIds)) await destroyTestOrg(db, id);
+    await destroyTestUser(db, reviewer);
+    await destroyTestUser(db, stocker);
+    await closeDatabase(db);
+  });
+
+  it('leaves a comped carrier alone without --include-comped', async () => {
+    await prepareReviewAccount(db, { email, keep: orgIds.stocked!.slice(0, 8), role: 'owner', includeLoads: true, apply: false, log });
+    assert.ok(lines.some((l) => l.includes('none of these logins is in yet')));
+    assert.ok(lines.some((l) => l.includes('adding user') && l.includes('as owner')));
+    assert.ok(lines.some((l) => l.includes('leave "Demo comped"') && l.includes('comped')));
+  });
+
+  it('adds the login to the kept carrier and retires the comped one', async () => {
+    const result = await prepareReviewAccount(db, {
+      email,
+      keep: orgIds.stocked!.slice(0, 8),
+      role: 'owner',
+      includeLoads: true,
+      includeComped: true,
+      apply: true,
+      log,
+    });
+    assert.equal(result.ok, true);
+    const orgs = await orgsForUser(db, reviewer);
+    assert.deepEqual(
+      orgs.map((o) => ({ id: o.id, role: o.role })),
+      [{ id: orgIds.stocked, role: 'owner' }],
+    );
+    assert.equal((await orgsForUser(db, stocker)).length, 1);
+  });
+});
+
+describe('retireRefusal', () => {
+  const base = { orgStatus: 'active', loadCount: 0, memberCount: 1, hasSubscription: true };
+  it('never retires a carrier with a Stripe subscription, whatever the flags', () => {
+    assert.match(retireRefusal(base, { includeLoads: true, includeComped: true })!, /Stripe subscription/);
+  });
+  it('retires a comped carrier only with includeComped', () => {
+    const comped = { ...base, hasSubscription: false };
+    assert.match(retireRefusal(comped)!, /comped/);
+    assert.equal(retireRefusal(comped, { includeComped: true }), null);
   });
 });

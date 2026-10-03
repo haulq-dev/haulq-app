@@ -34,6 +34,7 @@ import {
   activateOrg,
   changeRole,
   ensureMembership,
+  findOrgs,
   listInvitations,
   retireEmptyOrg,
   retireRefusal,
@@ -47,7 +48,11 @@ type Role = 'owner' | 'dispatcher' | 'driver' | 'accountant';
 
 export interface ReviewAccountOptions {
   email: string;
-  /** The carrier to keep: its exact name, or the start of its id. */
+  /**
+   * The carrier to keep: its exact name, or the start of its id. Looked for
+   * among the login's own carriers first, then among all carriers, so the
+   * login can be put into one it isn't in yet.
+   */
   keep: string;
   role: Role;
   /** Which user row signs in: its Clerk id (`user_...`) or the start of its HaulQ id. */
@@ -56,6 +61,8 @@ export interface ReviewAccountOptions {
   activate?: boolean;
   /** Retire other carriers even if they have loads. */
   includeLoads?: boolean;
+  /** Retire other carriers that are active with no Stripe subscription (comped). */
+  includeComped?: boolean;
   apply: boolean;
   log: (line: string) => void;
 }
@@ -76,18 +83,20 @@ export async function prepareReviewAccount(db: Database, o: ReviewAccountOptions
   for (const m of memberships) {
     o.log(`  ${m.orgId}  "${m.orgName}"  ${m.orgStatus}  as ${m.role} (user ${short(m.userId)})  · ${m.memberCount} member(s), ${m.loadCount} load(s)`);
   }
-  const rules = { includeLoads: o.includeLoads ?? false };
+  const rules = { includeLoads: o.includeLoads ?? false, includeComped: o.includeComped ?? false };
 
-  const keeps = memberships.filter((m) => m.orgName === o.keep || m.orgId.startsWith(o.keep));
+  const own = [...new Map(memberships.filter((m) => m.orgName === o.keep || m.orgId.startsWith(o.keep)).map((m) => [m.orgId, m])).values()];
+  const keeps = own.length > 0 ? own : await findOrgs(db, o.keep);
   if (keeps.length !== 1) {
     o.log(
       keeps.length === 0
-        ? `\nNo carrier called "${o.keep}" (or with an id starting ${o.keep}) among those. Nothing done.`
+        ? `\nNo carrier called "${o.keep}" (or with an id starting ${o.keep}). Nothing done.`
         : `\n"${o.keep}" matches ${keeps.length} carriers. Use an id prefix instead. Nothing done.`,
     );
     return { ok: false };
   }
   const keep = keeps[0]!;
+  if (own.length === 0) o.log(`\nKeeping "${keep.orgName}" (${keep.orgId}), ${keep.orgStatus}, which none of these logins is in yet.`);
   if (keep.orgStatus !== 'active' && !o.activate) {
     o.log(`\n"${keep.orgName}" is ${keep.orgStatus}, not active, so the reviewer would still see "Account not active". Add --activate to mark it active. Nothing done.`);
     return { ok: false };
