@@ -28,22 +28,41 @@ export interface AccountMembership {
 
 export interface EmailUser {
   id: string;
+  /** Clerk `user_...`: what a sign-in actually resolves to. */
+  externalAuthId: string;
   email: string;
   createdAt: Date;
-  lastSeenAt: Date | null;
 }
 
 /**
- * Every user row with this email, most recently seen first. Clerk can give
- * one person more than one: a deleted and re-made account, or a second
- * sign-in method. Only one of them is the account a sign-in reaches now.
+ * Every user row with this email, newest first. Clerk can give one person
+ * more than one: a deleted and re-made account, or a second sign-in method.
+ * Only one is the account a sign-in reaches now, and only the Clerk id says
+ * which: compare `externalAuthId` with the user in the Clerk dashboard.
+ * (Not `last_seen_at`: nothing writes it.)
  */
 export async function usersByEmail(db: Database, email: string): Promise<EmailUser[]> {
   return db
-    .select({ id: users.id, email: users.email, createdAt: users.createdAt, lastSeenAt: users.lastSeenAt })
+    .select({ id: users.id, externalAuthId: users.externalAuthId, email: users.email, createdAt: users.createdAt })
     .from(users)
     .where(sql`lower(${users.email}) = ${email.trim().toLowerCase()}`)
-    .orderBy(sql`${users.lastSeenAt} desc nulls last`, sql`${users.createdAt} desc`);
+    .orderBy(sql`${users.createdAt} desc`);
+}
+
+/**
+ * Make a user an active member of a carrier with this role, whether or not
+ * they had a membership there. For an operator putting a login into a
+ * carrier by hand; the product's own way in is an invitation.
+ */
+export async function ensureMembership(db: Database, args: { orgId: string; userId: string; role: 'owner' | 'dispatcher' | 'driver' | 'accountant' }): Promise<void> {
+  const now = new Date();
+  await db
+    .insert(orgMemberships)
+    .values({ orgId: args.orgId, userId: args.userId, role: args.role, status: 'active', acceptedAt: now })
+    .onConflictDoUpdate({
+      target: [orgMemberships.orgId, orgMemberships.userId],
+      set: { role: args.role, status: 'active', acceptedAt: now, updatedAt: now },
+    });
 }
 
 /** The carriers these logins actively belong to, not deleted, with what's in them. */

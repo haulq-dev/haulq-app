@@ -11,6 +11,8 @@
  *   ... the same, plus --apply
  *       does it
  *
+ * `--user user_...` (the Clerk id from the Clerk dashboard) is required when
+ * the email has more than one user row: it is the row a sign-in reaches.
  * `--role dispatcher` instead of the default owner, if the reviewer should not
  * see the money controls. `--activate` marks the kept carrier active when it
  * is still trialing (a manual comp; nothing gets past the paywall otherwise).
@@ -34,7 +36,7 @@ async function main() {
   const role = (arg('role') ?? 'owner') as (typeof ROLES)[number];
   if (!email || !keep || !ROLES.includes(role)) {
     console.log(
-      'Usage: prepare-review-account.ts --email <login email> --keep "<carrier name or id prefix>" [--role owner|dispatcher] [--activate] [--include-loads] [--apply]',
+      'Usage: prepare-review-account.ts --email <login email> --keep "<carrier name or id prefix>" [--user user_...] [--role owner|dispatcher] [--activate] [--include-loads] [--apply]',
     );
     process.exitCode = 1;
     return;
@@ -49,6 +51,7 @@ async function main() {
       role,
       activate: flag('activate'),
       includeLoads: flag('include-loads'),
+      ...(arg('user') ? { user: arg('user')! } : {}),
       apply: flag('apply'),
       log: (l) => console.log(l),
     });

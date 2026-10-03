@@ -19,8 +19,10 @@ import {
   destroyTestUser,
   getTestUser,
   inviteMember,
+  orgsForUser,
   setTestOrgStatus,
   testScope,
+  upsertUserFromIdentity,
   type Database,
 } from '@haulq/db';
 import { prepareReviewAccount } from './review-account.ts';
@@ -144,7 +146,7 @@ suite('prepareReviewAccount with --activate and --include-loads', () => {
 
   it('lists each user row and which one holds each carrier', async () => {
     await prepareReviewAccount(db, { email: reviewerEmail, keep: orgIds.keep!.slice(0, 8), role: 'owner', activate: true, apply: false, log });
-    assert.ok(lines.some((l) => l.startsWith(`  user ${reviewer.slice(0, 8)}`) && l.includes('last seen')));
+    assert.ok(lines.some((l) => l.startsWith(`  user ${reviewer.slice(0, 8)}`) && l.includes('clerk user_')));
     assert.ok(lines.some((l) => l.includes('"Demo kept"') && l.includes(`(user ${reviewer.slice(0, 8)})`)));
     assert.ok(lines.some((l) => l.includes('mark "Demo kept" active (now trialing)')));
     assert.ok(lines.some((l) => l.includes('leave "Demo other"') && l.includes('1 load(s)')));
@@ -166,6 +168,68 @@ suite('prepareReviewAccount with --activate and --include-loads', () => {
     assert.deepEqual(
       left.map((m) => ({ name: m.orgName, status: m.orgStatus })),
       [{ name: 'Demo kept', status: 'active' }],
+    );
+  });
+});
+
+/**
+ * What went wrong on 2026-10-02: the email had several user rows, the kept
+ * carrier was held by a stale one, and the row a sign-in actually reaches
+ * lost its only carrier to the retire step. Now the script won't apply
+ * without `--user`, and puts that row into the kept carrier.
+ */
+suite('prepareReviewAccount with several user rows for one email', () => {
+  let db: Database;
+  let stale: string;
+  let live: { id: string; externalAuthId: string };
+  let email: string;
+  const orgIds: Record<string, string> = {};
+  const lines: string[] = [];
+  const log = (l: string) => lines.push(l);
+
+  before(async () => {
+    db = createDatabase({ url: url! });
+    stale = (await createTestUser(db)).id;
+    email = (await getTestUser(db, stale))!.email;
+    const liveRow = await upsertUserFromIdentity(db, { externalAuthId: `user_live_${stale.slice(0, 8)}`, email });
+    live = { id: liveRow.id, externalAuthId: liveRow.externalAuthId };
+
+    orgIds.keep = (await createTestOrg(db, 'Demo held by the stale row')).id;
+    await setTestOrgStatus(db, { orgId: orgIds.keep, status: 'active' });
+    await addTestMembership(db, { orgId: orgIds.keep, userId: stale, role: 'owner' });
+    orgIds.liveTrial = (await createTestOrg(db, 'Demo held by the live row')).id;
+    await addTestMembership(db, { orgId: orgIds.liveTrial, userId: live.id, role: 'owner' });
+  });
+
+  after(async () => {
+    for (const id of Object.values(orgIds)) await destroyTestOrg(db, id);
+    await destroyTestUser(db, stale);
+    await destroyTestUser(db, live.id);
+    await closeDatabase(db);
+  });
+
+  it('refuses to guess which row signs in', async () => {
+    const result = await prepareReviewAccount(db, { email, keep: orgIds.keep!.slice(0, 8), role: 'owner', apply: true, log });
+    assert.equal(result.ok, false);
+    assert.ok(lines.some((l) => l.includes(`clerk ${live.externalAuthId}`)));
+    assert.ok(lines.some((l) => l.includes('--user user_')));
+    assert.equal((await orgsForUser(db, live.id)).length, 1);
+  });
+
+  it('puts the --user row into the kept carrier as owner', async () => {
+    const result = await prepareReviewAccount(db, {
+      email,
+      keep: orgIds.keep!.slice(0, 8),
+      role: 'owner',
+      user: live.externalAuthId,
+      apply: true,
+      log,
+    });
+    assert.equal(result.ok, true);
+    const orgs = await orgsForUser(db, live.id);
+    assert.deepEqual(
+      orgs.map((o) => ({ id: o.id, role: o.role, status: o.status })),
+      [{ id: orgIds.keep, role: 'owner', status: 'active' }],
     );
   });
 });
