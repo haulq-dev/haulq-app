@@ -14,7 +14,15 @@
  */
 
 import { Link, useRouterState } from '@tanstack/react-router';
-import { canDispatch, canReviewOutbound, canWritePay, isSubscriptionActive, usePendingApprovalCount, type OrgSummary } from '@haulq/client';
+import {
+  canDispatch,
+  canReviewOutbound,
+  canWritePay,
+  isSubscriptionActive,
+  useOutboundSettings,
+  usePendingApprovalCount,
+  type OrgSummary,
+} from '@haulq/client';
 import { useEffect, type ReactNode } from 'react';
 import { writeSession } from '../lib/api.ts';
 // AuthGate imports `SubscriptionGate` back from here. The cycle is safe
@@ -176,22 +184,34 @@ export function showsTabBar(role: string | undefined): boolean {
 }
 
 /** The tabs a role sees, in order. */
-export function tabsFor(role: string | undefined): readonly Tab[] {
-  return TABS.filter((tab) => tab.roles === undefined || tab.roles(role));
+/**
+ * The tabs a role sees, in order. `autopilot: false` drops the Autopilot tab:
+ * while Autopilot isn't running on the server, the tab can only say so, and a
+ * tab whose whole content is "this isn't on" reads as an unfinished feature
+ * (App Review Guideline 2.1). It comes back by itself once the server runs it.
+ */
+export function tabsFor(role: string | undefined, options: { autopilot?: boolean } = {}): readonly Tab[] {
+  return TABS.filter(
+    (tab) => (tab.roles === undefined || tab.roles(role)) && (tab.to !== '/autopilot' || options.autopilot !== false),
+  );
 }
 
 export function TabBar({ role }: { role: string | undefined }) {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   // Only asked of the roles that can act on it. The count is what tells
   // someone there is something to approve without opening the tab.
-  const waiting = usePendingApprovalCount({ enabled: canReviewOutbound(role) });
+  const settings = useOutboundSettings({ enabled: canReviewOutbound(role) });
+  // Shown only once the server says Autopilot is running, so the tab never
+  // appears and then vanishes while that answer loads.
+  const autopilot = settings.data?.autopilotRunning === true;
+  const waiting = usePendingApprovalCount({ enabled: canReviewOutbound(role) && autopilot });
   return (
     <nav
       aria-label="Main"
       className="fixed inset-x-0 bottom-0 z-10 border-t border-line bg-card/95 pb-[env(safe-area-inset-bottom)] backdrop-blur"
     >
       <ul className="mx-auto flex max-w-md">
-        {tabsFor(role).map((tab) => {
+        {tabsFor(role, { autopilot }).map((tab) => {
           const active = tab.isActive(pathname);
           const badge = tab.to === '/autopilot' ? (waiting.data ?? 0) : 0;
           return (

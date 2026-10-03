@@ -148,6 +148,11 @@ describe('tabsFor', () => {
     expect(labels('driver')).not.toContain('Pay');
   });
 
+  it('drops the Autopilot tab while Autopilot is not running on the server', () => {
+    expect(tabsFor('owner', { autopilot: false }).map((t) => t.label)).toEqual(['Loads', 'Documents', 'Pay', 'More']);
+    expect(tabsFor('owner', { autopilot: true }).map((t) => t.label)).toContain('Autopilot');
+  });
+
   it('keeps the tabs everyone already had, in order, with More last', () => {
     expect(labels('owner')).toEqual(['Loads', 'Documents', 'Pay', 'Autopilot', 'More']);
     expect(labels('accountant')).toEqual(['Loads', 'Documents', 'Pay', 'Autopilot', 'More']);
