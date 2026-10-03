@@ -100,3 +100,72 @@ suite('prepareReviewAccount', () => {
     assert.ok(lines.some((l) => l.includes('as owner (already)')));
   });
 });
+
+/**
+ * The real review login's shape: every carrier still trialing, two of them
+ * with a load each. `--activate` comps the kept one; `--include-loads` lets
+ * the other loaded one go too.
+ */
+suite('prepareReviewAccount with --activate and --include-loads', () => {
+  let db: Database;
+  let reviewer: string;
+  let reviewerEmail: string;
+  const orgIds: Record<string, string> = {};
+  const lines: string[] = [];
+  const log = (l: string) => lines.push(l);
+
+  async function withLoad(name: string) {
+    const id = (await createTestOrg(db, name)).id;
+    await addTestMembership(db, { orgId: id, userId: reviewer, role: 'owner' });
+    await createLoad(testScope(db, id, { type: 'user', id: reviewer }), {
+      stops: [
+        { type: 'pickup', city: 'Wichita', state: 'KS' },
+        { type: 'delivery', city: 'Denver', state: 'CO' },
+      ],
+    });
+    return id;
+  }
+
+  before(async () => {
+    db = createDatabase({ url: url! });
+    reviewer = (await createTestUser(db)).id;
+    reviewerEmail = (await getTestUser(db, reviewer))!.email;
+    orgIds.keep = await withLoad('Demo kept');
+    orgIds.otherLoaded = await withLoad('Demo other');
+    orgIds.empty = (await createTestOrg(db, 'Demo2 empty')).id;
+    await addTestMembership(db, { orgId: orgIds.empty, userId: reviewer, role: 'owner' });
+  });
+
+  after(async () => {
+    for (const id of Object.values(orgIds)) await destroyTestOrg(db, id);
+    await destroyTestUser(db, reviewer);
+    await closeDatabase(db);
+  });
+
+  it('lists each user row and which one holds each carrier', async () => {
+    await prepareReviewAccount(db, { email: reviewerEmail, keep: orgIds.keep!.slice(0, 8), role: 'owner', activate: true, apply: false, log });
+    assert.ok(lines.some((l) => l.startsWith(`  user ${reviewer.slice(0, 8)}`) && l.includes('last seen')));
+    assert.ok(lines.some((l) => l.includes('"Demo kept"') && l.includes(`(user ${reviewer.slice(0, 8)})`)));
+    assert.ok(lines.some((l) => l.includes('mark "Demo kept" active (now trialing)')));
+    assert.ok(lines.some((l) => l.includes('leave "Demo other"') && l.includes('1 load(s)')));
+  });
+
+  it('activates the kept carrier and, with --include-loads, retires the loaded one', async () => {
+    const result = await prepareReviewAccount(db, {
+      email: reviewerEmail,
+      keep: orgIds.keep!.slice(0, 8),
+      role: 'owner',
+      activate: true,
+      includeLoads: true,
+      apply: true,
+      log,
+    });
+    assert.equal(result.ok, true);
+
+    const left = await accountMemberships(db, [reviewer]);
+    assert.deepEqual(
+      left.map((m) => ({ name: m.orgName, status: m.orgStatus })),
+      [{ name: 'Demo kept', status: 'active' }],
+    );
+  });
+});

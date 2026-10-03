@@ -15,6 +15,8 @@ import { loads } from '../schema/loads.ts';
 import { orgMemberships, orgs, users } from '../schema/tenancy.ts';
 
 export interface AccountMembership {
+  /** Which of the email's user rows holds this membership. */
+  userId: string;
   orgId: string;
   orgName: string;
   orgStatus: string;
@@ -24,19 +26,31 @@ export interface AccountMembership {
   loadCount: number;
 }
 
-/** Every user row with this email. Clerk can give one person more than one. */
-export async function usersByEmail(db: Database, email: string): Promise<{ id: string; email: string }[]> {
+export interface EmailUser {
+  id: string;
+  email: string;
+  createdAt: Date;
+  lastSeenAt: Date | null;
+}
+
+/**
+ * Every user row with this email, most recently seen first. Clerk can give
+ * one person more than one: a deleted and re-made account, or a second
+ * sign-in method. Only one of them is the account a sign-in reaches now.
+ */
+export async function usersByEmail(db: Database, email: string): Promise<EmailUser[]> {
   return db
-    .select({ id: users.id, email: users.email })
+    .select({ id: users.id, email: users.email, createdAt: users.createdAt, lastSeenAt: users.lastSeenAt })
     .from(users)
-    .where(sql`lower(${users.email}) = ${email.trim().toLowerCase()}`);
+    .where(sql`lower(${users.email}) = ${email.trim().toLowerCase()}`)
+    .orderBy(sql`${users.lastSeenAt} desc nulls last`, sql`${users.createdAt} desc`);
 }
 
 /** The carriers these logins actively belong to, not deleted, with what's in them. */
 export async function accountMemberships(db: Database, userIds: readonly string[]): Promise<AccountMembership[]> {
   if (userIds.length === 0) return [];
   const rows = await db
-    .select({ orgId: orgs.id, orgName: orgs.name, orgStatus: orgs.status, role: orgMemberships.role })
+    .select({ userId: orgMemberships.userId, orgId: orgs.id, orgName: orgs.name, orgStatus: orgs.status, role: orgMemberships.role })
     .from(orgMemberships)
     .innerJoin(orgs, eq(orgs.id, orgMemberships.orgId))
     .where(and(inArray(orgMemberships.userId, [...userIds]), eq(orgMemberships.status, 'active'), isNull(orgs.deletedAt)));
@@ -53,10 +67,18 @@ export async function accountMemberships(db: Database, userIds: readonly string[
   return out;
 }
 
+export interface RetireRules {
+  /** Retire a carrier that has loads. Off by default: loads are real work. */
+  includeLoads?: boolean;
+}
+
 /** Why a carrier can't be retired, or null when it can. */
-export function retireRefusal(m: Pick<AccountMembership, 'orgStatus' | 'loadCount' | 'memberCount'>): string | null {
+export function retireRefusal(
+  m: Pick<AccountMembership, 'orgStatus' | 'loadCount' | 'memberCount'>,
+  rules: RetireRules = {},
+): string | null {
   if (m.orgStatus === 'active') return 'it has an active subscription';
-  if (m.loadCount > 0) return `it has ${m.loadCount} load(s)`;
+  if (m.loadCount > 0 && !rules.includeLoads) return `it has ${m.loadCount} load(s)`;
   if (m.memberCount > 1) return `it has ${m.memberCount} members`;
   return null;
 }
@@ -68,7 +90,7 @@ export function retireRefusal(m: Pick<AccountMembership, 'orgStatus' | 'loadCoun
  * same rules as `retireRefusal` inside the write, so a carrier that gained a
  * load or a member since the plan was printed is left alone.
  */
-export async function retireEmptyOrg(db: Database, orgId: string): Promise<boolean> {
+export async function retireEmptyOrg(db: Database, orgId: string, rules: RetireRules = {}): Promise<boolean> {
   return db.transaction(async (tx) => {
     const [org] = await tx.select({ status: orgs.status, deletedAt: orgs.deletedAt }).from(orgs).where(eq(orgs.id, orgId));
     if (!org || org.deletedAt) return false;
@@ -77,8 +99,19 @@ export async function retireEmptyOrg(db: Database, orgId: string): Promise<boole
       .from(orgMemberships)
       .where(and(eq(orgMemberships.orgId, orgId), eq(orgMemberships.status, 'active')));
     const [loadRows] = await tx.select({ n: count() }).from(loads).where(eq(loads.orgId, orgId));
-    if (retireRefusal({ orgStatus: String(org.status), loadCount: Number(loadRows?.n ?? 0), memberCount: Number(members?.n ?? 0) })) return false;
+    if (retireRefusal({ orgStatus: String(org.status), loadCount: Number(loadRows?.n ?? 0), memberCount: Number(members?.n ?? 0) }, rules)) return false;
     await tx.update(orgs).set({ deletedAt: new Date() }).where(eq(orgs.id, orgId));
     return true;
   });
+}
+
+/**
+ * Mark one carrier active with no subscription behind it: a manual comp, by
+ * an operator, for a demo carrier such as App Review's. Only `active` gets
+ * past the paywall (`SubscriptionGate`, `REQUIRE_ACTIVE_SUBSCRIPTION`).
+ * Billing webhooks reach an org through its Stripe customer, so one with no
+ * subscription stays as set here.
+ */
+export async function activateOrg(db: Database, orgId: string): Promise<void> {
+  await db.update(orgs).set({ status: 'active' }).where(eq(orgs.id, orgId));
 }

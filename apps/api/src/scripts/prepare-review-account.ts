@@ -5,14 +5,16 @@
  * production DATABASE_URL:
  *
  *   node --experimental-strip-types apps/api/src/scripts/prepare-review-account.ts \
- *     --email emmanuel234432@gmail.com --keep "Demo (test data)"
+ *     --email emmanuel234432@gmail.com --keep <carrier id prefix>
  *       prints the plan, changes nothing
  *
  *   ... the same, plus --apply
  *       does it
  *
  * `--role dispatcher` instead of the default owner, if the reviewer should not
- * see the money controls.
+ * see the money controls. `--activate` marks the kept carrier active when it
+ * is still trialing (a manual comp; nothing gets past the paywall otherwise).
+ * `--include-loads` also retires other carriers that have loads.
  */
 
 import { closeDatabase, createDatabase } from '@haulq/db';
@@ -31,14 +33,25 @@ async function main() {
   const keep = arg('keep');
   const role = (arg('role') ?? 'owner') as (typeof ROLES)[number];
   if (!email || !keep || !ROLES.includes(role)) {
-    console.log('Usage: prepare-review-account.ts --email <login email> --keep "<carrier name or id prefix>" [--role owner|dispatcher] [--apply]');
+    console.log(
+      'Usage: prepare-review-account.ts --email <login email> --keep "<carrier name or id prefix>" [--role owner|dispatcher] [--activate] [--include-loads] [--apply]',
+    );
     process.exitCode = 1;
     return;
   }
 
   const db = createDatabase({ url: loadEnv().DATABASE_URL });
   try {
-    const { ok } = await prepareReviewAccount(db, { email, keep, role, apply: process.argv.includes('--apply'), log: (l) => console.log(l) });
+    const flag = (name: string) => process.argv.includes(`--${name}`);
+    const { ok } = await prepareReviewAccount(db, {
+      email,
+      keep,
+      role,
+      activate: flag('activate'),
+      includeLoads: flag('include-loads'),
+      apply: flag('apply'),
+      log: (l) => console.log(l),
+    });
     if (!ok) process.exitCode = 1;
   } finally {
     await closeDatabase(db);
