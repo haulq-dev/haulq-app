@@ -19,6 +19,7 @@ import {
   createTestUser,
   destroyTestOrg,
   destroyTestUser,
+  setTestOrgStatus,
   testScope,
 } from '../testing.ts';
 import { updateBrokerDetentionThreshold } from './brokers.ts';
@@ -753,6 +754,9 @@ suite('track repository', () => {
   });
 
   describe('findDetentionCandidates / raiseDetentionAlert', () => {
+    before(() => setTestOrgStatus(db, { orgId, status: 'active' }));
+    after(() => setTestOrgStatus(db, { orgId, status: 'trialing' }));
+
     /**
      * A dispatched load with a driver already on site at stop 1,
      * `minutesAgo` in the past — on its own, uniquely-named broker, not
@@ -791,6 +795,17 @@ suite('track repository', () => {
       const candidate = candidates.find((c) => c.loadId === load.id);
       assert.ok(candidate);
       assert.ok(candidate!.detentionMinutes >= 29 && candidate!.detentionMinutes <= 31);
+    });
+
+    it('skips a carrier without an active subscription', async () => {
+      const { load } = await anOnSiteLoad(150);
+      await setTestOrgStatus(db, { orgId, status: 'trialing' });
+      try {
+        assert.ok(!(await findDetentionCandidates(db)).some((c) => c.loadId === load.id));
+      } finally {
+        await setTestOrgStatus(db, { orgId, status: 'active' });
+      }
+      assert.ok((await findDetentionCandidates(db)).some((c) => c.loadId === load.id));
     });
 
     it('does not flag a stop still inside free time', async () => {

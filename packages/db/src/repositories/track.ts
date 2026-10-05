@@ -1205,7 +1205,9 @@ export interface DetentionCandidate {
  * dispatcher's alert and a broker's tracking page never disagree about
  * whether a truck is still there. Cancelled and already-delivered loads are
  * excluded: nobody needs to hear that a closed load's last stop, months ago,
- * ran over its free time.
+ * ran over its free time. So are carriers without an active subscription:
+ * they can't get past the paywall to act on an alert, and a trial account
+ * someone set up and abandoned shouldn't start emailing its members.
  */
 export async function findDetentionCandidates(db: Database): Promise<DetentionCandidate[]> {
   const rows = await db
@@ -1222,9 +1224,11 @@ export async function findDetentionCandidates(db: Database): Promise<DetentionCa
     })
     .from(loadStops)
     .innerJoin(loads, eq(loadStops.loadId, loads.id))
+    .innerJoin(orgs, eq(orgs.id, loads.orgId))
     .leftJoin(brokers, eq(brokers.id, loads.brokerId))
     .where(
       and(
+        eq(orgs.status, 'active'),
         isNotNull(loadStops.arrivedAt),
         isNull(loadStops.departedAt),
         isNull(loads.deletedAt),

@@ -12,7 +12,7 @@ import { after, before, describe, it } from 'node:test';
 import { closeDatabase, createDatabase, type Database } from '../client.ts';
 import type { Scope } from '../context.ts';
 import { readTimeline } from '../events/record.ts';
-import { createTestOrg, createTestUser, destroyTestOrg, destroyTestUser, testScope } from '../testing.ts';
+import { createTestOrg, createTestUser, destroyTestOrg, destroyTestUser, setTestOrgStatus, testScope } from '../testing.ts';
 import { createLoad, getLoad, updateLoadStatus } from './loads.ts';
 import { advanceLoadStatus, findStatusAdvanceCandidates, statusAdvanceFor } from './status-advance.ts';
 import { recordStopCheckinAsDriver } from './track.ts';
@@ -104,6 +104,7 @@ suite('status advance against the database', () => {
   before(async () => {
     db = createDatabase({ url: url! });
     orgId = (await createTestOrg(db, 'Status Advance Carrier')).id;
+    await setTestOrgStatus(db, { orgId, status: 'active' });
     userId = (await createTestUser(db)).id;
     s = testScope(db, orgId, { type: 'user', id: userId });
     truckId = (await createTruck(s, { label: 'Truck 9' })).id;
@@ -158,6 +159,18 @@ suite('status advance against the database', () => {
     const load = await aLoad();
     await depart(load.id, 1, minutesAgo(new Date(), 2));
     assert.equal(await candidateFor(load.id), undefined);
+  });
+
+  it('skips a carrier without an active subscription', async () => {
+    const load = await aLoad();
+    await depart(load.id, 1, minutesAgo(new Date(), 30));
+    await setTestOrgStatus(db, { orgId, status: 'past_due' });
+    try {
+      assert.equal(await candidateFor(load.id), undefined);
+    } finally {
+      await setTestOrgStatus(db, { orgId, status: 'active' });
+    }
+    assert.equal((await candidateFor(load.id))?.to, 'delivered');
   });
 
   it('leaves a prospect alone even with departures on it', async () => {

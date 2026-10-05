@@ -21,17 +21,20 @@
  * left alone, and so is a load with no truck: `loads_dispatched_has_truck`
  * refuses every status from dispatched on without one, a dispatcher's
  * manual move included, so assigning the truck comes first either way.
+ * Carriers without an active subscription are skipped, the same as the
+ * detention scan: nobody there can get past the paywall to see the change.
  * The move itself is `updateLoadStatus`, so it stamps the same
  * timestamps (`deliveredAt` is the departure time, not the sweep's) and
  * records the same events as a manual one; the actor is
  * `system`/`checkin-status`, so the timeline shows HaulQ made it.
  */
 import { randomUUID } from 'node:crypto';
-import { and, asc, inArray, isNull } from 'drizzle-orm';
+import { and, asc, eq, inArray, isNull } from 'drizzle-orm';
 import { canTransition, type LoadStatus } from '@haulq/contracts';
 import type { Database } from '../client.ts';
 import type { Scope } from '../context.ts';
 import { loads, loadStops } from '../schema/loads.ts';
+import { orgs } from '../schema/tenancy.ts';
 import { withTransaction } from '../transaction.ts';
 import { getLoad, updateLoadStatus } from './loads.ts';
 import { CHECKIN_UNDO_WINDOW_MS } from './track.ts';
@@ -98,7 +101,8 @@ export async function findStatusAdvanceCandidates(
       source: loads.source,
     })
     .from(loads)
-    .where(and(inArray(loads.status, [...ADVANCEABLE]), isNull(loads.deletedAt)));
+    .innerJoin(orgs, eq(orgs.id, loads.orgId))
+    .where(and(eq(orgs.status, 'active'), inArray(loads.status, [...ADVANCEABLE]), isNull(loads.deletedAt)));
   if (open.length === 0) return [];
 
   const stops = await db
