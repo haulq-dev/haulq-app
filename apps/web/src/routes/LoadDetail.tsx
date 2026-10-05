@@ -13,8 +13,8 @@ import { Link, useParams } from '@tanstack/react-router';
 import { useState } from 'react';
 import { ApiRequestError, request, type Driver, type Truck } from '../lib/api.ts';
 import { useOrgs, useSession } from '../components/AuthGate.tsx';
-import { Card, Empty, ErrorNote, Field, Label, Money, Num, Pill } from '../components/ui.tsx';
-import { pretty, STATUS_TONE, CoordinateLookup, type Load } from './Loads.tsx';
+import { Card, Empty, ErrorNote, Field, Label, Money, Num, Pill, useDocumentTitle } from '../components/ui.tsx';
+import { pretty, STATUS_TONE, CoordinateLookup, lastLoadsSearch, type Load } from './Loads.tsx';
 import { NearbyMechanicsCard, NearbyStopsCard } from './LoadPlaces.tsx';
 import type { LoadFeasibilityResponse } from '@haulq/contracts';
 
@@ -963,6 +963,7 @@ export function LoadDetailScreen() {
     queryKey: ['load', loadId],
     queryFn: () => request<Load>(`/v1/loads/${loadId}`),
   });
+  useDocumentTitle(load.data && `Load ${load.data.reference}`, 'Loads');
 
   const trucks = useQuery({
     queryKey: ['trucks'],
@@ -980,7 +981,7 @@ export function LoadDetailScreen() {
   if (load.isError) {
     return (
       <div className="space-y-6">
-        <Link to="/loads" className="text-sm text-brand underline">
+        <Link to="/loads" search={lastLoadsSearch} className="text-sm text-brand underline">
           ← Back to loads
         </Link>
         <ErrorNote error={load.error} />
@@ -994,7 +995,7 @@ export function LoadDetailScreen() {
   return (
     <div className="space-y-6">
       <div>
-        <Link to="/loads" className="text-sm text-brand underline">
+        <Link to="/loads" search={lastLoadsSearch} className="text-sm text-brand underline">
           ← Back to loads
         </Link>
         <div className="mt-2 flex flex-wrap items-center gap-3">

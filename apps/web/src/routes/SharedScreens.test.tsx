@@ -26,6 +26,9 @@ vi.mock('../components/AuthGate.tsx', () => ({
 }));
 vi.mock('@tanstack/react-router', () => ({
   Link: ({ children, to }: { children: React.ReactNode; to: string }) => <a href={to}>{children}</a>,
+  // Pay keeps its status filter in the URL; with no router, it's unfiltered.
+  useSearch: () => ({}),
+  useNavigate: () => vi.fn(),
 }));
 
 import { request } from '../lib/api.ts';

@@ -21,7 +21,7 @@ import { SignIn } from '@clerk/clerk-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useParams } from '@tanstack/react-router';
 import { useSignedIn } from '../components/AuthGate.tsx';
-import { Card, ErrorNote, Pill } from '../components/ui.tsx';
+import { Card, ErrorNote, Pill, useDocumentTitle } from '../components/ui.tsx';
 import { usingClerk } from '../lib/auth.ts';
 import {
   ApiRequestError,
@@ -52,6 +52,7 @@ const ROLE_HINT: Record<string, string> = {
 };
 
 export function InviteScreen() {
+  useDocumentTitle('Invitation');
   const { token } = useParams({ from: '/invite/$token' });
   const signedIn = useSignedIn();
   const navigate = useNavigate();

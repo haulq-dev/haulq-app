@@ -35,7 +35,7 @@ import {
 } from '@haulq/client';
 import { Link } from '@tanstack/react-router';
 import { useState, type ReactNode } from 'react';
-import { Card, Empty, ErrorNote, Num } from '../components/ui.tsx';
+import { Card, Empty, ErrorNote, Num, useDocumentTitle } from '../components/ui.tsx';
 
 const WINDOWS = [30, 90, 180, 365] as const;
 
@@ -306,6 +306,7 @@ function PaymentPerformanceCard({ payment: p }: { payment: PaymentPerformance })
 }
 
 export function InsightsScreen() {
+  useDocumentTitle('Insights');
   const [days, setDays] = useState<number>(90);
 
   const data = useInsights(days);

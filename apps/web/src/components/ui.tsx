@@ -6,8 +6,20 @@
  * already does most of the work.
  */
 
-import type { ReactNode } from 'react';
+import { useEffect, type ReactNode } from 'react';
 import { ApiRequestError } from '../lib/api.ts';
+
+/**
+ * The browser tab's title, most specific part first: "Load #4412 · Loads · HaulQ".
+ * A dispatcher with Loads, a load and Pay open in three tabs can tell them
+ * apart. Falsy parts are dropped, so a title can name a load once it's loaded.
+ */
+export function useDocumentTitle(...parts: (string | null | undefined | false)[]) {
+  const title = [...parts.filter(Boolean), 'HaulQ'].join(' · ');
+  useEffect(() => {
+    document.title = title;
+  }, [title]);
+}
 
 export function Label({ children }: { children: ReactNode }) {
   return <span className="field-label text-mute">{children}</span>;

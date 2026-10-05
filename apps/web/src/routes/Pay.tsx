@@ -56,9 +56,10 @@ import {
   type PaymentSource,
 } from '@haulq/client';
 import { INVOICE_STATUSES, type InvoiceStatus } from '@haulq/contracts';
+import { useNavigate, useSearch } from '@tanstack/react-router';
 import { useState } from 'react';
 import { useOrgs, useSession } from '../components/AuthGate.tsx';
-import { Card, Empty, ErrorNote, Field, LoadMore, Money, Num, Pill } from '../components/ui.tsx';
+import { Card, Empty, ErrorNote, Field, LoadMore, Money, Num, Pill, useDocumentTitle } from '../components/ui.tsx';
 
 /** A headline number, same shape as `Insights.tsx`'s `Stat` — kept local per `ui.tsx`'s note on premature abstraction. */
 function AgingTile({ bucket, count, totalCents }: AgingBucket) {
@@ -570,7 +571,11 @@ function useCompanyList(): FactoringCompany[] {
 // ---------------------------------------------------------------------------
 
 export function PayScreen() {
-  const [filter, setFilter] = useState<InvoiceStatus | ''>('');
+  useDocumentTitle('Pay');
+  const navigate = useNavigate({ from: '/pay' });
+  const filter: InvoiceStatus | '' = useSearch({ from: '/pay' }).status ?? '';
+  const setFilter = (status: InvoiceStatus | '') =>
+    void navigate({ search: { status: status || undefined }, replace: true });
   const [generating, setGenerating] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const session = useSession();

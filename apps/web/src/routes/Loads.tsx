@@ -18,12 +18,12 @@
  */
 
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link } from '@tanstack/react-router';
-import { useEffect, useState } from 'react';
+import { Link, useNavigate, useSearch } from '@tanstack/react-router';
+import { useEffect, useRef, useState } from 'react';
 import { canTransition, LOAD_STATUSES, nextStatuses, type LoadStatus } from '@haulq/contracts';
 import { request, type Truck } from '../lib/api.ts';
 import { useOrgs, useSession } from '../components/AuthGate.tsx';
-import { Card, Empty, ErrorNote, Field, LoadMore, Money, Num, Pill } from '../components/ui.tsx';
+import { Card, Empty, ErrorNote, Field, LoadMore, Money, Num, Pill, useDocumentTitle } from '../components/ui.tsx';
 import { ProposalsBanner } from './Proposals.tsx';
 
 export interface Stop {
@@ -587,18 +587,52 @@ function AddLoad({ trucks, onDone }: { trucks: Truck[]; onDone: () => void }) {
 /** Typing pause before a search re-queries the list, so it runs once after a dispatcher stops typing, not once per keystroke. */
 const SEARCH_DEBOUNCE_MS = 400;
 
+/**
+ * The list's filter and search as last seen, for LoadDetail's "Back to loads"
+ * link. Browser Back already returns to the filtered list through the URL;
+ * this makes the on-page link do the same.
+ */
+export let lastLoadsSearch: { status?: LoadStatus | undefined; q?: string | undefined } = {};
+
 export function LoadsScreen() {
+  useDocumentTitle('Loads');
   const [adding, setAdding] = useState(false);
-  const [filter, setFilter] = useState<LoadStatus | ''>('');
-  const [searchInput, setSearchInput] = useState('');
-  const [search, setSearch] = useState('');
+  const urlSearch = useSearch({ from: '/loads' });
+  const navigate = useNavigate({ from: '/loads' });
+  const filter: LoadStatus | '' = urlSearch.status ?? '';
+  const search = urlSearch.q?.trim() ?? '';
+  const [searchInput, setSearchInput] = useState(urlSearch.q ?? '');
   const session = useSession();
   const orgs = useOrgs();
 
   useEffect(() => {
-    const id = setTimeout(() => setSearch(searchInput.trim()), SEARCH_DEBOUNCE_MS);
+    lastLoadsSearch = urlSearch;
+  }, [urlSearch]);
+
+  const setFilter = (status: LoadStatus | '') =>
+    void navigate({ search: (prev) => ({ ...prev, status: status || undefined }), replace: true });
+
+  // Debounced into the URL, replacing the history entry, so Back skips the
+  // half-typed searches and goes to wherever the dispatcher came from.
+  const writtenQ = useRef(urlSearch.q);
+  useEffect(() => {
+    const q = searchInput.trim() || undefined;
+    if (q === (urlSearch.q?.trim() || undefined)) return;
+    const id = setTimeout(() => {
+      writtenQ.current = q;
+      void navigate({ search: (prev) => ({ ...prev, q }), replace: true });
+    }, SEARCH_DEBOUNCE_MS);
     return () => clearTimeout(id);
-  }, [searchInput]);
+  }, [searchInput, urlSearch.q, navigate]);
+
+  // The URL changed from outside the box — the nav's plain "Loads" link, or
+  // Back/Forward between searches — so the box follows it. A change this
+  // screen wrote itself is skipped, or it would undo whatever was typed since.
+  useEffect(() => {
+    if (urlSearch.q === writtenQ.current) return;
+    writtenQ.current = urlSearch.q;
+    setSearchInput(urlSearch.q ?? '');
+  }, [urlSearch.q]);
 
   const loads = useInfiniteQuery({
     queryKey: ['loads', filter, search],

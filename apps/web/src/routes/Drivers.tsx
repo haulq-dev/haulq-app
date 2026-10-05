@@ -40,7 +40,7 @@ import {
 } from '@haulq/client';
 import { useState } from 'react';
 import { useOrgs, useSession } from '../components/AuthGate.tsx';
-import { Card, Empty, ErrorNote, Field, LoadMore, Pill } from '../components/ui.tsx';
+import { Card, Empty, ErrorNote, Field, LoadMore, Pill, useDocumentTitle } from '../components/ui.tsx';
 
 /** Read in UTC, the way the date was written (noon UTC), so no zone shows the day before. */
 function formatDate(iso: string): string {
@@ -249,6 +249,7 @@ function EditDriver({ driver, trucks, onDone }: { driver: Driver; trucks: Truck[
 }
 
 export function DriversScreen() {
+  useDocumentTitle('Drivers');
   const [adding, setAdding] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const session = useSession();

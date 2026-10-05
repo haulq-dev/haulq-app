@@ -24,6 +24,7 @@
  */
 
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useNavigate, useSearch } from '@tanstack/react-router';
 import { useEffect, useRef, useState } from 'react';
 import {
   documentKindLabel,
@@ -35,7 +36,7 @@ import {
 } from '@haulq/contracts';
 import { request, requestBlob, type CarrierProfile } from '../lib/api.ts';
 import { useSession } from '../components/AuthGate.tsx';
-import { Card, Empty, ErrorNote, Field, LoadMore, Pill } from '../components/ui.tsx';
+import { Card, Empty, ErrorNote, Field, LoadMore, Pill, useDocumentTitle } from '../components/ui.tsx';
 import { RateConfirmationAction } from './Proposals.tsx';
 
 interface DocumentRow {
@@ -707,7 +708,11 @@ function Detail({ document }: { document: DocumentRow }) {
 
 export function DocumentsScreen() {
   const session = useSession();
-  const [view, setView] = useState<'inbox' | 'all'>('inbox');
+  useDocumentTitle('Documents');
+  const navigate = useNavigate({ from: '/documents' });
+  const view: 'inbox' | 'all' = useSearch({ from: '/documents' }).view ?? 'inbox';
+  const setView = (next: 'inbox' | 'all') =>
+    void navigate({ search: { view: next === 'all' ? 'all' : undefined }, replace: true });
   const [open, setOpen] = useState<string | null>(null);
 
   const query = useInfiniteQuery({

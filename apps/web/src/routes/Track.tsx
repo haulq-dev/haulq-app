@@ -20,7 +20,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { useParams } from '@tanstack/react-router';
 import { ApiRequestError, request } from '../lib/api.ts';
-import { Card, Empty, ErrorNote, Num, Pill } from '../components/ui.tsx';
+import { Card, Empty, ErrorNote, Num, Pill, useDocumentTitle } from '../components/ui.tsx';
 import { Logo } from '../components/Logo.tsx';
 
 interface TrackingStop {
@@ -167,6 +167,7 @@ export function TrackScreen() {
     // making the broker reload to see whether anything moved.
     refetchInterval: 60_000,
   });
+  useDocumentTitle(view.data ? `Load ${view.data.loadReference} tracking` : 'Tracking');
 
   return (
     <div className="min-h-screen bg-wash">

@@ -25,7 +25,7 @@ import {
   type CarrierProfile,
   type OperatingFactsResponse,
 } from '../lib/api.ts';
-import { Card, ErrorNote, Field, IssueNote, Pill } from '../components/ui.tsx';
+import { Card, ErrorNote, Field, IssueNote, Pill, useDocumentTitle } from '../components/ui.tsx';
 
 /** Dollars in the input, integer cents on the wire. */
 const toCents = (text: string): number | undefined => {
@@ -428,6 +428,7 @@ function Usage() {
 }
 
 export function ProfileScreen() {
+  useDocumentTitle('Carrier');
   return (
     <div className="space-y-6">
       <h1 className="text-3xl">Carrier and costs</h1>

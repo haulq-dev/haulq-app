@@ -11,7 +11,7 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { useOrgs, useSession } from '../components/AuthGate.tsx';
-import { Card, Empty, ErrorNote, Pill } from '../components/ui.tsx';
+import { Card, Empty, ErrorNote, Pill, useDocumentTitle } from '../components/ui.tsx';
 import { request } from '../lib/api.ts';
 
 interface BoardCredential {
@@ -81,6 +81,7 @@ const RESULT_MESSAGE: Record<string, { text: string; tone: 'ok' | 'warn' }> = {
 };
 
 export function IntegrationsScreen() {
+  useDocumentTitle('Integrations');
   const session = useSession();
   const orgs = useOrgs();
   const myOrg = orgs.data?.items.find((o) => o.id === session?.orgId);

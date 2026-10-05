@@ -11,7 +11,7 @@
  */
 
 import { actorLabel, useTimeline } from '@haulq/client';
-import { Card, Empty, ErrorNote, LoadMore, Pill } from '../components/ui.tsx';
+import { Card, Empty, ErrorNote, LoadMore, Pill, useDocumentTitle } from '../components/ui.tsx';
 
 function when(iso: string): string {
   const date = new Date(iso);
@@ -23,6 +23,7 @@ function when(iso: string): string {
 }
 
 export function TimelineScreen() {
+  useDocumentTitle('Activity');
   // Shared with the mobile app: the same pages, and a short page is the last.
   const timeline = useTimeline();
 

@@ -22,7 +22,7 @@ import {
   type OperatingFactsResponse,
   type UploadResponse,
 } from '../lib/api.ts';
-import { Card, Empty, ErrorNote, LoadMore, Money, Num, Pill } from '../components/ui.tsx';
+import { Card, Empty, ErrorNote, LoadMore, Money, Num, Pill, useDocumentTitle } from '../components/ui.tsx';
 
 const FIELDS = [
   ['', 'Ignore this column'],
@@ -424,6 +424,7 @@ function Reconcile() {
 }
 
 export function ImportScreen() {
+  useDocumentTitle('Import');
   const [stage, setStage] = useState<Stage>({ name: 'upload' });
 
   const batches = useInfiniteQuery({

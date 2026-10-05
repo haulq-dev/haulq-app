@@ -40,7 +40,7 @@ import {
 import { Link, useNavigate, useParams } from '@tanstack/react-router';
 import { useEffect, useState } from 'react';
 import { useOrgs, useSession } from '../components/AuthGate.tsx';
-import { Card, Empty, ErrorNote, Field, Pill } from '../components/ui.tsx';
+import { Card, Empty, ErrorNote, Field, Pill, useDocumentTitle } from '../components/ui.tsx';
 import { ApiRequestError } from '../lib/api.ts';
 
 /** The rate confirmation itself, fetched with the tenant header, so it cannot be a plain link. */
@@ -411,6 +411,7 @@ export function ProposalReviewScreen() {
   const role = orgs.data?.items.find((o) => o.id === session?.orgId)?.role;
   const canDispatch = role === 'owner' || role === 'dispatcher';
   const proposal = useLoadProposal(proposalId, { enabled: canDispatch });
+  useDocumentTitle(proposal.data?.filename, 'Rate confirmations');
 
   if (orgs.isLoading) return <p className="text-mute">Loading…</p>;
   if (!canDispatch) {

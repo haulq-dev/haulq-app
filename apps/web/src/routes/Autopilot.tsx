@@ -55,7 +55,7 @@ import {
 import { Link } from '@tanstack/react-router';
 import { useEffect, useState } from 'react';
 import { useOrgs, useSession } from '../components/AuthGate.tsx';
-import { Card, Empty, ErrorNote, Pill } from '../components/ui.tsx';
+import { Card, Empty, ErrorNote, Pill, useDocumentTitle } from '../components/ui.tsx';
 
 /** How often an open screen looks again. A draft appearing while someone is watching should not need a refresh. */
 const REFRESH_MS = 30_000;
@@ -78,6 +78,7 @@ function useMailboxRedirect(): 'connected' | 'denied' | null {
 }
 
 export function AutopilotScreen() {
+  useDocumentTitle('Autopilot');
   const session = useSession();
   const orgs = useOrgs();
   const role = orgs.data?.items.find((o) => o.id === session?.orgId)?.role;

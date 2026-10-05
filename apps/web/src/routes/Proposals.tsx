@@ -19,7 +19,7 @@ import {
 } from '@haulq/client';
 import { Link, useNavigate } from '@tanstack/react-router';
 import { useOrgs, useSession } from '../components/AuthGate.tsx';
-import { Card, Empty, ErrorNote, Pill } from '../components/ui.tsx';
+import { Card, Empty, ErrorNote, Pill, useDocumentTitle } from '../components/ui.tsx';
 import { ApiRequestError } from '../lib/api.ts';
 
 /** How often an open list looks again, so a rate confirmation that just arrived shows up without a refresh. */
@@ -85,6 +85,7 @@ function UnreadableRow({ proposal }: { proposal: LoadProposalView }) {
 }
 
 export function ProposalsScreen() {
+  useDocumentTitle('Rate confirmations');
   const canDispatch = useCanDispatch();
   const pending = useLoadProposals('pending', { enabled: canDispatch === true, refetchMs: REFRESH_MS });
   const unreadable = useLoadProposals('unreadable', { enabled: canDispatch === true });

@@ -37,7 +37,7 @@ import {
 } from '@haulq/client';
 import { useState } from 'react';
 import { useOrgs, useSession } from '../components/AuthGate.tsx';
-import { Card, Empty, ErrorNote, Field, LoadMore, Num, Pill } from '../components/ui.tsx';
+import { Card, Empty, ErrorNote, Field, LoadMore, Num, Pill, useDocumentTitle } from '../components/ui.tsx';
 
 /**
  * The Motive vehicle match, editable inline. With a fetched vehicle list this
@@ -362,6 +362,7 @@ function TruckActiveControl({ truck }: { truck: Truck }) {
 }
 
 export function TrucksScreen() {
+  useDocumentTitle('Trucks');
   const [adding, setAdding] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const session = useSession();

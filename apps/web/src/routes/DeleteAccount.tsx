@@ -19,9 +19,10 @@
 
 import { useUser } from '@clerk/clerk-react';
 import { useState } from 'react';
-import { ErrorNote } from '../components/ui.tsx';
+import { ErrorNote, useDocumentTitle } from '../components/ui.tsx';
 
 export function DeleteAccountScreen() {
+  useDocumentTitle('Delete account');
   const { user, isLoaded } = useUser();
   const [confirming, setConfirming] = useState(false);
   const [deleting, setDeleting] = useState(false);

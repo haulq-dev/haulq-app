@@ -15,7 +15,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import { request, type HistorySummary, type OnboardingStatus } from '../lib/api.ts';
-import { Card, ErrorNote, Money, Num, Pill } from '../components/ui.tsx';
+import { Card, ErrorNote, Money, Num, Pill, useDocumentTitle } from '../components/ui.tsx';
 
 const DESTINATION: Record<string, string> = {
   identity: '/profile',
@@ -27,6 +27,7 @@ const DESTINATION: Record<string, string> = {
 };
 
 export function OnboardingScreen() {
+  useDocumentTitle();
   const status = useQuery({
     queryKey: ['onboarding'],
     queryFn: () => request<OnboardingStatus>('/v1/onboarding'),

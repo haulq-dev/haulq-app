@@ -17,6 +17,7 @@ import {
   useRouterState,
 } from '@tanstack/react-router';
 import { StrictMode } from 'react';
+import { INVOICE_STATUSES, LOAD_STATUSES, type InvoiceStatus, type LoadStatus } from '@haulq/contracts';
 import { createRoot } from 'react-dom/client';
 import { AuthGate } from './components/AuthGate.tsx';
 import { Shell } from './components/Shell.tsx';
@@ -49,7 +50,11 @@ const queryClient = new QueryClient({
       // should show cached data rather than a burst of requests and a spinner.
       staleTime: 15_000,
       retry: 1,
-      refetchOnWindowFocus: false,
+      // A dispatcher leaves this open in a tab all day. Coming back to it
+      // should show the document that arrived or the load that delivered
+      // meanwhile, not what was true when they left. Only the current
+      // screen's queries refetch, and only once they're past `staleTime`.
+      refetchOnWindowFocus: true,
     },
   },
 });
@@ -90,6 +95,22 @@ function RootLayout() {
 
 const rootRoute = createRootRoute({ component: RootLayout });
 
+/**
+ * A list's filter lives in the URL, so Back from a load returns to the same
+ * filtered list, a refresh keeps it, and a filtered view can be sent to
+ * someone. Defaults are left out, so a plain `/loads` stays plain, and
+ * anything unrecognised is dropped rather than sent to the API.
+ */
+function oneOf<T extends string>(allowed: readonly T[], value: unknown): T | undefined {
+  return allowed.includes(value as T) ? (value as T) : undefined;
+}
+function text(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value : undefined;
+}
+type LoadsSearch = { status?: LoadStatus | undefined; q?: string | undefined };
+type PaySearch = { status?: InvoiceStatus | undefined };
+type DocumentsSearch = { view?: 'all' | undefined };
+
 // Declared one by one rather than mapped over an array: TanStack infers the
 // route tree's types from these literals, and a `.map()` widens `path` to
 // `string`, which silently turns every typed `<Link to>` into an error.
@@ -116,6 +137,10 @@ const insightsRoute = createRoute({
 const loadsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/loads',
+  validateSearch: (search: Record<string, unknown>): LoadsSearch => ({
+    status: oneOf(LOAD_STATUSES, search['status']),
+    q: text(search['q']),
+  }),
   component: LoadsScreen,
 });
 const loadDetailRoute = createRoute({
@@ -126,11 +151,17 @@ const loadDetailRoute = createRoute({
 const documentsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/documents',
+  validateSearch: (search: Record<string, unknown>): DocumentsSearch => ({
+    view: oneOf(['all'] as const, search['view']),
+  }),
   component: DocumentsScreen,
 });
 const payRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/pay',
+  validateSearch: (search: Record<string, unknown>): PaySearch => ({
+    status: oneOf(INVOICE_STATUSES, search['status']),
+  }),
   component: PayScreen,
 });
 const driversRoute = createRoute({

@@ -35,7 +35,7 @@ import {
 } from '@haulq/client';
 import { useState } from 'react';
 import { useOrgs, useSession } from '../components/AuthGate.tsx';
-import { Card, Empty, ErrorNote, Field, LoadMore, Pill } from '../components/ui.tsx';
+import { Card, Empty, ErrorNote, Field, LoadMore, Pill, useDocumentTitle } from '../components/ui.tsx';
 
 function when(iso: string | null): string {
   if (!iso) return '—';
@@ -249,6 +249,7 @@ function InvitationRow({ invitation, canManage }: { invitation: Invitation; canM
 }
 
 export function MembersScreen() {
+  useDocumentTitle('People');
   const session = useSession();
   const orgs = useOrgs();
   const members = useMembers();
