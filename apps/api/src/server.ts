@@ -36,6 +36,7 @@ import type { BillingClient } from './billing/stripe.ts';
 import type { Env } from './env.ts';
 import type { Mailer } from './email/postmark.ts';
 import { startDetentionScanRunner } from './exceptions/detention-runner.ts';
+import { startStatusAdvanceRunner } from './track/status-advance-runner.ts';
 import { startAutopilotRunner } from './autopilot/runner.ts';
 import { startExceptionScanRunner } from './exceptions/runner.ts';
 import { startMotiveSyncRunner } from './integrations/motive-sync-runner.ts';
@@ -307,6 +308,7 @@ export async function buildServer(
   });
 
   startDetentionScanRunner(app, { intervalMs: env.DETENTION_SCAN_POLL_MS });
+  startStatusAdvanceRunner(app, { intervalMs: env.STATUS_ADVANCE_POLL_MS });
   startAutopilotRunner(app, { intervalMs: env.AUTOPILOT_POLL_MS });
 
   // Same guard shape the Motive block below already uses: a poll interval

@@ -131,6 +131,16 @@ const EnvSchema = z.object({
   DETENTION_SCAN_POLL_MS: z.coerce.number().int().min(0).default(0),
 
   /**
+   * How often loads are moved along from their drivers' check-ins (departed
+   * the first pickup → in transit, departed the last delivery → delivered),
+   * in milliseconds. 0 is off, the same default as every poller here — see
+   * `track/status-advance-runner.ts`. A departure only counts once it is
+   * past the driver's 10-minute undo window, so anything around a minute is
+   * plenty.
+   */
+  STATUS_ADVANCE_POLL_MS: z.coerce.number().int().min(0).default(0),
+
+  /**
    * How often the autopilot loop (`autopilot/runner.ts`) sweeps, in
    * milliseconds. 0 is off — the default, and the outermost of three locks
    * on a loop that composes messages to real brokers: this switch, the

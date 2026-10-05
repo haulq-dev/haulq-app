@@ -454,7 +454,7 @@ export async function recordStopCheckinAsDriver(
  * only authorization a driver holds, so the window has to be a real
  * server-side rule, not a UI convention the app could be talked out of.
  */
-const CHECKIN_UNDO_WINDOW_MS = 10 * 60_000;
+export const CHECKIN_UNDO_WINDOW_MS = 10 * 60_000;
 
 /**
  * Undoes a driver's own mis-tap, within `CHECKIN_UNDO_WINDOW_MS` of tapping

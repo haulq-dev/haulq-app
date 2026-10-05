@@ -105,6 +105,9 @@ services:
     #   EXCEPTION_SCAN_POLL_MS=300000   Track's exception alert — see below
     #   EXCEPTION_THRESHOLD_HOURS=4     unset, same as OUTBOX_POLL_MS: nothing
     #                                   fires while the poll interval is 0
+    #   STATUS_ADVANCE_POLL_MS=60000  moves loads to in transit / delivered
+    #                                from drivers' check-ins; unset means
+    #                                dispatchers keep doing it by hand
     #   CREDENTIAL_ENCRYPTION_PUBLIC_KEY / _PRIVATE_KEY
     #   MOTIVE_CLIENT_ID, MOTIVE_CLIENT_SECRET, MOTIVE_REDIRECT_URI
     #   MOTIVE_SYNC_POLL_MS=300000   Phase 2b's position sync — unset means

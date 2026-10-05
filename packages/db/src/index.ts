@@ -30,6 +30,7 @@ export * from './repositories/load-proposals.ts';
 export * from './repositories/outbound.ts';
 export * from './repositories/pay.ts';
 export * from './repositories/push.ts';
+export * from './repositories/status-advance.ts';
 export * from './repositories/track.ts';
 export * from './repositories/trucks.ts';
 export * from './repositories/usage.ts';
