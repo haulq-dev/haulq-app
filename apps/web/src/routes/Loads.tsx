@@ -123,7 +123,7 @@ function RatePerMile({ load }: { load: Load }) {
   );
 }
 
-function StatusControl({ load }: { load: Load }) {
+export function StatusControl({ load }: { load: Load }) {
   const queryClient = useQueryClient();
   const toast = useToast();
   const [reason, setReason] = useState('');

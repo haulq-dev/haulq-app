@@ -41,6 +41,7 @@ import {
   useGenerateInvoice,
   useInvoiceableLoads,
   useInvoicePayments,
+  useInvoice,
   useInvoices,
   useMarkInvoiceSent,
   useRecordPayment,
@@ -57,7 +58,7 @@ import {
 } from '@haulq/client';
 import { INVOICE_STATUSES, type InvoiceStatus } from '@haulq/contracts';
 import { useNavigate, useSearch } from '@tanstack/react-router';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useOrgs, useSession } from '../components/AuthGate.tsx';
 import { Card, Empty, ErrorNote, Field, LoadMore, Money, Num, Pill, useDocumentTitle, useToast } from '../components/ui.tsx';
 
@@ -422,11 +423,11 @@ function InvoiceDetail({ invoice, companies, role }: { invoice: Invoice; compani
 
 const EMPTY_LINE_ITEM: DraftLineItem = { code: 'linehaul', description: '', amount: '' };
 
-function GenerateInvoice({ onDone }: { onDone: () => void }) {
+function GenerateInvoice({ onDone, initialLoadId }: { onDone: (createdId?: string) => void; initialLoadId?: string | undefined }) {
   const toast = useToast();
   const loads = useInvoiceableLoads();
   const generate = useGenerateInvoice();
-  const [loadId, setLoadId] = useState('');
+  const [loadId, setLoadId] = useState(initialLoadId ?? '');
   const [items, setItems] = useState<DraftLineItem[]>([EMPTY_LINE_ITEM]);
 
   const setItem = (i: number, patch: Partial<DraftLineItem>) => setItems((prev) => prev.map((item, idx) => (idx === i ? { ...item, ...patch } : item)));
@@ -476,11 +477,11 @@ function GenerateInvoice({ onDone }: { onDone: () => void }) {
         <button
           className="hq-btn hq-btn-brand"
           disabled={!ready || generate.isPending}
-          onClick={() => 'items' in body && generate.mutate({ loadId, lineItems: body.items }, { onSuccess: (invoice) => { toast(`Invoice ${invoice.reference} generated`); onDone(); } })}
+          onClick={() => 'items' in body && generate.mutate({ loadId, lineItems: body.items }, { onSuccess: (invoice) => { toast(`Invoice ${invoice.reference} generated`); onDone(invoice.id); } })}
         >
           {generate.isPending ? 'Generating…' : 'Generate invoice'}
         </button>
-        <button className="hq-btn hq-btn-ghost" onClick={onDone}>
+        <button className="hq-btn hq-btn-ghost" onClick={() => onDone()}>
           Cancel
         </button>
       </div>
@@ -583,11 +584,22 @@ function useCompanyList(): FactoringCompany[] {
 export function PayScreen() {
   useDocumentTitle('Pay');
   const navigate = useNavigate({ from: '/pay' });
-  const filter: InvoiceStatus | '' = useSearch({ from: '/pay' }).status ?? '';
+  const search = useSearch({ from: '/pay' });
+  const filter: InvoiceStatus | '' = search.status ?? '';
   const setFilter = (status: InvoiceStatus | '') =>
-    void navigate({ search: { status: status || undefined }, replace: true });
-  const [generating, setGenerating] = useState(false);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+    void navigate({ search: (prev) => ({ ...prev, status: status || undefined }), replace: true });
+  // Which invoice is open lives in the URL, so a load's "Open in Pay" can
+  // land on it, and Back from here returns to the load.
+  const selectedId = search.invoice ?? null;
+  const setSelectedId = (id: string) => void navigate({ search: (prev) => ({ ...prev, invoice: id }), replace: true });
+  const [generating, setGenerating] = useState(Boolean(search.newFor));
+  // Closing the form drops `newFor`; generating one also opens what was made.
+  const stopGenerating = (createdId?: string) => {
+    setGenerating(false);
+    if (search.newFor || createdId) {
+      void navigate({ search: (prev) => ({ ...prev, newFor: undefined, ...(createdId ? { invoice: createdId } : {}) }), replace: true });
+    }
+  };
   const session = useSession();
   const orgs = useOrgs();
 
@@ -600,7 +612,17 @@ export function PayScreen() {
 
   const items = invoices.data?.pages.flatMap((p) => p.items) ?? [];
   const counts = invoices.data?.pages[0]?.counts ?? {};
-  const selected = items.find((i) => i.id === selectedId) ?? null;
+  // An invoice linked from a load may not be on the list's first page, or
+  // under the current filter; fetch it on its own then.
+  const listed = items.find((i) => i.id === selectedId);
+  const fetched = useInvoice(selectedId ?? '', { enabled: Boolean(selectedId) && invoices.isSuccess && !listed });
+  const selected = listed ?? fetched.data ?? null;
+
+  // The detail renders below the list; bring it into view when one is picked.
+  const detailRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (selected) detailRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
+  }, [selected?.id]);
 
   return (
     <div className="space-y-6">
@@ -624,7 +646,7 @@ export function PayScreen() {
         </div>
       )}
 
-      {generating && <GenerateInvoice onDone={() => setGenerating(false)} />}
+      {generating && <GenerateInvoice onDone={stopGenerating} initialLoadId={search.newFor} />}
 
       <div className="flex flex-wrap gap-1.5">
         <button
@@ -695,7 +717,9 @@ export function PayScreen() {
         <LoadMore onClick={() => void invoices.fetchNextPage()} loading={invoices.isFetchingNextPage} hasMore={invoices.hasNextPage} />
       </Card>
 
-      {selected && <InvoiceDetail invoice={selected} companies={companies} role={role} />}
+      <div ref={detailRef} className="scroll-mt-4">
+        {selected && <InvoiceDetail invoice={selected} companies={companies} role={role} />}
+      </div>
 
       <FactoringCompanies canAdd={canManageMoney(role)} />
     </div>

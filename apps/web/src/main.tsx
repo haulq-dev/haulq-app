@@ -109,7 +109,8 @@ function text(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value : undefined;
 }
 type LoadsSearch = { status?: LoadStatus | undefined; q?: string | undefined };
-type PaySearch = { status?: InvoiceStatus | undefined };
+/** `invoice` opens that invoice's detail; `newFor` opens the generate form with that load chosen. Both come from a load's page. */
+type PaySearch = { status?: InvoiceStatus | undefined; invoice?: string | undefined; newFor?: string | undefined };
 type DocumentsSearch = { view?: 'all' | undefined };
 
 // Declared one by one rather than mapped over an array: TanStack infers the
@@ -162,6 +163,8 @@ const payRoute = createRoute({
   path: '/pay',
   validateSearch: (search: Record<string, unknown>): PaySearch => ({
     status: oneOf(INVOICE_STATUSES, search['status']),
+    invoice: text(search['invoice']),
+    newFor: text(search['newFor']),
   }),
   component: PayScreen,
 });

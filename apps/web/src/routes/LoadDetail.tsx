@@ -16,6 +16,7 @@ import { useOrgs, useSession } from '../components/AuthGate.tsx';
 import { Card, Empty, ErrorNote, Field, Label, Money, Num, Pill, useDocumentTitle, ConfirmButton } from '../components/ui.tsx';
 import { pretty, STATUS_TONE, CoordinateLookup, lastLoadsSearch, type Load } from './Loads.tsx';
 import { NearbyMechanicsCard, NearbyStopsCard } from './LoadPlaces.tsx';
+import { LoadInvoice, LoadPaperwork, StatusAndAssignment } from './LoadWork.tsx';
 import type { LoadFeasibilityResponse } from '@haulq/contracts';
 
 interface LoadMargin {
@@ -995,6 +996,9 @@ export function LoadDetailScreen() {
 
   if (!load.data) return null;
   const l = load.data;
+  const ordered = [...l.stops].sort((a, b) => a.seq - b.seq);
+  const pickup = ordered.find((s) => s.type === 'pickup');
+  const delivery = [...ordered].reverse().find((s) => s.type === 'delivery');
 
   return (
     <div className="space-y-6">
@@ -1006,11 +1010,29 @@ export function LoadDetailScreen() {
           <h1 className="text-3xl">Load {l.reference}</h1>
           <Pill tone={STATUS_TONE[l.status] ?? 'neutral'}>{pretty(l.status)}</Pill>
         </div>
-        <p className="mt-1 text-slate">{l.brokerName ?? 'No broker'}</p>
+        <p className="mt-1 text-slate">
+          {l.brokerName ?? 'No broker'}
+          {l.brokerLoadNumber && <span className="text-mute"> · #{l.brokerLoadNumber}</span>}
+        </p>
+        <p className="mt-1">
+          {pickup ? `${pickup.city}, ${pickup.state}` : '—'}
+          <span className="text-mute"> → </span>
+          {delivery ? `${delivery.city}, ${delivery.state}` : '—'}
+          <span className="text-sm text-mute">
+            {' · '}
+            {l.rateAmount !== null ? <Money cents={l.rateAmount} /> : 'no rate'}
+            {l.truckLabel && ` · ${l.truckLabel}`}
+            {l.driverName && ` · ${l.driverName}`}
+          </span>
+        </p>
+        {l.cancelledReason && <p className="mt-1 text-sm text-warn">Cancelled: {l.cancelledReason}</p>}
       </div>
 
+      {canWrite && <StatusAndAssignment load={l} trucks={trucks.data?.items ?? []} drivers={drivers.data?.items ?? []} />}
+      <LoadInvoice load={l} role={myRole} />
       <LoadMarginDetail loadId={l.id} />
       <TrackingPanel loadId={l.id} reference={l.reference} />
+      <LoadPaperwork loadId={l.id} />
 
       {canWrite && <TrackingLink loadId={l.id} reference={l.reference} />}
       {canWrite && (

@@ -24,12 +24,33 @@ vi.mock('../components/AuthGate.tsx', () => ({
     data: { userId: 'me', items: [{ id: 'o', name: 'Acme', role: role.current, status: 'active', plan: 'fleet' }] },
   }),
 }));
-vi.mock('@tanstack/react-router', () => ({
-  Link: ({ children, to }: { children: React.ReactNode; to: string }) => <a href={to}>{children}</a>,
-  // Pay keeps its status filter in the URL; with no router, it's unfiltered.
-  useSearch: () => ({}),
-  useNavigate: () => vi.fn(),
-}));
+// Pay keeps its filter and open invoice in the URL. With no router, a small
+// store stands in for the query string, so navigating re-renders the screen.
+const urlSearch = vi.hoisted(() => {
+  let current: Record<string, unknown> = {};
+  const listeners = new Set<() => void>();
+  return {
+    get: () => current,
+    set: (next: Record<string, unknown>) => {
+      current = next;
+      listeners.forEach((l) => l());
+    },
+    subscribe: (l: () => void) => {
+      listeners.add(l);
+      return () => listeners.delete(l);
+    },
+  };
+});
+vi.mock('@tanstack/react-router', async () => {
+  const { useSyncExternalStore } = await vi.importActual<typeof import('react')>('react');
+  type Next = Record<string, unknown> | ((prev: Record<string, unknown>) => Record<string, unknown>);
+  return {
+    Link: ({ children, to }: { children: React.ReactNode; to: string }) => <a href={to}>{children}</a>,
+    useSearch: () => useSyncExternalStore(urlSearch.subscribe, urlSearch.get),
+    useNavigate: () => ({ search }: { search: Next }) => urlSearch.set(typeof search === 'function' ? search(urlSearch.get()) : search),
+  };
+});
+beforeEach(() => urlSearch.set({}));
 
 import { request } from '../lib/api.ts';
 import { answerRequests, renderScreen } from '../test-utils.tsx';

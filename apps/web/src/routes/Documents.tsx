@@ -671,7 +671,7 @@ function ManualFieldsForm({ document }: { document: DocumentRow }) {
 // The screen
 // ---------------------------------------------------------------------------
 
-function Detail({ document }: { document: DocumentRow }) {
+export function Detail({ document }: { document: DocumentRow }) {
   return (
     <div className="border-t border-line bg-wash px-5 py-5">
       <div className="grid gap-6 lg:grid-cols-2">

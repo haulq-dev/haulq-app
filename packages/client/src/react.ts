@@ -580,11 +580,12 @@ export function useInvoices(status: string = '') {
   });
 }
 
-export function useInvoice(id: string) {
+export function useInvoice(id: string, options: { enabled?: boolean } = {}) {
   const client = useApiClient();
   return useQuery({
     queryKey: queryKeys.invoice(id),
     queryFn: async () => (await client.request<{ invoice: Invoice }>(`/v1/invoices/${id}`)).invoice,
+    enabled: options.enabled ?? true,
   });
 }
 
