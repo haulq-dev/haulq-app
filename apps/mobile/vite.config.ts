@@ -9,6 +9,11 @@ export default defineConfig({
     environment: 'jsdom',
     include: ['src/**/*.test.{ts,tsx}'],
     setupFiles: ['./src/test-setup.ts'],
+    // Tests read the same `.env.local` the dev server does, and a developer
+    // building for a device sets `VITE_API_URL` there to the real API. Pinned
+    // to the default here so a test's request URLs don't depend on whose
+    // machine runs it.
+    env: { VITE_API_URL: '/api' },
   },
   server: {
     // apps/web already owns 5173. Different port so both can run side by side
