@@ -21,7 +21,7 @@ const DESTINATION: Record<string, string> = {
   identity: '/profile',
   truck: '/trucks',
   capabilities: '/trucks',
-  driver: '/trucks',
+  driver: '/drivers',
   operating_facts: '/profile',
   reconcile: '/import',
 };
