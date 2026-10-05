@@ -40,6 +40,7 @@ import { ProfileScreen } from './routes/Profile.tsx';
 import { ProposalReviewScreen } from './routes/ProposalReview.tsx';
 import { ProposalsScreen } from './routes/Proposals.tsx';
 import { TimelineScreen } from './routes/Timeline.tsx';
+import { HomeScreen } from './routes/Today.tsx';
 import { TrackScreen } from './routes/Track.tsx';
 import { TrucksScreen } from './routes/Trucks.tsx';
 import './styles.css';
@@ -119,6 +120,12 @@ type DocumentsSearch = { view?: 'all' | undefined };
 const indexRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/',
+  // Setup until the essentials are in, then the Today list. See Today.tsx.
+  component: HomeScreen,
+});
+const setupRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/setup',
   component: OnboardingScreen,
 });
 const profileRoute = createRoute({
@@ -226,6 +233,7 @@ const deleteAccountRoute = createRoute({
 
 const routeTree = rootRoute.addChildren([
   indexRoute,
+  setupRoute,
   profileRoute,
   trucksRoute,
   loadsRoute,

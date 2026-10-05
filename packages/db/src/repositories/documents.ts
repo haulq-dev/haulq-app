@@ -251,6 +251,20 @@ export async function listDocuments(
 }
 
 /** Counts by status, for the inbox header. Missing statuses read as zero. */
+/**
+ * How many documents no load claims yet: the Documents inbox's "Needs a
+ * load" list, as a number, for the nav badge and the home page. The same
+ * filter `listDocuments({ unattached: true })` applies, so the count and the
+ * list it points at always agree.
+ */
+export async function countUnattachedDocuments(s: Scope): Promise<number> {
+  const [row] = await s.db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(documents)
+    .where(and(inOrg(s), isNull(documents.loadId)));
+  return row?.count ?? 0;
+}
+
 export async function documentCounts(s: Scope): Promise<Record<string, number>> {
   const rows = await s.db
     .select({ status: documents.status, count: sql<number>`count(*)::int` })

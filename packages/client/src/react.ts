@@ -283,13 +283,19 @@ export function useDocuments(filter: { view: 'inbox' | 'all' } | { loadId: strin
   });
 }
 
-/** Account-wide counts by status. Office roles only; the API refuses drivers. */
-export function useDocumentCounts(options: { enabled?: boolean } = {}) {
+/**
+ * Account-wide counts by status, and `unattached`: how many are in the
+ * "Needs a load" inbox. Office roles only; the API refuses drivers.
+ * `unattached` is optional only so a client a deploy ahead of the API reads
+ * it as missing rather than breaking.
+ */
+export function useDocumentCounts(options: { enabled?: boolean; refetchMs?: number } = {}) {
   const client = useApiClient();
   return useQuery({
     queryKey: queryKeys.documentCounts,
-    queryFn: () => client.request<{ counts: Record<string, number> }>('/v1/documents/counts'),
+    queryFn: () => client.request<{ counts: Record<string, number>; unattached?: number }>('/v1/documents/counts'),
     enabled: options.enabled ?? true,
+    ...(options.refetchMs ? { refetchInterval: options.refetchMs } : {}),
   });
 }
 

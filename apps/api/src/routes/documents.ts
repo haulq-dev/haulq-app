@@ -31,6 +31,7 @@ import {
   attachToLoad,
   createDocument,
   CursorError,
+  countUnattachedDocuments,
   documentCounts,
   DocumentError,
   findDocumentBySha,
@@ -279,11 +280,12 @@ export async function documentRoutes(app: FastifyInstance) {
   /** Registered before `/:id` so the router does not read "counts" as an id. */
   server.get(
     '/v1/documents/counts',
-    { schema: { tags: ['Documents'], summary: 'Document counts by status' } },
+    { schema: { tags: ['Documents'], summary: 'Document counts by status, and how many need a load' } },
     async (request) => {
       const s = await requireScope(request);
       requireRole(request, 'owner', 'dispatcher', 'accountant');
-      return { counts: await documentCounts(s) };
+      const [counts, unattached] = await Promise.all([documentCounts(s), countUnattachedDocuments(s)]);
+      return { counts, unattached };
     },
   );
 

@@ -27,7 +27,7 @@ const DESTINATION: Record<string, string> = {
 };
 
 export function OnboardingScreen() {
-  useDocumentTitle();
+  useDocumentTitle('Setup');
   const status = useQuery({
     queryKey: ['onboarding'],
     queryFn: () => request<OnboardingStatus>('/v1/onboarding'),

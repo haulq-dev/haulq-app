@@ -7,7 +7,7 @@
  * someone demoing this and taking it for a real account switcher.
  */
 
-import { canReviewOutbound, usePendingApprovalCount, isOfficeRole } from '@haulq/client';
+import { canDispatch, canReviewOutbound, useDocumentCounts, usePendingApprovalCount, isOfficeRole } from '@haulq/client';
 import { Link, useRouterState } from '@tanstack/react-router';
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
@@ -57,6 +57,7 @@ const FLEET_NAV = [
 ] as const;
 
 const ACCOUNT_NAV = [
+  { to: '/setup', label: 'Setup' },
   { to: '/profile', label: 'Carrier' },
   { to: '/members', label: 'People' },
   { to: '/import', label: 'Import' },
@@ -295,8 +296,19 @@ export function Shell({ children }: { children: ReactNode }) {
   // unpaid one is shown the plans screen instead of anything in the nav).
   const showAutopilot = canReviewOutbound(currentOrg?.role) && currentOrg?.status === 'active';
   const pending = usePendingApprovalCount({ enabled: showAutopilot });
+  // Paperwork no load claims yet, counted on Documents the way Autopilot
+  // counts what waits for approval: a rate confirmation that arrived by email
+  // shouldn't need someone to go looking. Owners and dispatchers, who can
+  // attach it to a load or make one from it.
+  const showDocumentsBadge = canDispatch(currentOrg?.role) && currentOrg?.status === 'active';
+  const documentCounts = useDocumentCounts({ enabled: showDocumentsBadge, refetchMs: 60_000 });
   const sections = navFor(currentOrg?.role);
-  const primaryNav: NavItem[] = [...sections.primary, ...(showAutopilot ? [{ ...AUTOPILOT_NAV, badge: pending.data ?? 0 }] : [])];
+  const primaryNav: NavItem[] = [
+    ...sections.primary.map((item) =>
+      item.to === '/documents' && showDocumentsBadge ? { ...item, badge: documentCounts.data?.unattached ?? 0 } : item,
+    ),
+    ...(showAutopilot ? [{ ...AUTOPILOT_NAV, badge: pending.data ?? 0 }] : []),
+  ];
   const fleetNav = sections.fleet;
   const accountNav = sections.account;
   /** Every item, flattened: the mobile drawer has room for a flat list and nothing to gain from nesting it. */

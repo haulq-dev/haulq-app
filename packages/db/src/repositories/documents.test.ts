@@ -34,6 +34,7 @@ import {
   attachToLoad,
   brokerDocumentHistory,
   createDocument,
+  countUnattachedDocuments,
   documentCounts,
   DocumentError,
   findDocumentBySha,
@@ -250,6 +251,21 @@ suite('documents repository', () => {
 
       const { items: rows } = await listDocuments(s, { loadId: load.id });
       assert.deepEqual(rows.map((d) => d.id), [mine.document.id]);
+    });
+
+    it('counts what needs a load, the same set the unattached list returns, per tenant', async () => {
+      const before = await countUnattachedDocuments(s);
+      const theirsBefore = await countUnattachedDocuments(other);
+      const load = await aLoad();
+      const attached = await upload();
+      await attachToLoad(s, attached.document.id, load.id);
+      await upload();
+      await upload();
+
+      assert.equal(await countUnattachedDocuments(s), before + 2);
+      assert.equal(await countUnattachedDocuments(other), theirsBefore);
+      const { items } = await listDocuments(s, { unattached: true, limit: 200 });
+      assert.equal(items.length, before + 2);
     });
 
     it('counts by status', async () => {
