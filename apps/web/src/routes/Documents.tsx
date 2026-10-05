@@ -36,7 +36,7 @@ import {
 } from '@haulq/contracts';
 import { request, requestBlob, type CarrierProfile } from '../lib/api.ts';
 import { useSession } from '../components/AuthGate.tsx';
-import { Card, Empty, ErrorNote, Field, LoadMore, Pill, useDocumentTitle } from '../components/ui.tsx';
+import { Card, Empty, ErrorNote, Field, LoadMore, Pill, useDocumentTitle, useToast } from '../components/ui.tsx';
 import { RateConfirmationAction } from './Proposals.tsx';
 
 interface DocumentRow {
@@ -360,6 +360,7 @@ function CustomEmailPanel({ profile }: { profile: CarrierProfile }) {
  */
 function AttachControl({ document }: { document: DocumentRow }) {
   const queryClient = useQueryClient();
+  const toast = useToast();
   const [choice, setChoice] = useState(document.loadId ?? '');
 
   const loads = useQuery({
@@ -373,7 +374,12 @@ function AttachControl({ document }: { document: DocumentRow }) {
         method: 'POST',
         body: { loadId },
       }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['documents'] }),
+    onSuccess: (_, loadId) => {
+      // In the inbox the document disappears from the list, so say where it went.
+      const load = options.find((l) => l.id === loadId);
+      toast(load ? `Attached to load ${load.reference}` : 'Attached');
+      return queryClient.invalidateQueries({ queryKey: ['documents'] });
+    },
   });
 
   const options = loads.data?.items ?? [];

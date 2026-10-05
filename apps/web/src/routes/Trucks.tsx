@@ -37,7 +37,7 @@ import {
 } from '@haulq/client';
 import { useState } from 'react';
 import { useOrgs, useSession } from '../components/AuthGate.tsx';
-import { Card, Empty, ErrorNote, Field, LoadMore, Num, Pill, useDocumentTitle } from '../components/ui.tsx';
+import { Card, Empty, ErrorNote, Field, LoadMore, Num, Pill, useDocumentTitle, useToast } from '../components/ui.tsx';
 
 /**
  * The Motive vehicle match, editable inline. With a fetched vehicle list this
@@ -316,10 +316,15 @@ function TruckActiveControl({ truck }: { truck: Truck }) {
   const [confirming, setConfirming] = useState(false);
   const [reason, setReason] = useState('');
   const setActive = useSetTruckActive();
+  const toast = useToast();
 
   if (!truck.active) {
     return (
-      <button className="hq-btn hq-btn-ghost px-2 py-1 text-xs" disabled={setActive.isPending} onClick={() => setActive.mutate({ id: truck.id, active: true })}>
+      <button
+        className="hq-btn hq-btn-ghost px-2 py-1 text-xs"
+        disabled={setActive.isPending}
+        onClick={() => setActive.mutate({ id: truck.id, active: true }, { onSuccess: () => toast(`${truck.label} is back in service`) })}
+      >
         {setActive.isPending ? 'Reactivating…' : 'Reactivate'}
       </button>
     );
@@ -339,6 +344,7 @@ function TruckActiveControl({ truck }: { truck: Truck }) {
                 onSuccess: () => {
                   setConfirming(false);
                   setReason('');
+                  toast(`${truck.label} is out of service`);
                 },
               },
             )

@@ -21,6 +21,7 @@ import { INVOICE_STATUSES, LOAD_STATUSES, type InvoiceStatus, type LoadStatus } 
 import { createRoot } from 'react-dom/client';
 import { AuthGate } from './components/AuthGate.tsx';
 import { Shell } from './components/Shell.tsx';
+import { ToastProvider } from './components/ui.tsx';
 import { apiClient } from './lib/api.ts';
 import { AutopilotScreen } from './routes/Autopilot.tsx';
 import { DeleteAccountScreen } from './routes/DeleteAccount.tsx';
@@ -261,7 +262,9 @@ createRoot(root).render(
       <AuthGate>
         {/* The shared hooks in @haulq/client read the API client from context. */}
         <ApiClientProvider client={apiClient}>
-          <RouterProvider router={router} />
+          <ToastProvider>
+            <RouterProvider router={router} />
+          </ToastProvider>
         </ApiClientProvider>
       </AuthGate>
     </QueryClientProvider>

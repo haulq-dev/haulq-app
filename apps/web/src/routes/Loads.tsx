@@ -23,7 +23,7 @@ import { useEffect, useRef, useState } from 'react';
 import { canTransition, LOAD_STATUSES, nextStatuses, type LoadStatus } from '@haulq/contracts';
 import { request, type Truck } from '../lib/api.ts';
 import { useOrgs, useSession } from '../components/AuthGate.tsx';
-import { Card, Empty, ErrorNote, Field, LoadMore, Money, Num, Pill, useDocumentTitle } from '../components/ui.tsx';
+import { Card, Empty, ErrorNote, Field, LoadMore, Money, Num, Pill, useDocumentTitle, useToast } from '../components/ui.tsx';
 import { ProposalsBanner } from './Proposals.tsx';
 
 export interface Stop {
@@ -125,15 +125,18 @@ function RatePerMile({ load }: { load: Load }) {
 
 function StatusControl({ load }: { load: Load }) {
   const queryClient = useQueryClient();
+  const toast = useToast();
   const [reason, setReason] = useState('');
   const [pending, setPending] = useState<LoadStatus | null>(null);
 
   const move = useMutation({
     mutationFn: (next: { status: LoadStatus; reason?: string }) =>
       request(`/v1/loads/${load.id}/status`, { method: 'PATCH', body: next }),
-    onSuccess: async () => {
+    onSuccess: async (_, next) => {
       setPending(null);
       setReason('');
+      // Said out loud because under a status filter the row leaves the list.
+      toast(`Load ${load.reference} moved to ${pretty(next.status)}`);
       await queryClient.invalidateQueries();
     },
   });
@@ -389,6 +392,7 @@ export function CoordinateLookup({
 }
 
 function AddLoad({ trucks, onDone }: { trucks: Truck[]; onDone: () => void }) {
+  const toast = useToast();
   const [brokerName, setBroker] = useState('');
   const [rate, setRate] = useState('');
   const [loadedMiles, setLoadedMiles] = useState('');
@@ -446,6 +450,7 @@ function AddLoad({ trucks, onDone }: { trucks: Truck[]; onDone: () => void }) {
         },
       }),
     onSuccess: async () => {
+      toast('Load added');
       await queryClient.invalidateQueries();
       onDone();
     },
@@ -458,7 +463,8 @@ function AddLoad({ trucks, onDone }: { trucks: Truck[]; onDone: () => void }) {
     <Card title="Add a load">
       <div className="grid gap-5 sm:grid-cols-4">
         <Field label="Pickup city">
-          <input className="hq-input" value={pickup.city} onChange={(e) => setPickup({ ...pickup, city: e.target.value })} />
+          {/* Opened from the button or the N key; either way the next thing to do is type. */}
+          <input className="hq-input" autoFocus value={pickup.city} onChange={(e) => setPickup({ ...pickup, city: e.target.value })} />
         </Field>
         <Field label="State" hint="Two letters.">
           <input className="hq-input" maxLength={2} value={pickup.state} onChange={(e) => setPickup({ ...pickup, state: e.target.value.toUpperCase() })} />
@@ -656,6 +662,27 @@ export function LoadsScreen() {
   const myRole = orgs.data?.items.find((o) => o.id === session?.orgId)?.role;
   const canWrite = myRole === 'owner' || myRole === 'dispatcher';
 
+  // "/" to search, "n" for a new load: the two things a dispatcher does here
+  // all day. Ignored while typing in a field or with a modifier held, so they
+  // never eat a keystroke or a browser shortcut.
+  const searchBox = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return;
+      const target = e.target as HTMLElement;
+      if (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) return;
+      if (e.key === '/') {
+        e.preventDefault();
+        searchBox.current?.focus();
+      } else if (e.key === 'n' && canWrite) {
+        e.preventDefault();
+        setAdding(true);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [canWrite]);
+
   const items = loads.data?.pages.flatMap((p) => p.items) ?? [];
   // Every page carries the same org-wide counts — only the first page's is
   // needed, not a merge across pages.
@@ -672,7 +699,7 @@ export function LoadsScreen() {
           </p>
         </div>
         {canWrite && !adding && (
-          <button className="hq-btn hq-btn-primary" onClick={() => setAdding(true)}>
+          <button className="hq-btn hq-btn-primary" aria-keyshortcuts="n" title="Shortcut: N" onClick={() => setAdding(true)}>
             Add a load
           </button>
         )}
@@ -700,11 +727,15 @@ export function LoadsScreen() {
         </div>
 
         <input
+          ref={searchBox}
           type="search"
           className="hq-input w-auto max-w-64"
           placeholder="Search broker, load #, or reference"
+          aria-keyshortcuts="/"
+          title="Shortcut: /"
           value={searchInput}
           onChange={(e) => setSearchInput(e.target.value)}
+          onKeyDown={(e) => e.key === 'Escape' && e.currentTarget.blur()}
         />
       </div>
 

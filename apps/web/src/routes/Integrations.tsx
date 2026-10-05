@@ -11,7 +11,7 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { useOrgs, useSession } from '../components/AuthGate.tsx';
-import { Card, Empty, ErrorNote, Pill, useDocumentTitle } from '../components/ui.tsx';
+import { Card, Empty, ErrorNote, Pill, useDocumentTitle, ConfirmButton, useToast } from '../components/ui.tsx';
 import { request } from '../lib/api.ts';
 
 interface BoardCredential {
@@ -105,6 +105,7 @@ export function IntegrationsScreen() {
     },
   });
 
+  const toast = useToast();
   const disconnect = useMutation({
     mutationFn: () => request('/v1/integrations/motive', { method: 'DELETE' }),
     onSuccess: () => items.refetch(),
@@ -165,21 +166,15 @@ export function IntegrationsScreen() {
                   Reconnect
                 </button>
                 {motive.status === 'active' && (
-                  <button
-                    className="hq-btn hq-btn-ghost text-bad"
-                    disabled={disconnect.isPending}
-                    onClick={() => {
-                      if (
-                        window.confirm(
-                          'Disconnect Motive? Position reports from Motive-equipped trucks will stop until this is reconnected.',
-                        )
-                      ) {
-                        disconnect.mutate();
-                      }
-                    }}
+                  <ConfirmButton
+                    question="Position reports from Motive-equipped trucks stop until this is reconnected."
+                    confirmLabel="Disconnect Motive"
+                    busy={disconnect.isPending}
+                    busyLabel="Disconnecting…"
+                    onConfirm={() => disconnect.mutate(undefined, { onSuccess: () => toast('Motive disconnected') })}
                   >
-                    {disconnect.isPending ? 'Disconnecting…' : 'Disconnect'}
-                  </button>
+                    Disconnect
+                  </ConfirmButton>
                 )}
               </div>
             )}

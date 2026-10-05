@@ -13,7 +13,7 @@ import { Link, useParams } from '@tanstack/react-router';
 import { useState } from 'react';
 import { ApiRequestError, request, type Driver, type Truck } from '../lib/api.ts';
 import { useOrgs, useSession } from '../components/AuthGate.tsx';
-import { Card, Empty, ErrorNote, Field, Label, Money, Num, Pill, useDocumentTitle } from '../components/ui.tsx';
+import { Card, Empty, ErrorNote, Field, Label, Money, Num, Pill, useDocumentTitle, ConfirmButton } from '../components/ui.tsx';
 import { pretty, STATUS_TONE, CoordinateLookup, lastLoadsSearch, type Load } from './Loads.tsx';
 import { NearbyMechanicsCard, NearbyStopsCard } from './LoadPlaces.tsx';
 import type { LoadFeasibilityResponse } from '@haulq/contracts';
@@ -154,13 +154,15 @@ function TrackingLink({ loadId, reference }: { loadId: string; reference: number
               {copied ? 'Copied' : 'Copy'}
             </button>
           </div>
-          <button
-            className="hq-btn hq-btn-ghost text-bad"
-            disabled={revoke.isPending}
-            onClick={() => revoke.mutate()}
+          <ConfirmButton
+            question="Anyone you've sent it to loses the tracking page."
+            confirmLabel="Revoke link"
+            busy={revoke.isPending}
+            busyLabel="Revoking…"
+            onConfirm={() => revoke.mutate()}
           >
-            {revoke.isPending ? 'Revoking…' : 'Revoke this link'}
-          </button>
+            Revoke this link
+          </ConfirmButton>
         </div>
       ) : (
         <button
@@ -280,13 +282,15 @@ function CheckinLink({
               {copied ? 'Copied' : 'Copy'}
             </button>
           </div>
-          <button
-            className="hq-btn hq-btn-ghost text-bad"
-            disabled={revoke.isPending}
-            onClick={() => revoke.mutate()}
+          <ConfirmButton
+            question="The driver can't check in with it any more."
+            confirmLabel="Revoke code"
+            busy={revoke.isPending}
+            busyLabel="Revoking…"
+            onConfirm={() => revoke.mutate()}
           >
-            {revoke.isPending ? 'Revoking…' : 'Revoke this code'}
-          </button>
+            Revoke this code
+          </ConfirmButton>
         </div>
       ) : (
         <div className="space-y-3">

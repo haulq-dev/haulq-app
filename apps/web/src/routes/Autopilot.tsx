@@ -55,7 +55,7 @@ import {
 import { Link } from '@tanstack/react-router';
 import { useEffect, useState } from 'react';
 import { useOrgs, useSession } from '../components/AuthGate.tsx';
-import { Card, Empty, ErrorNote, Pill, useDocumentTitle } from '../components/ui.tsx';
+import { Card, Empty, ErrorNote, Pill, useDocumentTitle, ConfirmButton, useToast } from '../components/ui.tsx';
 
 /** How often an open screen looks again. A draft appearing while someone is watching should not need a refresh. */
 const REFRESH_MS = 30_000;
@@ -552,6 +552,7 @@ function MailboxCard({
   canConfigure: boolean;
 }) {
   const connect = useConnectMailbox();
+  const toast = useToast();
   const disconnect = useDisconnectMailbox();
   const connected = mailbox?.connected === true;
   // Back from the provider but not confirmed yet: say so rather than "not connected".
@@ -594,16 +595,15 @@ function MailboxCard({
                   </button>
                 )}
                 {connected && (
-                  <button
-                    type="button"
-                    className="hq-btn hq-btn-ghost text-bad"
-                    disabled={disconnect.isPending}
-                    onClick={() => {
-                      if (window.confirm('Disconnect your mailbox? Autopilot will stop sending, and HaulQ will stop reading it for rate confirmations.')) disconnect.mutate();
-                    }}
+                  <ConfirmButton
+                    question="Autopilot stops sending, and HaulQ stops reading it for rate confirmations."
+                    confirmLabel="Disconnect mailbox"
+                    busy={disconnect.isPending}
+                    busyLabel="Disconnecting…"
+                    onConfirm={() => disconnect.mutate(undefined, { onSuccess: () => toast('Mailbox disconnected') })}
                   >
-                    {disconnect.isPending ? 'Disconnecting…' : 'Disconnect'}
-                  </button>
+                    Disconnect
+                  </ConfirmButton>
                 )}
               </div>
             )}

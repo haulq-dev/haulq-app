@@ -6,7 +6,7 @@
  * already does most of the work.
  */
 
-import { useEffect, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { ApiRequestError } from '../lib/api.ts';
 
 /**
@@ -171,5 +171,104 @@ export function Field({
       {children}
       {hint && <span className="mt-1 block text-xs text-mute">{hint}</span>}
     </label>
+  );
+}
+
+/**
+ * A short "that worked" note in the corner, for actions whose result is
+ * otherwise easy to miss: the row moved out of the current filter, the panel
+ * closed, or nothing on screen visibly changes. Failures stay inline as
+ * `ErrorNote`, next to what failed — a toast that vanishes is the wrong place
+ * for something that still needs fixing.
+ *
+ * Outside a `ToastProvider` (screens under test) it does nothing.
+ */
+const ToastContext = createContext<(message: string) => void>(() => {});
+
+export function useToast() {
+  return useContext(ToastContext);
+}
+
+const TOAST_MS = 4000;
+
+export function ToastProvider({ children }: { children: ReactNode }) {
+  const [toasts, setToasts] = useState<{ id: number; message: string }[]>([]);
+  const nextId = useRef(0);
+
+  const show = useCallback((message: string) => {
+    const id = ++nextId.current;
+    // Three at most; a burst of saves shouldn't stack up the screen.
+    setToasts((current) => [...current.slice(-2), { id, message }]);
+    setTimeout(() => setToasts((current) => current.filter((t) => t.id !== id)), TOAST_MS);
+  }, []);
+
+  return (
+    <ToastContext.Provider value={show}>
+      {children}
+      {/* Always mounted, so screen readers have the live region before the first message lands in it. */}
+      <div role="status" aria-live="polite" className="pointer-events-none fixed right-4 bottom-4 z-50 flex flex-col items-end gap-2">
+        {toasts.map((t) => (
+          <div key={t.id} className="border-l-2 border-ok bg-ink px-4 py-2.5 text-sm text-white">
+            {t.message}
+          </div>
+        ))}
+      </div>
+    </ToastContext.Provider>
+  );
+}
+
+/**
+ * A button that asks before it acts, inline: the first click swaps it for the
+ * question and a confirm/cancel pair. The same shape as voiding an invoice or
+ * taking a truck out of service, minus the reason field, and in the page's
+ * own type rather than the browser's grey `window.confirm` box. Escape backs
+ * out.
+ */
+export function ConfirmButton({
+  children,
+  question,
+  confirmLabel,
+  busy = false,
+  busyLabel,
+  onConfirm,
+  className = 'hq-btn hq-btn-ghost text-bad',
+}: {
+  children: ReactNode;
+  question: string;
+  confirmLabel: string;
+  busy?: boolean;
+  busyLabel?: string;
+  onConfirm: () => void;
+  className?: string;
+}) {
+  const [asking, setAsking] = useState(false);
+
+  if (!asking) {
+    return (
+      <button type="button" className={className} disabled={busy} onClick={() => setAsking(true)}>
+        {busy && busyLabel ? busyLabel : children}
+      </button>
+    );
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-2" onKeyDown={(e) => e.key === 'Escape' && setAsking(false)}>
+      <span className="text-sm text-slate">{question}</span>
+      <button
+        type="button"
+        className="hq-btn hq-btn-ghost text-bad"
+        // The button that was clicked is gone; focus lands here rather than on the page body.
+        autoFocus
+        onClick={() => {
+          setAsking(false);
+          onConfirm();
+        }}
+      >
+        {confirmLabel}
+      </button>
+      <button type="button" className="hq-btn hq-btn-ghost" onClick={() => setAsking(false)}>
+        Cancel
+      </button>
+    </div>
   );
 }

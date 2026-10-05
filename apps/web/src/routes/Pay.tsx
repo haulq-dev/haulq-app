@@ -59,7 +59,7 @@ import { INVOICE_STATUSES, type InvoiceStatus } from '@haulq/contracts';
 import { useNavigate, useSearch } from '@tanstack/react-router';
 import { useState } from 'react';
 import { useOrgs, useSession } from '../components/AuthGate.tsx';
-import { Card, Empty, ErrorNote, Field, LoadMore, Money, Num, Pill, useDocumentTitle } from '../components/ui.tsx';
+import { Card, Empty, ErrorNote, Field, LoadMore, Money, Num, Pill, useDocumentTitle, useToast } from '../components/ui.tsx';
 
 /** A headline number, same shape as `Insights.tsx`'s `Stat` — kept local per `ui.tsx`'s note on premature abstraction. */
 function AgingTile({ bucket, count, totalCents }: AgingBucket) {
@@ -84,9 +84,10 @@ function AgingTile({ bucket, count, totalCents }: AgingBucket) {
 /** Records that the invoice went to the broker. It emails nothing; Autopilot's invoice email is what delivers one. */
 function SendControl({ invoice }: { invoice: Invoice }) {
   const send = useMarkInvoiceSent();
+  const toast = useToast();
   return (
     <>
-      <button className="hq-btn hq-btn-primary" disabled={send.isPending} onClick={() => send.mutate(invoice.id)} title="Records that you sent it to the broker">
+      <button className="hq-btn hq-btn-primary" disabled={send.isPending} onClick={() => send.mutate(invoice.id, { onSuccess: () => toast(`Invoice ${invoice.reference} marked sent`) })} title="Records that you sent it to the broker">
         {send.isPending ? 'Saving…' : 'Mark sent'}
       </button>
       <ErrorNote error={send.error} />
@@ -98,6 +99,7 @@ function VoidControl({ invoice }: { invoice: Invoice }) {
   const [reason, setReason] = useState('');
   const [open, setOpen] = useState(false);
   const void_ = useVoidInvoice();
+  const toast = useToast();
 
   if (!open) {
     return (
@@ -120,6 +122,7 @@ function VoidControl({ invoice }: { invoice: Invoice }) {
               onSuccess: () => {
                 setOpen(false);
                 setReason('');
+                toast(`Invoice ${invoice.reference} voided`);
               },
             },
           )
@@ -137,6 +140,7 @@ function VoidControl({ invoice }: { invoice: Invoice }) {
 
 /** Starts at what is still owed after any partial payments, so the common case is one click. */
 function RecordPaymentControl({ invoice, owedCents, packets }: { invoice: Invoice; owedCents: number; packets: FactoringPacket[] }) {
+  const toast = useToast();
   const [open, setOpen] = useState(false);
   const [amount, setAmount] = useState(() => centsToInput(owedCents));
   const [source, setSource] = useState<PaymentSource>('broker_direct');
@@ -201,7 +205,12 @@ function RecordPaymentControl({ invoice, owedCents, packets }: { invoice: Invoic
                 ...(source === 'factor' && factoringPacketId ? { factoringPacketId } : {}),
                 ...(reference.trim() ? { reference: reference.trim() } : {}),
               },
-              { onSuccess: () => setOpen(false) },
+              {
+                onSuccess: () => {
+                  setOpen(false);
+                  toast(`Payment recorded on invoice ${invoice.reference}`);
+                },
+              },
             )
           }
         >
@@ -414,6 +423,7 @@ function InvoiceDetail({ invoice, companies, role }: { invoice: Invoice; compani
 const EMPTY_LINE_ITEM: DraftLineItem = { code: 'linehaul', description: '', amount: '' };
 
 function GenerateInvoice({ onDone }: { onDone: () => void }) {
+  const toast = useToast();
   const loads = useInvoiceableLoads();
   const generate = useGenerateInvoice();
   const [loadId, setLoadId] = useState('');
@@ -466,7 +476,7 @@ function GenerateInvoice({ onDone }: { onDone: () => void }) {
         <button
           className="hq-btn hq-btn-brand"
           disabled={!ready || generate.isPending}
-          onClick={() => 'items' in body && generate.mutate({ loadId, lineItems: body.items }, { onSuccess: onDone })}
+          onClick={() => 'items' in body && generate.mutate({ loadId, lineItems: body.items }, { onSuccess: (invoice) => { toast(`Invoice ${invoice.reference} generated`); onDone(); } })}
         >
           {generate.isPending ? 'Generating…' : 'Generate invoice'}
         </button>

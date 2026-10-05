@@ -35,7 +35,7 @@ import {
 } from '@haulq/client';
 import { useState } from 'react';
 import { useOrgs, useSession } from '../components/AuthGate.tsx';
-import { Card, Empty, ErrorNote, Field, LoadMore, Pill, useDocumentTitle } from '../components/ui.tsx';
+import { Card, Empty, ErrorNote, Field, LoadMore, Pill, useDocumentTitle, ConfirmButton, useToast } from '../components/ui.tsx';
 
 function when(iso: string | null): string {
   if (!iso) return '—';
@@ -172,6 +172,7 @@ function InviteForm({ myRole }: { myRole: string | undefined }) {
 function MemberRow({ member, me, ownerCount }: { member: Member; me: { userId: string | undefined; role: string | undefined }; ownerCount: number }) {
   const controls = memberControls(member, me, ownerCount);
   const changeRole = useChangeRole();
+  const toast = useToast();
   const remove = useRemoveMember();
   const isYou = member.userId === me.userId;
 
@@ -206,15 +207,15 @@ function MemberRow({ member, me, ownerCount }: { member: Member; me: { userId: s
       <td className="text-slate">{when(member.acceptedAt)}</td>
       <td>
         {controls.remove && (
-          <button
-            className="hq-btn hq-btn-ghost text-bad"
-            disabled={remove.isPending}
-            onClick={() => {
-              if (window.confirm(`Remove ${member.fullName ?? member.email} from this account?`)) remove.mutate(member.userId);
-            }}
+          <ConfirmButton
+            question={`Remove ${member.fullName ?? member.email} from this account?`}
+            confirmLabel="Remove"
+            busy={remove.isPending}
+            busyLabel="Removing…"
+            onConfirm={() => remove.mutate(member.userId, { onSuccess: () => toast(`${member.fullName ?? member.email} removed`) })}
           >
-            {remove.isPending ? 'Removing…' : 'Remove'}
-          </button>
+            Remove
+          </ConfirmButton>
         )}
         <ErrorNote error={changeRole.error ?? remove.error} />
       </td>
@@ -223,6 +224,7 @@ function MemberRow({ member, me, ownerCount }: { member: Member; me: { userId: s
 }
 
 function InvitationRow({ invitation, canManage }: { invitation: Invitation; canManage: boolean }) {
+  const toast = useToast();
   const revoke = useRevokeInvitation();
   const expiry = invitationExpiry(invitation.expiresAt);
   const color = expiry.tone === 'bad' ? 'text-bad' : expiry.tone === 'warn' ? 'text-warn' : 'text-slate';
@@ -238,9 +240,15 @@ function InvitationRow({ invitation, canManage }: { invitation: Invitation; canM
       </td>
       <td>
         {canManage && (
-          <button className="hq-btn hq-btn-ghost text-bad" disabled={revoke.isPending} onClick={() => revoke.mutate(invitation.id)}>
-            {revoke.isPending ? 'Withdrawing…' : 'Withdraw'}
-          </button>
+          <ConfirmButton
+            question="The link stops working."
+            confirmLabel="Withdraw"
+            busy={revoke.isPending}
+            busyLabel="Withdrawing…"
+            onConfirm={() => revoke.mutate(invitation.id, { onSuccess: () => toast(`Invitation to ${invitation.email} withdrawn`) })}
+          >
+            Withdraw
+          </ConfirmButton>
         )}
         <ErrorNote error={revoke.error} />
       </td>

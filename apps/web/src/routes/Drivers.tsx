@@ -40,7 +40,7 @@ import {
 } from '@haulq/client';
 import { useState } from 'react';
 import { useOrgs, useSession } from '../components/AuthGate.tsx';
-import { Card, Empty, ErrorNote, Field, LoadMore, Pill, useDocumentTitle } from '../components/ui.tsx';
+import { Card, Empty, ErrorNote, Field, LoadMore, Pill, useDocumentTitle, ConfirmButton, useToast } from '../components/ui.tsx';
 
 /** Read in UTC, the way the date was written (noon UTC), so no zone shows the day before. */
 function formatDate(iso: string): string {
@@ -213,6 +213,7 @@ function AddDriver({ trucks, onDone }: { trucks: Truck[]; onDone: () => void }) 
 function EditDriver({ driver, trucks, onDone }: { driver: Driver; trucks: Truck[]; onDone: () => void }) {
   const [values, setValues] = useState<DriverFormValues>(() => driverToForm(driver));
   const update = useUpdateDriver();
+  const toast = useToast();
   const remove = useRemoveDriver();
   const result = driverBody(values, 'update');
 
@@ -231,17 +232,24 @@ function EditDriver({ driver, trucks, onDone }: { driver: Driver; trucks: Truck[
         <button className="hq-btn hq-btn-ghost" onClick={onDone}>
           Cancel
         </button>
-        <button
-          className="hq-btn hq-btn-ghost ml-auto text-bad"
-          disabled={remove.isPending}
-          onClick={() => {
-            if (window.confirm(`Take ${driver.fullName} off the roster? Past loads keep their name; they can't be assigned new ones.`)) {
-              remove.mutate(driver.id, { onSuccess: onDone });
+        <div className="ml-auto">
+          <ConfirmButton
+            question="Past loads keep their name; they can't be assigned new ones."
+            confirmLabel={`Take ${driver.fullName} off`}
+            busy={remove.isPending}
+            busyLabel="Removing…"
+            onConfirm={() =>
+              remove.mutate(driver.id, {
+                onSuccess: () => {
+                  toast(`${driver.fullName} is off the roster`);
+                  onDone();
+                },
+              })
             }
-          }}
-        >
-          {remove.isPending ? 'Removing…' : 'Take off the roster'}
-        </button>
+          >
+            Take off the roster
+          </ConfirmButton>
+        </div>
       </div>
       <ErrorNote error={update.error ?? remove.error} />
     </Card>
