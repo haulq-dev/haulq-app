@@ -3,8 +3,7 @@
  * and who could fix a truck near where it is.
  * `FEATURE_REQUESTS_PLAN.md` sections 3 and 4.
  *
- * Both are live searches against a vendor (HERE for stops, Yelp for shops) and
- * store nothing, so neither runs until asked. Where a vendor is not connected on
+ * Both are live searches against HERE and store nothing, so neither runs until asked. Where a vendor is not connected on
  * this deployment, or the carrier's plan does not include the product, that is
  * said plainly as an expected state rather than raised as an error.
  */
@@ -24,7 +23,6 @@ import {
   useLoadTracking,
   useNearbyMechanics,
   useNearbyStops,
-  yelpStarKey,
   type Load,
   type MechanicSearch,
 } from '@haulq/client';
@@ -36,45 +34,6 @@ import { CoordinateLookup } from './Loads.tsx';
 /** A state the carrier cannot do anything about, said calmly: no alert styling. */
 function ExpectedNote({ children }: { children: React.ReactNode }) {
   return <p className="border-l-2 border-line bg-wash px-3 py-2 text-sm text-mute">{children}</p>;
-}
-
-/**
- * Yelp's own logo and stars, unaltered (see `public/yelp/NOTICE.txt`). Yelp's
- * display requirements ask for the logo to be prominent on anything that came
- * from Yelp, linking to Yelp; a rating shown with Yelp's branded stars beside
- * the review count; and no generic stars. Sized by height only, so the
- * proportions are Yelp's.
- */
-function YelpMark({ height }: { height: number }) {
-  return <img src="/yelp/yelp_logo.svg" alt="Yelp" style={{ height, width: 'auto' }} />;
-}
-
-function YelpLogo({ href, height }: { href: string; height: number }) {
-  return (
-    <a href={href} target="_blank" rel="noreferrer" className="inline-flex items-center align-middle">
-      <YelpMark height={height} />
-    </a>
-  );
-}
-
-function YelpStars({ rating, reviewCount }: { rating: number | null; reviewCount: number }) {
-  const key = yelpStarKey(rating);
-  if (key === null || rating === null) return <span className="text-sm text-mute">Not rated on Yelp</span>;
-  const base = `/yelp/stars/Review_Ribbon_medium_20_${key}`;
-  return (
-    <span className="inline-flex items-center gap-2">
-      <img
-        src={`${base}@1x.png`}
-        srcSet={`${base}@1x.png 1x, ${base}@2x.png 2x`}
-        width={108}
-        height={20}
-        alt={`${rating.toFixed(1)} out of 5 stars on Yelp`}
-      />
-      <span className="num text-sm text-slate">
-        {reviewCount} review{reviewCount === 1 ? '' : 's'}
-      </span>
-    </span>
-  );
 }
 
 const code = (error: unknown) => (error instanceof ApiRequestError ? error.code : null);
@@ -178,8 +137,6 @@ export function NearbyStopsCard({ load }: { load: Load }) {
  * Repair shops near where the truck is, near a stop, or near somewhere else. The
  * starting point matters more than the search: a breakdown is about where the
  * truck is now, which a dispatcher does not always want to type out.
- *
- * Reviews are Yelp's, shown as Yelp's, each linking back to its Yelp page.
  */
 export function NearbyMechanicsCard({ load }: { load: Load }) {
   const tracking = useLoadTracking(load.id);
@@ -208,9 +165,9 @@ export function NearbyMechanicsCard({ load }: { load: Load }) {
         : null
       : (origins.find((o) => o.key === chosen) ?? null);
 
-  // Two daily limits (this carrier's, and HaulQ's Yelp budget as a whole) are
-  // expected states with a date on them, so they read as a note, and the
-  // API's own sentence says which one and when it starts over.
+  // Being limited (this carrier's daily count, or HERE's rate) is an expected
+  // state, so it reads as a note, and the API's own sentence says which one and
+  // when it passes.
   const limitReached = code(results.error) === 'org_search_limit_reached' || code(results.error) === 'search_limit_reached';
   const unavailable =
     code(results.error) === 'not_configured'
@@ -221,7 +178,7 @@ export function NearbyMechanicsCard({ load }: { load: Load }) {
 
   return (
     <Card title={`Load ${load.reference} — nearby repair shops`}>
-      <p className="mb-3 max-w-prose text-sm text-slate">Find a shop near the truck, a stop, or anywhere else. Ratings and reviews come from Yelp.</p>
+      <p className="mb-3 max-w-prose text-sm text-slate">Find a shop near the truck, a stop, or anywhere else.</p>
 
       <div className="space-y-3">
         <label className="block">
@@ -313,25 +270,23 @@ export function NearbyMechanicsCard({ load }: { load: Load }) {
           (results.data.mechanics.length === 0 ? (
             <Empty>No shops found within {search?.radiusMiles} miles. Try a wider search.</Empty>
           ) : (
-            <>
               <ul className="divide-y divide-line border-y border-line">
                 {results.data.mechanics.map((m, i) => {
                   const tel = telHref(m.phone);
+                  const address = tidyAddress(m.name, m.address);
                   return (
                     <li key={`${m.name}-${i}`} className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 py-3">
                       <div className="min-w-0">
                         <p className="font-semibold">{m.name}</p>
-                        <YelpStars rating={m.rating} reviewCount={m.reviewCount} />
-                        {m.address && <p className="text-xs text-mute">{m.address}</p>}
+                        {address && <p className="text-xs text-mute">{address}</p>}
                         <p className="mt-1 flex flex-wrap gap-x-4 text-sm">
                           {tel && m.phone && (
                             <a href={tel} className="text-brand underline">
                               {m.phone}
                             </a>
                           )}
-                          <a href={m.yelpUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 text-brand underline">
-                            Read reviews on
-                            <YelpMark height={16} />
+                          <a href={mapsUrl(m)} target="_blank" rel="noreferrer" className="text-brand underline">
+                            Open in Maps
                           </a>
                         </p>
                       </div>
@@ -340,11 +295,6 @@ export function NearbyMechanicsCard({ load }: { load: Load }) {
                   );
                 })}
               </ul>
-              <p className="mt-3 flex items-center gap-2 text-xs text-mute">
-                Ratings and reviews from
-                <YelpLogo href="https://www.yelp.com" height={20} />
-              </p>
-            </>
           ))}
       </div>
     </Card>

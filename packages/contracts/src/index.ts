@@ -882,16 +882,18 @@ export type NearbyStopsResponse = z.infer<typeof NearbyStopsResponseSchema>;
 //
 // The boss's own hedge on the call: "could just be a normal AI search"
 // rather than a built trust-score pipeline. This is that smaller version —
-// a live Yelp lookup, no storage. See `yelp.ts`'s module note.
+// a live HERE lookup, no storage. See `here-mechanics.ts`'s module note.
 
 export const MechanicSchema = z.object({
   name: z.string(),
-  /** 1–5, Yelp's own aggregate. Null when Yelp has not rated this business. */
-  rating: z.number().nullable(),
-  reviewCount: z.number().int(),
   address: z.string().nullable(),
   phone: z.string().nullable(),
   distanceMiles: z.number(),
+  lat: z.number(),
+  lng: z.number(),
+  // Only for iOS builds already installed: see `mechanics.ts`. Nothing newer reads these.
+  rating: z.number().nullable(),
+  reviewCount: z.number().int(),
   yelpUrl: z.string(),
 });
 export type Mechanic = z.infer<typeof MechanicSchema>;

@@ -3,11 +3,11 @@
  * `FEATURE_REQUESTS_PLAN.md` sections 3 and 4. The hooks that fetch these are
  * in `react.ts`; this is what turns the answer into something readable.
  *
- * Both are live lookups against a vendor (HERE for stops, Yelp for shops) and
+ * Both are live lookups against HERE and
  * store nothing, so the searches here are *asked for*, never run on their own.
  */
 
-import type { Mechanic, NearbyPlace } from '@haulq/contracts';
+import type { NearbyPlace } from '@haulq/contracts';
 
 export type { Mechanic, NearbyMechanicsResponse, NearbyPlace, NearbyStopsResponse, StopNearbyPlaces } from '@haulq/contracts';
 
@@ -64,22 +64,21 @@ export function formatMiles(miles: number): string {
 
 // --- nearby repair shops ------------------------------------------------------------
 
-/** How far to look. Yelp's own ceiling, through the API, is 24. */
+/** How far to look. The API's ceiling is 24. */
 export const MECHANIC_RADIUS_OPTIONS = [5, 10, 15, 24] as const;
 export const DEFAULT_MECHANIC_RADIUS = 15;
 
 /**
- * What to search for. Free text is what Yelp takes, so these are shortcuts, not
- * a closed list. Each also names the Yelp categories that mean the right kind
- * of business: without them, a towing or tire search returned ordinary garages.
- * A search the person typed themselves sends no categories, and only its words
- * decide. The aliases are the ones Yelp returned real results for.
+ * What to search for. These are shortcuts, not a closed list: web also takes
+ * free text. Most name the kind of business, which finds far more than words do
+ * in HERE. HERE has no trailer repair category, so that one is its words, which
+ * do find trailer shops. A search the person typed sends no categories either.
  */
-export const MECHANIC_SEARCHES: ReadonlyArray<{ label: string; query: string; categories: string }> = [
-  { label: 'Diesel truck repair', query: 'diesel truck repair', categories: 'truckrepair,autorepair' },
+export const MECHANIC_SEARCHES: ReadonlyArray<{ label: string; query: string; categories?: string }> = [
+  { label: 'Diesel truck repair', query: 'diesel truck repair', categories: 'truckrepair' },
   { label: 'Tires', query: 'truck tire', categories: 'tires' },
   { label: 'Towing', query: 'heavy duty towing', categories: 'towing' },
-  { label: 'Trailer / reefer repair', query: 'reefer trailer repair', categories: 'trailerrepair,truckrepair' },
+  { label: 'Trailer / reefer repair', query: 'reefer trailer repair' },
 ];
 
 /** A search that has been asked for. The hook stays idle until there is one. */
@@ -88,30 +87,8 @@ export interface MechanicSearch {
   lng: number;
   radiusMiles: number;
   query: string;
-  /** Yelp category aliases, or none for a typed search. */
+  /** The kind of business, or none for a search its words decide. */
   categories?: string | undefined;
-}
-
-/** "4.5 (123 reviews)", or "Not rated" for a business Yelp has no rating for. */
-export function formatRating(mechanic: Pick<Mechanic, 'rating' | 'reviewCount'>): string {
-  if (mechanic.rating === null) return 'Not rated';
-  const reviews = `${mechanic.reviewCount} review${mechanic.reviewCount === 1 ? '' : 's'}`;
-  return `${mechanic.rating.toFixed(1)} (${reviews})`;
-}
-
-/**
- * Which of Yelp's star images shows a rating: the part of its file name between
- * `Review_Ribbon_<size>_` and `@<density>.png`. Yelp rounds to half a star, and
- * its ratings arrive as decimals (4.8, 2.3), so this rounds the same way. Their
- * naming is not regular for the half stars: 1.5 is "2_1_half" and 2.5 is
- * "2_half", checked against the images. Null for a business with no rating, which
- * shows no stars rather than an empty row that reads as one star.
- */
-export function yelpStarKey(rating: number | null): string | null {
-  if (rating === null || !Number.isFinite(rating)) return null;
-  const half = Math.round(Math.min(5, Math.max(0, rating)) * 2);
-  const KEYS = ['0', 'half', '1', '2_1_half', '2', '2_half', '3', '3_half', '4', '4_half', '5'] as const;
-  return KEYS[half]!;
 }
 
 /** A phone number a phone can dial. Null when there is nothing dialable. */

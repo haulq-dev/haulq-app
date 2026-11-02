@@ -1,8 +1,8 @@
 /**
  * The nearby-mechanics route, end to end.
  *
- * Same shape as `nearby-stops.test.ts`: a real Yelp account is not
- * something this repo has for tests, so a fake `MechanicSearchProvider` is
+ * Same shape as `nearby-stops.test.ts`: a real HERE account is not
+ * something tests should spend, so a fake `MechanicSearchProvider` is
  * injected through `buildServer`'s `mechanicSearchProvider` option — the
  * same seam `placesProvider` uses. What this proves is the wiring: a
  * missing provider 503s, results come back, and — unlike `nearby-stops.ts`
@@ -21,7 +21,8 @@ import {
   type Database,
 } from '@haulq/db';
 import type { FastifyInstance } from 'fastify';
-import { YelpApiError, type Mechanic, type MechanicSearchProvider } from '../integrations/yelp.ts';
+import { HereApiError } from '../integrations/here.ts';
+import type { Mechanic, MechanicSearchProvider } from '../integrations/here-mechanics.ts';
 import { loadEnv } from '../env.ts';
 import { buildServer } from '../server.ts';
 
@@ -32,18 +33,17 @@ const WICHITA = { lat: 37.6889, lng: -97.3365 };
 
 const MECHANIC: Mechanic = {
   name: 'Prairie Diesel Repair',
-  rating: 4.5,
-  reviewCount: 87,
   address: '123 Industrial Rd, Wichita, KS 67202',
   phone: '(316) 555-0100',
   distanceMiles: 2.1,
-  yelpUrl: 'https://www.yelp.com/biz/prairie-diesel-repair',
+  lat: 37.7,
+  lng: -97.3,
 };
 
 class FakeMechanicSearchProvider implements MechanicSearchProvider {
   private readonly mechanics: Mechanic[];
   public calls: Array<{ lat: number; lng: number; radiusMeters: number; query: string; categories: string | undefined }> = [];
-  /** Set to make the next searches fail, as Yelp does when its budget is spent. */
+  /** Set to make the next searches fail, as HERE does when it limits the account. */
   public failWith: Error | undefined;
 
   constructor(mechanics: Mechanic[] = [MECHANIC]) {
@@ -62,12 +62,12 @@ async function newApp(
   extraEnv: Record<string, string> = {},
 ): Promise<FastifyInstance> {
   // Every test here controls the provider explicitly, so none of them
-  // should depend on whether a real YELP_API_KEY happens to sit in the
+  // should depend on whether a real HERE_API_KEY happens to sit in the
   // developer's own .env — same reasoning `nearby-stops.test.ts`'s
-  // `newApp` already uses for HERE_API_KEY.
-  const { YELP_API_KEY: _yelpApiKey, ...envWithoutYelpKey } = process.env;
+  // `newApp` already uses.
+  const { HERE_API_KEY: _hereApiKey, ...envWithoutHereKey } = process.env;
   return buildServer(
-    loadEnv({ ...envWithoutYelpKey, ...extraEnv, NODE_ENV: 'test', DATABASE_URL: url! }),
+    loadEnv({ ...envWithoutHereKey, ...extraEnv, NODE_ENV: 'test', DATABASE_URL: url! }),
     { mechanicSearchProvider },
   );
 }
@@ -129,7 +129,15 @@ suite('nearby-mechanics route', () => {
         headers: { 'x-haulq-org-id': orgId, 'x-haulq-user-id': userId },
       });
       assert.equal(res.statusCode, 200);
-      assert.deepEqual(res.json().mechanics, [MECHANIC]);
+      const [shop] = res.json().mechanics;
+      assert.equal(shop.name, MECHANIC.name);
+      assert.equal(shop.phone, MECHANIC.phone);
+      assert.equal(shop.lat, MECHANIC.lat);
+
+      // What iOS builds already installed still read: unrated, and a working link.
+      assert.equal(shop.rating, null);
+      assert.equal(shop.reviewCount, 0);
+      assert.match(shop.yelpUrl, /^https:\/\/www\.yelp\.com\/search\?find_desc=Prairie\+Diesel\+Repair&find_loc=123\+Industrial/);
 
       assert.equal(provider.calls.length, 1);
       assert.equal(provider.calls[0]!.lat, WICHITA.lat);
@@ -221,9 +229,9 @@ suite('nearby-mechanics route', () => {
     }
   });
 
-  it('caps each carrier\'s searches per day, so one carrier cannot spend the whole Yelp budget', async () => {
+  it('caps each carrier\'s searches per day', async () => {
     const provider = new FakeMechanicSearchProvider();
-    const app = await newApp(provider, { YELP_ORG_DAILY_LIMIT: '2' });
+    const app = await newApp(provider, { MECHANIC_SEARCH_ORG_DAILY_LIMIT: '2' });
     try {
       const busy = await newOrg(app, userId, 'Mechanics Busy Carrier');
       const quiet = await newOrg(app, userId, 'Mechanics Quiet Carrier');
@@ -241,7 +249,7 @@ suite('nearby-mechanics route', () => {
       assert.equal(third.statusCode, 429);
       assert.equal(third.json().code, 'org_search_limit_reached');
       assert.match(third.json().explanation, /2 repair-shop searches for today/);
-      assert.equal(provider.calls.length, 2, 'the refused one never reached Yelp');
+      assert.equal(provider.calls.length, 2, 'the refused one never reached HERE');
 
       assert.equal((await search(quiet)).statusCode, 200, "another carrier's day is its own");
     } finally {
@@ -249,12 +257,12 @@ suite('nearby-mechanics route', () => {
     }
   });
 
-  it('says so plainly when Yelp itself has run out of its daily budget', async () => {
+  it('says so plainly when HERE is limiting the account', async () => {
     const provider = new FakeMechanicSearchProvider();
-    provider.failWith = new YelpApiError(429, 'Yelp 429: ACCESS_LIMIT_REACHED');
+    provider.failWith = new HereApiError(429, 'HERE 429: rate limit');
     const app = await newApp(provider);
     try {
-      const orgId = await newOrg(app, userId, 'Mechanics Yelp Limit Carrier');
+      const orgId = await newOrg(app, userId, 'Mechanics HERE Limit Carrier');
       createdOrgs.push(orgId);
 
       const res = await app.inject({
@@ -265,7 +273,7 @@ suite('nearby-mechanics route', () => {
 
       assert.equal(res.statusCode, 429);
       assert.equal(res.json().code, 'search_limit_reached');
-      assert.match(res.json().explanation, /daily limit/);
+      assert.match(res.json().explanation, /busy right now/);
     } finally {
       await app.close();
     }

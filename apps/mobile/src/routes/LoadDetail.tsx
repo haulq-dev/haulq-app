@@ -234,7 +234,7 @@ function PositionControl({ loadId }: { loadId: string }) {
 
 /**
  * Broken down, or a tire gone: repair shops near where the driver is, or a
- * stop. Behind a tap, so it neither crowds the milestones nor spends a Yelp
+ * stop. Behind a tap, so it neither crowds the milestones nor spends a paid
  * search nobody asked for.
  */
 function Breakdown({ stops }: { stops: LoadStop[] }) {

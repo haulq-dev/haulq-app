@@ -169,8 +169,8 @@ export function NearbyStopsSection({ load }: { load: Load }) {
 }
 
 /**
- * Repair shops near the truck's last position or a stop, from Yelp. See
- * `components/RepairShops.tsx` for Yelp's display rules and the search budget.
+ * Repair shops near the truck's last position or a stop, from HERE. See
+ * `components/RepairShops.tsx` for the search limit.
  */
 export function RepairShopsSection({ load }: { load: Load }) {
   const tracking = useLoadTracking(load.id);

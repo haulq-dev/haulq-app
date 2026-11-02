@@ -74,12 +74,15 @@ const stopsAnswer = (): NearbyStopsResponse =>
 
 const shop = (over: Record<string, unknown> = {}) => ({
   name: 'Prairie Diesel',
-  rating: 4.5,
-  reviewCount: 123,
-  address: '100 Main St, Salina, KS',
+  address: 'Prairie Diesel, 100 Main St, Salina, KS, United States',
   phone: '(785) 555-0142',
   distanceMiles: 3.2,
-  yelpUrl: 'https://www.yelp.com/biz/prairie-diesel',
+  lat: 38.8,
+  lng: -97.6,
+  // What the API still sends for iOS builds already installed.
+  rating: null,
+  reviewCount: 0,
+  yelpUrl: 'https://www.yelp.com/search?find_desc=Prairie+Diesel',
   ...over,
 });
 
@@ -182,7 +185,7 @@ describe('NearbyStopsCard', () => {
 describe('NearbyMechanicsCard', () => {
   const truckAt = { label: 'Truck 4', currentCity: 'Salina', currentState: 'KS', currentLat: 38.8, currentLng: -97.6, positionAt: null };
 
-  it('starts from where the truck is, searches only when asked, and shows what Yelp says', async () => {
+  it('starts from where the truck is, searches only when asked, and shows the shop', async () => {
     const { calls } = renderCard(<NearbyMechanicsCard load={load(twoStops())} />, {
       tracking: tracking(truckAt),
       mechanics: { mechanics: [shop()] } as NearbyMechanicsResponse,
@@ -196,12 +199,12 @@ describe('NearbyMechanicsCard', () => {
     const call = calls.find((c) => c.startsWith('/v1/mechanics/nearby'))!;
     const q = new URLSearchParams(call.split('?')[1]);
     expect([q.get('lat'), q.get('lng'), q.get('radiusMiles'), q.get('query')]).toEqual(['38.8', '-97.6', '15', 'diesel truck repair']);
-    expect(screen.getByRole('img', { name: '4.5 out of 5 stars on Yelp' })).toBeInTheDocument();
-    expect(screen.getByText('123 reviews')).toBeInTheDocument();
+    expect(screen.getByText('100 Main St, Salina, KS')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: '(785) 555-0142' })).toHaveAttribute('href', 'tel:7855550142');
-    expect(screen.getByRole('link', { name: /Read reviews on/ })).toHaveAttribute('href', 'https://www.yelp.com/biz/prairie-diesel');
+    expect(screen.getByRole('link', { name: 'Open in Maps' })).toHaveAttribute('href', expect.stringContaining('38.8%2C-97.6'));
     expect(screen.getByText('3.2 mi')).toBeInTheDocument();
-    expect(screen.getByText(/Ratings and reviews from/)).toBeInTheDocument();
+    expect(screen.queryByText(/Yelp/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('img', { name: /Yelp/ })).not.toBeInTheDocument();
   });
 
   it('offers each stop that has coordinates, and none that do not', async () => {
@@ -222,13 +225,12 @@ describe('NearbyMechanicsCard', () => {
     expect([q.get('radiusMiles'), q.get('query')]).toEqual(['24', 'truck tire']);
   });
 
-  it('says so for a shop Yelp has not rated, and shows no phone link it cannot dial', async () => {
+  it('shows no phone link it cannot dial', async () => {
     renderCard(<NearbyMechanicsCard load={load(twoStops())} />, {
-      mechanics: { mechanics: [shop({ rating: null, reviewCount: 0, phone: null })] } as NearbyMechanicsResponse,
+      mechanics: { mechanics: [shop({ phone: null })] } as NearbyMechanicsResponse,
     });
     await userEvent.click(await screen.findByRole('button', { name: 'Find shops' }));
-    expect(await screen.findByText('Not rated on Yelp')).toBeInTheDocument();
-    expect(screen.queryByRole('img', { name: /out of 5 stars/ })).not.toBeInTheDocument();
+    await screen.findByText('Prairie Diesel');
     expect(screen.queryByRole('link', { name: /^\(/ })).not.toBeInTheDocument();
   });
 
@@ -245,7 +247,7 @@ describe('NearbyMechanicsCard', () => {
     // The default is the diesel shortcut, with its categories.
     await userEvent.click(await screen.findByRole('button', { name: 'Find shops' }));
     await waitFor(() => expect(asked()).toHaveLength(1));
-    expect(asked()[0]!.get('categories')).toBe('truckrepair,autorepair');
+    expect(asked()[0]!.get('categories')).toBe('truckrepair');
 
     await userEvent.click(screen.getByRole('button', { name: 'Towing' }));
     await userEvent.click(screen.getByRole('button', { name: 'Find shops' }));
@@ -273,53 +275,21 @@ describe('NearbyMechanicsCard', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
-  it('says the same when it is HaulQ’s own Yelp budget that ran out', async () => {
+  it('says the same when HERE is limiting the account', async () => {
     renderCard(<NearbyMechanicsCard load={load(twoStops())} />, {
       mechanics: new ApiRequestError(429, {
         code: 'search_limit_reached',
-        explanation: "HaulQ's repair-shop search has reached its daily limit. It starts over at midnight UTC (7 pm Central).",
+        explanation: 'Repair-shop search is busy right now. Try again in a minute.',
       }),
     });
     await userEvent.click(await screen.findByRole('button', { name: 'Find shops' }));
-    expect(await screen.findByText(/reached its daily limit/)).toBeInTheDocument();
+    expect(await screen.findByText(/busy right now/)).toBeInTheDocument();
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
-  it('shows Yelp as Yelp requires: its logo linking to Yelp, its branded stars beside the review count', async () => {
+  it('is calm about search not being connected here', async () => {
     renderCard(<NearbyMechanicsCard load={load(twoStops())} />, {
-      mechanics: { mechanics: [shop({ rating: 4.5, reviewCount: 123 }), shop({ name: 'Second Shop', rating: 2.5, reviewCount: 1, yelpUrl: 'https://www.yelp.com/biz/second' })] } as NearbyMechanicsResponse,
-    });
-    await userEvent.click(await screen.findByRole('button', { name: 'Find shops' }));
-    await screen.findByText('Prairie Diesel');
-
-    // Yelp's own star image, chosen by the rating, with the count next to it.
-    const stars = screen.getAllByRole('img', { name: /out of 5 stars on Yelp/ });
-    expect(stars[0]).toHaveAttribute('src', '/yelp/stars/Review_Ribbon_medium_20_4_half@1x.png');
-    expect(stars[0]).toHaveAttribute('srcset', expect.stringContaining('@2x.png 2x'));
-    expect(stars[1]).toHaveAttribute('src', '/yelp/stars/Review_Ribbon_medium_20_2_half@1x.png');
-    expect(screen.getByText('123 reviews')).toBeInTheDocument();
-    expect(screen.getByText('1 review')).toBeInTheDocument();
-
-    // Each shop links to its own Yelp page, with the logo in the link.
-    const links = screen.getAllByRole('link', { name: /Read reviews on/ });
-    expect(links.map((l) => l.getAttribute('href'))).toEqual(['https://www.yelp.com/biz/prairie-diesel', 'https://www.yelp.com/biz/second']);
-    for (const l of links) expect(within(l).getByRole('img', { name: 'Yelp' })).toHaveAttribute('src', '/yelp/yelp_logo.svg');
-
-    // And the logo is prominent on the results as a whole, linking to Yelp.
-    const footer = screen.getByText(/Ratings and reviews from/);
-    expect(within(footer).getByRole('link')).toHaveAttribute('href', 'https://www.yelp.com');
-  });
-
-  it('never stretches Yelp\'s images: the logo is sized by height only', async () => {
-    renderCard(<NearbyMechanicsCard load={load(twoStops())} />, { mechanics: { mechanics: [shop()] } as NearbyMechanicsResponse });
-    await userEvent.click(await screen.findByRole('button', { name: 'Find shops' }));
-    await screen.findByText('Prairie Diesel');
-    for (const logo of screen.getAllByRole('img', { name: 'Yelp' })) expect(logo.style.width).toBe('auto');
-  });
-
-  it('is calm about Yelp not being connected here', async () => {
-    renderCard(<NearbyMechanicsCard load={load(twoStops())} />, {
-      mechanics: new ApiRequestError(503, { code: 'not_configured', explanation: 'Yelp is not configured.' }),
+      mechanics: new ApiRequestError(503, { code: 'not_configured', explanation: 'HERE is not configured.' }),
     });
     await userEvent.click(await screen.findByRole('button', { name: 'Find shops' }));
     expect(await screen.findByText(/Repair-shop search is not connected on this deployment yet/)).toBeInTheDocument();

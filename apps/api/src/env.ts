@@ -289,32 +289,21 @@ const EnvSchema = z.object({
    * same as `HERE_GEOCODE_BASE_URL`.
    */
   HERE_PLACES_BASE_URL: z.string().url().optional(),
+  /**
+   * Free-text place search — `discover.search.hereapi.com`, for a repair-shop
+   * search someone typed. Same account. Override for tests only, same as
+   * `HERE_GEOCODE_BASE_URL`.
+   */
+  HERE_DISCOVER_BASE_URL: z.string().url().optional(),
 
   /**
-   * Yelp Fusion, for the nearby-mechanic search `FEATURE_REQUESTS_PLAN.md`
-   * section 3 scopes as a cheap-to-validate prototype: call a reviews API at
-   * request time, store nothing, see whether carriers use it before building
-   * a persistent trust-score pipeline. Same platform-level-credential shape
-   * as `FMCSA_WEBKEY` and `HERE_API_KEY` — one HaulQ-owned Yelp account
-   * serves every tenant's search, not a per-org secret. Optional, same
-   * degrade-rather-than-fail pattern as every other external service here:
-   * without it, `GET /v1/mechanics/nearby` 503s.
+   * How many repair-shop searches one carrier may run per day (UTC). Each "Find
+   * shops" click is one paid HERE call, every carrier's on HaulQ's one account,
+   * so this bounds what one carrier can spend. Kept in this process's memory: it
+   * resets on a restart and is not shared across instances, which is fine for
+   * one instance and a soft limit.
    */
-  YELP_API_KEY: z.string().optional(),
-  /** Override for tests only — production never sets this. */
-  YELP_BASE_URL: z.string().url().optional(),
-  /**
-   * How many repair-shop searches one carrier may run per day (UTC).
-   *
-   * HaulQ's Yelp account allows **300 calls a day in total**, shared by every
-   * carrier (the response's `ratelimit-dailylimit` header says so), and each
-   * "Find shops" click is one call. Without a per-carrier cap, one carrier
-   * could spend the whole day's budget and leave everyone else with an error.
-   * 25 lets a dozen carriers each have a normal day. Kept in this process's
-   * memory: it resets on a restart and is not shared across instances, which is
-   * fine for one instance and a soft limit; Yelp's own 429 is the hard one.
-   */
-  YELP_ORG_DAILY_LIMIT: z.coerce.number().int().min(1).default(25),
+  MECHANIC_SEARCH_ORG_DAILY_LIMIT: z.coerce.number().int().min(1).default(25),
   /**
    * How many rate confirmations one carrier may have read as a possible load per
    * day (`FEATURE_REQUESTS_PLAN.md` section 12). Each is one model call, and the

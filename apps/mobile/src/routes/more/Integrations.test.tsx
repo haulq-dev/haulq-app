@@ -123,15 +123,18 @@ describe('IntegrationsScreen', () => {
 describe('RepairShops', () => {
   const SHOP = {
     name: 'Big Rig Diesel',
-    rating: 4.5,
-    reviewCount: 88,
-    address: '1 Main St, Kansas City, MO',
+    address: 'Big Rig Diesel, 1 Main St, Kansas City, MO, United States',
     phone: '(816) 555-0100',
     distanceMiles: 3.2,
-    yelpUrl: 'https://www.yelp.com/biz/big-rig',
+    lat: 39.1,
+    lng: -94.6,
+    // What the API still sends for iOS builds already installed.
+    rating: null,
+    reviewCount: 0,
+    yelpUrl: 'https://www.yelp.com/search?find_desc=Big+Rig+Diesel',
   };
 
-  it('searches from where the driver is, only when asked, and shows results as Yelp requires', async () => {
+  it('searches from where the driver is, only when asked, and shows how to reach the shop', async () => {
     const searched: string[] = [];
     answerRequests({
       '/v1/mechanics/nearby': () => ({ mechanics: [SHOP] }),
@@ -148,11 +151,10 @@ describe('RepairShops', () => {
     expect(await screen.findByText('Big Rig Diesel')).toBeInTheDocument();
     expect(searched[0]).toMatch(/lat=39\.1&lng=-94\.6/);
 
-    expect(screen.getByAltText('4.5 out of 5 stars on Yelp')).toBeInTheDocument();
-    expect(screen.getByText('88 reviews')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /Reviews on/ })).toHaveAttribute('href', SHOP.yelpUrl);
+    expect(screen.getByText('1 Main St, Kansas City, MO')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Open in Maps' })).toHaveAttribute('href', expect.stringContaining('39.1%2C-94.6'));
     expect(screen.getByRole('link', { name: /Call/ })).toHaveAttribute('href', 'tel:8165550100');
-    expect(screen.getAllByAltText('Yelp').length).toBeGreaterThanOrEqual(2);
+    expect(screen.queryByText(/Yelp/)).not.toBeInTheDocument();
   });
 
   it("reads the daily limit as a calm note with the API's own sentence", async () => {

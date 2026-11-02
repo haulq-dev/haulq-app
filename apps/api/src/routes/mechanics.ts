@@ -1,13 +1,13 @@
 /**
- * Nearby mechanics — a live Yelp search, not a trust score.
+ * Nearby mechanics — a live HERE search, not a trust score.
  *
  * `FEATURE_REQUESTS_PLAN.md` section 3: the boss's own hedge on the call —
  * "could just be a normal AI search" — over building a persistent
  * aggregated-reviews pipeline. This is deliberately the small version: call
- * Yelp at request time, return what it says, store nothing. HaulQ's Yelp
- * account allows 300 calls a day in total, so each carrier is capped (see
- * `YELP_ORG_DAILY_LIMIT`); enough to find out whether carriers reach for this
- * before any scoring infrastructure gets built. See `yelp.ts`'s module note.
+ * HERE at request time, return what it says, store nothing. Each carrier is
+ * capped (see `MECHANIC_SEARCH_ORG_DAILY_LIMIT`). Enough to find out whether
+ * carriers reach for this before any scoring infrastructure gets built. See
+ * `here-mechanics.ts`'s module note, including why this is not Yelp any more.
  *
  * Read-only and useful to anyone on the org, same reasoning `insights.ts`
  * gives for skipping a role gate beyond the tenant scope — a driver
@@ -19,43 +19,55 @@
  * something to guess at in this file.
  */
 
-import type { NearbyMechanicsResponse } from '@haulq/contracts';
+import type { Mechanic as MechanicResponse, NearbyMechanicsResponse } from '@haulq/contracts';
 import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
-import { YelpApiError } from '../integrations/yelp.ts';
+import { HereApiError } from '../integrations/here.ts';
+import type { Mechanic } from '../integrations/here-mechanics.ts';
 import { HttpError, requireScope } from '../plugins/request-context.ts';
 
 const METERS_PER_MILE = 1609.344;
-/** Yelp's own documented ceiling on `radius` (40,000 m) is the real limit — this just keeps the query meaningful before that. */
+/** A shop farther than this is not "nearby" for a truck that has to get there. */
 const MAX_RADIUS_MILES = 24;
 
 const QuerySchema = z.object({
   lat: z.coerce.number().min(-90).max(90),
   lng: z.coerce.number().min(-180).max(180),
   radiusMiles: z.coerce.number().positive().max(MAX_RADIUS_MILES).default(15),
-  /** Free-text, same as typing into Yelp's own search box. Defaults to what a carrier almost always means. */
+  /** Free-text, used when `categories` names no kind of business HERE has. Defaults to what a carrier almost always means. */
   query: z.string().min(1).max(100).default('diesel truck repair'),
   /**
-   * Yelp category aliases that narrow what counts as a match ("towing",
-   * "tires", "truckrepair,autorepair"). Left out for free-text searches, where
-   * only the words decide. Shaped like Yelp's own aliases so nothing else can
-   * ride along in the query string.
+   * The kinds of business to look for ("towing", "tires", "truckrepair"): see
+   * `here-mechanics.ts`. Left out for free-text searches, where only the words
+   * decide. Held to this shape so nothing else can ride along in the query string.
    */
   categories: z
     .string()
     .max(80)
-    .regex(/^[a-z0-9_]+(,[a-z0-9_]+)*$/, 'Categories are comma-separated Yelp category names.')
+    .regex(/^[a-z0-9_]+(,[a-z0-9_]+)*$/, 'Categories are comma-separated names.')
     .optional(),
 });
 
-/** The day, in UTC, which is when Yelp resets its own budget. */
+/** The day, in UTC, which is when a carrier's count starts over. */
 const utcDay = (d: Date) => d.toISOString().slice(0, 10);
+
+/**
+ * The three fields Yelp's data needed, still sent because iOS builds already
+ * installed read them: no rating shows as "Not rated on Yelp", and their "Reviews
+ * on Yelp" link goes to `yelpUrl`, which is now an ordinary search on Yelp's public
+ * site rather than a dead link. Nothing newer reads these. Drop them once those
+ * builds are gone.
+ */
+function withInstalledAppFields(mechanic: Mechanic): MechanicResponse {
+  const search = new URLSearchParams({ find_desc: mechanic.name, find_loc: mechanic.address ?? `${mechanic.lat},${mechanic.lng}` });
+  return { ...mechanic, rating: null, reviewCount: 0, yelpUrl: `https://www.yelp.com/search?${search}` };
+}
 
 export async function mechanicsRoutes(app: FastifyInstance) {
   const server = app.withTypeProvider<ZodTypeProvider>();
 
-  // Searches each carrier has run today. See `YELP_ORG_DAILY_LIMIT` for why this
+  // Searches each carrier has run today. See `MECHANIC_SEARCH_ORG_DAILY_LIMIT` for why this
   // exists and why it lives in memory. Yesterday's counts are dropped as they
   // are seen, so the map cannot grow without bound.
   const searchesToday = new Map<string, { day: string; count: number }>();
@@ -63,7 +75,7 @@ export async function mechanicsRoutes(app: FastifyInstance) {
     const today = utcDay(new Date());
     const seen = searchesToday.get(orgId);
     const count = seen && seen.day === today ? seen.count : 0;
-    if (count >= app.env.YELP_ORG_DAILY_LIMIT) return false;
+    if (count >= app.env.MECHANIC_SEARCH_ORG_DAILY_LIMIT) return false;
     searchesToday.set(orgId, { day: today, count: count + 1 });
     for (const [id, s] of searchesToday) if (s.day !== today) searchesToday.delete(id);
     return true;
@@ -74,7 +86,7 @@ export async function mechanicsRoutes(app: FastifyInstance) {
     {
       schema: {
         tags: ['Mechanics'],
-        summary: 'Nearby auto/truck repair shops, live from Yelp',
+        summary: 'Nearby truck repair, tire and towing businesses, live from HERE',
         querystring: QuerySchema,
       },
     },
@@ -86,7 +98,7 @@ export async function mechanicsRoutes(app: FastifyInstance) {
         throw new HttpError(
           503,
           'not_configured',
-          'Yelp is not configured on this deployment yet — nearby-mechanic search is unavailable.',
+          'HERE is not configured on this deployment yet — nearby-mechanic search is unavailable.',
         );
       }
 
@@ -97,7 +109,7 @@ export async function mechanicsRoutes(app: FastifyInstance) {
         throw new HttpError(
           429,
           'org_search_limit_reached',
-          `Your carrier has used its ${app.env.YELP_ORG_DAILY_LIMIT} repair-shop searches for today. The count starts over at midnight UTC (7 pm Central).`,
+          `Your carrier has used its ${app.env.MECHANIC_SEARCH_ORG_DAILY_LIMIT} repair-shop searches for today. The count starts over at midnight UTC (7 pm Central).`,
         );
       }
 
@@ -109,19 +121,19 @@ export async function mechanicsRoutes(app: FastifyInstance) {
           query,
           categories,
         );
-        const response: NearbyMechanicsResponse = { mechanics };
+        const response: NearbyMechanicsResponse = { mechanics: mechanics.map(withInstalledAppFields) };
         return response;
       } catch (err) {
-        // Yelp's own daily budget (300, shared by every carrier) ran out.
-        if (err instanceof YelpApiError && err.status === 429) {
+        // HERE is limiting the account's rate. Passes on its own, so it says so.
+        if (err instanceof HereApiError && err.status === 429) {
           throw new HttpError(
             429,
             'search_limit_reached',
-            "HaulQ's repair-shop search has reached its daily limit. It starts over at midnight UTC (7 pm Central). Until then, try a map search or call a shop directly.",
+            'Repair-shop search is busy right now. Try again in a minute.',
           );
         }
-        if (err instanceof YelpApiError) {
-          throw new HttpError(502, 'mechanic_search_provider_error', 'Yelp could not be reached right now.');
+        if (err instanceof HereApiError) {
+          throw new HttpError(502, 'mechanic_search_provider_error', 'Repair-shop search could not be reached right now.');
         }
         throw err;
       }

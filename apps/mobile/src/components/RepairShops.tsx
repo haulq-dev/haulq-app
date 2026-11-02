@@ -1,29 +1,25 @@
 /**
- * Repair shops near the truck, a stop, or the phone itself, from Yelp.
+ * Repair shops near the truck, a stop, or the phone itself, from HERE.
  * Web's `NearbyMechanicsCard` (`apps/web/src/routes/LoadPlaces.tsx`) on a
  * phone (MOBILE_PARITY_PLAN.md M6), for both the office load screen and the
  * driver's. A driver broken down on the shoulder is who this is for, so the
  * driver version offers "Where I am now" first.
  *
- * **Yelp's display rules apply** (`public/yelp/NOTICE.txt`): Yelp's own logo,
- * unaltered, on anything from Yelp, linking to Yelp; ratings only as Yelp's
- * branded star images beside the review count; each business linking to its
- * Yelp page. The images are the same files web ships.
- *
- * **Every search is a Yelp call** against a shared daily budget (300/day,
- * plus a per-carrier limit), so nothing searches until the button is
- * tapped, and results are cached for ten minutes (`useNearbyMechanics`).
+ * **Every search is a paid HERE call**, with a per-carrier daily limit, so
+ * nothing searches until the button is tapped, and results are cached for ten
+ * minutes (`useNearbyMechanics`).
  */
 
 import { Geolocation } from '@capacitor/geolocation';
 import {
   DEFAULT_MECHANIC_RADIUS,
   formatMiles,
+  mapsUrl,
   MECHANIC_RADIUS_OPTIONS,
   MECHANIC_SEARCHES,
   telHref,
+  tidyAddress,
   useNearbyMechanics,
-  yelpStarKey,
   type MechanicSearch,
   type SearchOrigin,
 } from '@haulq/client';
@@ -33,30 +29,6 @@ import { CoordinateLookup } from './CoordinateLookup.tsx';
 import { Empty, ErrorNote, Field, Note } from './ui.tsx';
 
 const code = (error: unknown) => (error instanceof ApiRequestError ? error.code : null);
-
-function YelpMark({ height }: { height: number }) {
-  return <img src="/yelp/yelp_logo.svg" alt="Yelp" style={{ height, width: 'auto' }} />;
-}
-
-function YelpStars({ rating, reviewCount }: { rating: number | null; reviewCount: number }) {
-  const key = yelpStarKey(rating);
-  if (key === null || rating === null) return <span className="text-sm text-mute">Not rated on Yelp</span>;
-  const base = `/yelp/stars/Review_Ribbon_medium_20_${key}`;
-  return (
-    <span className="inline-flex items-center gap-2">
-      <img
-        src={`${base}@1x.png`}
-        srcSet={`${base}@1x.png 1x, ${base}@2x.png 2x`}
-        width={108}
-        height={20}
-        alt={`${rating.toFixed(1)} out of 5 stars on Yelp`}
-      />
-      <span className="num text-sm text-slate">
-        {reviewCount} review{reviewCount === 1 ? '' : 's'}
-      </span>
-    </span>
-  );
-}
 
 /**
  * `origins` are the load's known points (the truck's last position, stops
@@ -106,8 +78,8 @@ export function RepairShops({ origins, nearMe = false }: { origins: SearchOrigin
     setSearch({ lat: point.lat, lng: point.lng, radiusMiles: radius, query: what.query, categories: what.categories });
   };
 
-  // The two daily limits are expected, dated states, so they read as a note
-  // carrying the API's own sentence about which one and when it resets.
+  // Being limited is an expected state, so it reads as a note carrying the
+  // API's own sentence about which limit and when it passes.
   const limitReached = code(results.error) === 'org_search_limit_reached' || code(results.error) === 'search_limit_reached';
   const unavailable =
     code(results.error) === 'not_configured'
@@ -198,39 +170,31 @@ export function RepairShops({ origins, nearMe = false }: { origins: SearchOrigin
         (results.data.mechanics.length === 0 ? (
           <Empty>No shops found within {search?.radiusMiles} miles. Try a wider search.</Empty>
         ) : (
-          <>
             <ul className="divide-y divide-line">
               {results.data.mechanics.map((m, i) => {
                 const tel = telHref(m.phone);
+                const address = tidyAddress(m.name, m.address);
                 return (
                   <li key={`${m.name}-${i}`} className="space-y-1 py-3">
                     <div className="flex items-baseline justify-between gap-3">
                       <p className="font-semibold">{m.name}</p>
                       <span className="num shrink-0 text-xs text-mute">{formatMiles(m.distanceMiles)}</span>
                     </div>
-                    <YelpStars rating={m.rating} reviewCount={m.reviewCount} />
-                    {m.address && <p className="text-xs text-mute">{m.address}</p>}
+                    {address && <p className="text-xs text-mute">{address}</p>}
                     <div className="flex flex-wrap items-center gap-x-4 gap-y-1 pt-1 text-sm">
                       {tel && m.phone && (
                         <a href={tel} className="hq-btn hq-btn-primary px-3 py-1.5 text-sm active:scale-100">
                           Call {m.phone}
                         </a>
                       )}
-                      <a href={m.yelpUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 text-brand underline">
-                        Reviews on <YelpMark height={16} />
+                      <a href={mapsUrl(m)} target="_blank" rel="noreferrer" className="text-brand underline">
+                        Open in Maps
                       </a>
                     </div>
                   </li>
                 );
               })}
             </ul>
-            <p className="flex items-center gap-2 text-xs text-mute">
-              Ratings and reviews from
-              <a href="https://www.yelp.com" target="_blank" rel="noreferrer" className="inline-flex items-center">
-                <YelpMark height={20} />
-              </a>
-            </p>
-          </>
         ))}
     </div>
   );

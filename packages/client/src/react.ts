@@ -196,8 +196,8 @@ export function useLoadTracking(id: string) {
 }
 
 /**
- * Repair shops near a point, live from Yelp. Idle until there is a search:
- * each one is a Yelp call, so it runs when someone asks, not as they type.
+ * Repair shops near a point, live from HERE. Idle until there is a search:
+ * each one is a paid call, so it runs when someone asks, not as they type.
  */
 export function useNearbyMechanics(search: MechanicSearch | null) {
   const client = useApiClient();

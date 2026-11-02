@@ -52,7 +52,7 @@ import type { Geocoder, ReverseGeocoder } from './integrations/here-geocode.ts';
 import type { PlacesProvider } from './integrations/here-places.ts';
 import type { RoutingProvider } from './integrations/routing-provider.ts';
 import type { UnipileClient } from './integrations/unipile.ts';
-import type { MechanicSearchProvider } from './integrations/yelp.ts';
+import type { MechanicSearchProvider } from './integrations/here-mechanics.ts';
 import { requestContextPlugin } from './plugins/request-context.ts';
 import { billingRoutes } from './routes/billing.ts';
 import { brokerRoutes } from './routes/brokers.ts';
@@ -98,7 +98,7 @@ declare module 'fastify' {
     reverseGeocoder: ReverseGeocoder | undefined;
     /** Same gate as `routingProvider`/`geocoder` — see `runtime.ts`'s `buildPlacesProvider`. */
     placesProvider: PlacesProvider | undefined;
-    /** Undefined until `YELP_API_KEY` is set — see `runtime.ts`'s `buildMechanicSearchProvider`. */
+    /** Undefined until `HERE_API_KEY` is set — see `runtime.ts`'s `buildMechanicSearchProvider`. */
     mechanicSearchProvider: MechanicSearchProvider | undefined;
     /** Undefined until `UNIPILE_API_KEY` and `UNIPILE_DSN` are set — see `runtime.ts`'s `buildUnipileClient`. */
     unipileClient: UnipileClient | undefined;
@@ -181,8 +181,8 @@ export interface BuildOptions {
   /**
    * Override the mechanic search provider. Same reasoning as `placesProvider`
    * above — tests inject a fake so the nearby-mechanics route can be
-   * exercised with no Yelp account. Left unset, the server picks Yelp when
-   * `YELP_API_KEY` is configured, and no provider at all when it is not.
+   * exercised with no HERE account. Left unset, the server picks HERE when
+   * `HERE_API_KEY` is configured, and no provider at all when it is not.
    */
   mechanicSearchProvider?: MechanicSearchProvider | undefined;
 

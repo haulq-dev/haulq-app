@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
   formatMiles,
-  formatRating,
   groupPlaces,
   mapsUrl,
   MECHANIC_RADIUS_OPTIONS,
@@ -11,7 +10,6 @@ import {
   STOP_RADIUS_OPTIONS,
   telHref,
   tidyAddress,
-  yelpStarKey,
   type NearbyPlace,
 } from './places.ts';
 
@@ -66,36 +64,13 @@ describe('nearby stops', () => {
 });
 
 describe('repair shops', () => {
-  it('says how a shop is rated, or that it is not', () => {
-    assert.equal(formatRating({ rating: 4.5, reviewCount: 123 }), '4.5 (123 reviews)');
-    assert.equal(formatRating({ rating: 5, reviewCount: 1 }), '5.0 (1 review)');
-    assert.equal(formatRating({ rating: null, reviewCount: 0 }), 'Not rated');
-  });
-
-  it('gives every shortcut the Yelp categories that mean the right kind of business', () => {
+  it('gives each shortcut the kind of business it means, or its words where HERE has no such kind', () => {
     for (const s of MECHANIC_SEARCHES) {
-      assert.match(s.categories, /^[a-z0-9_]+(,[a-z0-9_]+)*$/, s.label + ' has Yelp-shaped categories');
+      if (s.categories !== undefined) assert.match(s.categories, /^[a-z0-9_]+(,[a-z0-9_]+)*$/, s.label + ' has well-formed categories');
       assert.ok(s.query.length > 0 && s.query.length <= 100);
     }
-    // A towing search must not be limited to garages, which is what a fixed autorepair category did.
     assert.equal(MECHANIC_SEARCHES.find((s) => s.label === 'Towing')!.categories, 'towing');
-  });
-
-  it('picks the Yelp star image by rounding to the nearest half star, with its irregular half-star names', () => {
-    assert.equal(yelpStarKey(5), '5');
-    assert.equal(yelpStarKey(4.8), '5', 'Yelp ratings arrive as decimals');
-    assert.equal(yelpStarKey(4.5), '4_half');
-    assert.equal(yelpStarKey(4.2), '4');
-    assert.equal(yelpStarKey(2.5), '2_half');
-    assert.equal(yelpStarKey(1.5), '2_1_half');
-    assert.equal(yelpStarKey(0.5), 'half');
-    assert.equal(yelpStarKey(0), '0');
-    assert.equal(yelpStarKey(7), '5', 'out of range is held to the scale');
-  });
-
-  it('shows no stars for a business Yelp has not rated', () => {
-    assert.equal(yelpStarKey(null), null);
-    assert.equal(yelpStarKey(Number.NaN), null);
+    assert.equal(MECHANIC_SEARCHES.find((s) => s.label === 'Trailer / reefer repair')!.categories, undefined);
   });
 
   it('makes a number a phone can dial, or nothing', () => {
