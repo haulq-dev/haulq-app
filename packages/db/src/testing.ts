@@ -184,6 +184,17 @@ export async function setTestOrgStatus(
   await db.update(orgs).set({ status: args.status }).where(eq(orgs.id, args.orgId));
 }
 
+/** Give a test org a Stripe customer id, as if it had subscribed before. */
+export async function setTestOrgStripeCustomer(db: Database, args: { orgId: string; stripeCustomerId: string }): Promise<void> {
+  await db.update(orgs).set({ stripeCustomerId: args.stripeCustomerId }).where(eq(orgs.id, args.orgId));
+}
+
+/** A test org's `entitlements` jsonb, as stored. */
+export async function getTestOrgEntitlements(db: Database, orgId: string): Promise<Record<string, unknown>> {
+  const [row] = await db.select({ e: orgs.entitlements }).from(orgs).where(eq(orgs.id, orgId));
+  return (row?.e ?? {}) as Record<string, unknown>;
+}
+
 export async function getTestUser(
   db: Database,
   id: string,

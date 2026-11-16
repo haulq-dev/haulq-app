@@ -222,6 +222,20 @@ const EnvSchema = z.object({
    * `select id, name, status from orgs where status <> 'active' and deleted_at is null;`
    * See MOBILE_PARITY_PLAN.md, M0.
    */
+  /**
+   * Pilot gate on subscribing. When `true`, a carrier's owner can only start
+   * Checkout once HaulQ has approved the carrier for the pilot
+   * (`scripts/approve-pilot.ts`, which writes `pilotApprovedAt` into
+   * `orgs.entitlements`). Anyone can still sign up and create a carrier; they
+   * wait on the plans screen until approved. A carrier that already has a
+   * Stripe customer (it has subscribed before) or is `active` is never held
+   * back, so a lapsed card can always be fixed. `false` lets anyone subscribe.
+   */
+  REQUIRE_PILOT_APPROVAL: z
+    .enum(['true', 'false'])
+    .default('true')
+    .transform((v) => v === 'true'),
+
   REQUIRE_ACTIVE_SUBSCRIPTION: z
     .enum(['true', 'false'])
     .default('false')

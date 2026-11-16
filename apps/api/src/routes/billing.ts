@@ -17,7 +17,7 @@
  * `billing/stripe.ts` for why.
  */
 
-import { getOrg } from '@haulq/db';
+import { getOrg, pilotApprovedAt, type Org } from '@haulq/db';
 import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -35,8 +35,34 @@ const CheckoutBodySchema = z.object({
   truckCount: z.coerce.number().int().min(1).optional(),
 });
 
+/**
+ * Whether this carrier may start Checkout. Approval only gates a carrier's
+ * first subscription: one that has subscribed before (a Stripe customer) or
+ * is active is let through, so a past-due owner can always fix their card.
+ */
+export function canSubscribe(org: Pick<Org, 'entitlements' | 'stripeCustomerId' | 'status'>, requireApproval: boolean): boolean {
+  if (!requireApproval) return true;
+  return pilotApprovedAt(org.entitlements) !== null || org.stripeCustomerId !== null || org.status === 'active';
+}
+
 export async function billingRoutes(app: FastifyInstance) {
   const server = app.withTypeProvider<ZodTypeProvider>();
+
+  server.get(
+    '/v1/billing/eligibility',
+    {
+      schema: {
+        tags: ['Billing'],
+        summary: 'Whether this carrier may subscribe yet (pilot approval)',
+      },
+    },
+    async (request) => {
+      const s = await requireScope(request, { allowInactiveSubscription: true });
+      const org = await getOrg(s);
+      if (!org) throw new HttpError(404, 'not_found', 'No account found for this session.');
+      return { canSubscribe: canSubscribe(org, app.env.REQUIRE_PILOT_APPROVAL) };
+    },
+  );
 
   server.post(
     '/v1/billing/checkout',
@@ -66,6 +92,13 @@ export async function billingRoutes(app: FastifyInstance) {
 
       const org = await getOrg(s);
       if (!org) throw new HttpError(404, 'not_found', 'No account found for this session.');
+      if (!canSubscribe(org, app.env.REQUIRE_PILOT_APPROVAL)) {
+        throw new HttpError(
+          403,
+          'pilot_not_approved',
+          "Your carrier hasn't been approved for the HaulQ pilot yet. We'll email you as soon as it is.",
+        );
+      }
 
       let session;
       try {

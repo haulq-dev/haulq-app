@@ -25,7 +25,7 @@
  * family's current entry price point, not a separate plan.
  */
 
-import { useMutation } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { ErrorNote, Money } from './ui.tsx';
 import { request } from '../lib/api.ts';
@@ -42,6 +42,15 @@ const FLEET_PER_TRUCK_CENTS = 4900;
 
 export function PlansScreen({ pastDue = false }: { pastDue?: boolean }) {
   const [truckCount, setTruckCount] = useState(2);
+
+  // Pilot gate (`REQUIRE_PILOT_APPROVAL`). Only a definite "no" holds the
+  // buttons back: while this loads, or if it fails, Checkout itself still
+  // refuses an unapproved carrier with an explanation.
+  const eligibility = useQuery({
+    queryKey: ['billing-eligibility'],
+    queryFn: () => request<{ canSubscribe: boolean }>('/v1/billing/eligibility'),
+  });
+  const awaitingApproval = eligibility.data?.canSubscribe === false;
 
   const checkoutCore = useMutation({
     mutationFn: () => request<{ url: string }>('/v1/billing/checkout', { body: { plan: 'carrier' } }),
@@ -69,13 +78,26 @@ export function PlansScreen({ pastDue = false }: { pastDue?: boolean }) {
           : 'The back-office essentials for a single truck. More products unlock here as they launch.'}
       </p>
 
+      {awaitingApproval && (
+        <div className="mb-8 border-2 border-ink bg-white p-5" role="status">
+          <p className="field-label mb-1 text-ink">Your pilot application is in review</p>
+          <p className="max-w-prose text-sm text-slate">
+            Pilot spots are limited, so we review each carrier before they can subscribe. Your
+            account is set up and your place is held — we'll email you as soon as you're approved,
+            and you can subscribe from this screen at pilot pricing. Questions?{' '}
+            <a className="text-brand underline" href="mailto:hello@haulq.ai?subject=HaulQ pilot">
+              hello@haulq.ai
+            </a>
+          </p>
+        </div>
+      )}
+
       {!pastDue && (
         <div className="mb-8 border-l-4 border-brand bg-wash p-5" role="note">
           <p className="field-label mb-1 text-brand">Pilot pricing · limited time</p>
           <p className="max-w-prose text-sm text-slate">
-            These are early pilot prices, open for a limited time while we bring carriers into the
-            HaulQ pilot program. Spots are limited, and our prices will go up as more of HaulQ
-            launches. <strong className="text-ink">Subscribe now and you keep the price you sign up
+            These are early pilot prices, open for a limited time to carriers accepted into the HaulQ
+            pilot program. Spots are limited, and our prices will go up as more of HaulQ launches. <strong className="text-ink">Subscribe now and you keep the price you sign up
             at for as long as your subscription stays active</strong>, even after prices rise for
             new customers.
           </p>
@@ -102,7 +124,7 @@ export function PlansScreen({ pastDue = false }: { pastDue?: boolean }) {
           </ul>
           <button
             className="hq-btn hq-btn-brand"
-            disabled={checkoutCore.isPending}
+            disabled={checkoutCore.isPending || awaitingApproval}
             onClick={() => checkoutCore.mutate()}
           >
             {checkoutCore.isPending ? 'Redirecting…' : 'Subscribe to Core'}
@@ -138,7 +160,7 @@ export function PlansScreen({ pastDue = false }: { pastDue?: boolean }) {
 
           <button
             className="hq-btn hq-btn-primary"
-            disabled={checkoutFleet.isPending}
+            disabled={checkoutFleet.isPending || awaitingApproval}
             onClick={() => checkoutFleet.mutate()}
           >
             {checkoutFleet.isPending ? 'Redirecting…' : 'Subscribe to Fleet'}

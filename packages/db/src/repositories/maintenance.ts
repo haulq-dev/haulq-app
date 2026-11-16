@@ -172,3 +172,47 @@ export async function retireEmptyOrg(db: Database, orgId: string, rules: RetireR
 export async function activateOrg(db: Database, orgId: string): Promise<void> {
   await db.update(orgs).set({ status: 'active' }).where(eq(orgs.id, orgId));
 }
+
+// ---------------------------------------------------------------------------
+// Pilot approval
+// ---------------------------------------------------------------------------
+
+/**
+ * Pilot approval lives in `orgs.entitlements` as `pilotApprovedAt` (an ISO
+ * timestamp) rather than a column of its own, so turning it on needed no
+ * migration: production auto-deploys on push but does not migrate, and code
+ * reading a column that is not there yet breaks every org lookup.
+ */
+export function pilotApprovedAt(entitlements: unknown): string | null {
+  if (!entitlements || typeof entitlements !== 'object') return null;
+  const v = (entitlements as Record<string, unknown>)['pilotApprovedAt'];
+  return typeof v === 'string' ? v : null;
+}
+
+/** Approve a carrier for the pilot, so its owner can subscribe. Keeps the first approval's date when run twice. */
+export async function approvePilot(db: Database, orgId: string, at: Date = new Date()): Promise<void> {
+  await db
+    .update(orgs)
+    .set({
+      entitlements: sql`jsonb_set(${orgs.entitlements}, '{pilotApprovedAt}', coalesce(${orgs.entitlements} -> 'pilotApprovedAt', to_jsonb(${at.toISOString()}::text)))`,
+    })
+    .where(eq(orgs.id, orgId));
+}
+
+/** Carriers waiting on pilot approval: not approved, never subscribed, not active, not retired. Oldest first. */
+export async function listPendingPilots(
+  db: Database,
+): Promise<{ orgId: string; orgName: string; contactEmail: string; createdAt: Date }[]> {
+  return db
+    .select({ orgId: orgs.id, orgName: orgs.name, contactEmail: orgs.contactEmail, createdAt: orgs.createdAt })
+    .from(orgs)
+    .where(
+      and(
+        isNull(orgs.deletedAt),
+        isNull(orgs.stripeCustomerId),
+        sql`${orgs.status} <> 'active'`,
+        sql`not (${orgs.entitlements} ? 'pilotApprovedAt')`,
+      ),
+    )
+    .orderBy(orgs.createdAt);
+}
