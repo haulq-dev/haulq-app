@@ -171,7 +171,10 @@ async function drain(modelReader?: ModelDocumentReader, opts: { documentReadings
       warn: (o, msg) => logged.push({ o: o as Record<string, unknown>, msg }),
     },
   });
-  const result = await drainOutbox(app.db, { handlers });
+  // Documents only: every test org also queues a sign-up alert, and claiming
+  // those would crowd this suite's documents out of a single drain's batch.
+  const { ['org.created']: _signups, ...documentHandlers } = handlers;
+  const result = await drainOutbox(app.db, { handlers: documentHandlers });
   return { result, logged };
 }
 

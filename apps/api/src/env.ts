@@ -236,6 +236,16 @@ const EnvSchema = z.object({
     .default('true')
     .transform((v) => v === 'true'),
 
+  /**
+   * Who hears about a new carrier signing up (`email/signup-alert-email.ts`),
+   * so it gets reviewed for the pilot. Set to an empty string to turn the
+   * email off.
+   */
+  SIGNUP_ALERT_EMAIL: z
+    .union([z.string().email(), z.literal('')])
+    .default('hello@haulq.ai')
+    .transform((v) => v || undefined),
+
   REQUIRE_ACTIVE_SUBSCRIPTION: z
     .enum(['true', 'false'])
     .default('false')

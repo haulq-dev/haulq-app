@@ -26,6 +26,7 @@ import {
 import { detentionAlertEmail } from '../email/detention-alert-email.ts';
 import { awaitingApprovalEmail } from '../email/awaiting-approval-email.ts';
 import { loadProposalReadyEmail } from '../email/load-proposal-email.ts';
+import { signupAlertEmail } from '../email/signup-alert-email.ts';
 import { exceptionAlertEmail } from '../email/exception-alert-email.ts';
 import { inviteEmail, type InvitePayload } from '../email/invite-email.ts';
 import { MailerError, type Mailer } from '../email/postmark.ts';
@@ -56,6 +57,10 @@ export interface HandlerDeps {
   loadProposalsPerDay?: number | undefined;
   /** Documents one carrier may have read at a cost (OCR, model) per day — `PipelineDeps.paidReadingsPerDay`. Unset: no cap. */
   documentReadingsPerDay?: number | undefined;
+  /** Where a new carrier's sign-up is announced. Unset: nobody is told. */
+  signupAlertEmail?: string | undefined;
+  /** Whether a new carrier waits on pilot approval — only changes what the sign-up email says. */
+  requirePilotApproval?: boolean | undefined;
   log: {
     info: (o: unknown, msg: string) => void;
     warn: (o: unknown, msg: string) => void;
@@ -843,6 +848,41 @@ function invoicePaidHandler(deps: HandlerDeps): OutboxHandler {
 }
 
 /**
+ * A new carrier signed up: tell the HaulQ team, so it gets reviewed for the
+ * pilot. One email to `SIGNUP_ALERT_EMAIL`, never to the carrier. A rejected
+ * address is logged and dropped; anything else is retried by the outbox.
+ */
+function signupAlertHandler(deps: HandlerDeps): OutboxHandler {
+  return async (message) => {
+    if (!deps.signupAlertEmail) return;
+    const s = scope(deps.db, { orgId: message.orgId, actor: { type: 'system', name: 'outbox-consumer' }, correlationId: randomUUID() });
+    const [org, members] = await Promise.all([getOrg(s), listAllMembers(s)]);
+    if (!org) {
+      deps.log.warn({ seq: message.seq.toString(), orgId: message.orgId }, 'sign-up alert skipped: carrier not found');
+      return;
+    }
+    const owner = members.find((m) => m.role === 'owner');
+    const email = signupAlertEmail({
+      to: deps.signupAlertEmail,
+      orgId: org.id,
+      orgName: org.name,
+      contactEmail: org.contactEmail,
+      ownerEmail: owner?.email ?? null,
+      needsApproval: deps.requirePilotApproval ?? false,
+    });
+    try {
+      await deps.mailer.send({ ...email, metadata: { outboxSeq: message.seq.toString(), orgId: message.orgId } });
+    } catch (error) {
+      if (error instanceof MailerError && !error.retryable) {
+        deps.log.warn({ seq: message.seq.toString(), status: error.status }, 'sign-up alert permanently rejected — not retrying');
+        return;
+      }
+      throw error;
+    }
+  };
+}
+
+/**
  * The topic map. Only topics in here are claimed; anything else stays queued
  * untouched.
  *
@@ -862,6 +902,7 @@ export function buildOutboxHandlers(deps: HandlerDeps): Record<string, OutboxHan
     'document.rejected': documentRejectedHandler(deps),
     'load.driver_assigned': driverAssignedHandler(deps),
     'invoice.paid': invoicePaidHandler(deps),
+    'org.created': signupAlertHandler(deps),
   };
 }
 
@@ -921,6 +962,7 @@ export function buildOutboxGroups(deps: HandlerDeps): OutboxGroup[] {
         'document.rejected': documentRejectedHandler(deps),
         'load.driver_assigned': driverAssignedHandler(deps),
         'invoice.paid': invoicePaidHandler(deps),
+        'org.created': signupAlertHandler(deps),
       },
       batchSize: 20,
       leaseSeconds: 300,

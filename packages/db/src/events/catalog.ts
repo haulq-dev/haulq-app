@@ -81,6 +81,8 @@ export const eventCatalog = {
   'org.created': define<{ name: string }>({
     subjectType: 'org',
     describe: (p) => `Created the ${p.name} account on HaulQ.`,
+    // An email to the HaulQ team, so a new carrier gets reviewed for the pilot.
+    topic: 'org.created',
   }),
 
   'org.profile_updated': define<{ changed: string[] }>({

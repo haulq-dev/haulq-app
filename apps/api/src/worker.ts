@@ -96,6 +96,8 @@ const loop = startOutboxLoop({
     modelReader,
     loadProposalsPerDay: env.LOAD_PROPOSALS_PER_DAY,
     documentReadingsPerDay: env.DOCUMENT_READINGS_PER_DAY,
+    signupAlertEmail: env.SIGNUP_ALERT_EMAIL,
+    requirePilotApproval: env.REQUIRE_PILOT_APPROVAL,
     log,
   }),
   intervalMs,
