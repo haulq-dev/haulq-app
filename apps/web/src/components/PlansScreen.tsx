@@ -69,6 +69,19 @@ export function PlansScreen({ pastDue = false }: { pastDue?: boolean }) {
           : 'The back-office essentials for a single truck. More products unlock here as they launch.'}
       </p>
 
+      {!pastDue && (
+        <div className="mb-8 border-l-4 border-brand bg-wash p-5" role="note">
+          <p className="field-label mb-1 text-brand">Pilot pricing · limited time</p>
+          <p className="max-w-prose text-sm text-slate">
+            These are early pilot prices, open for a limited time while we bring carriers into the
+            HaulQ pilot program. Spots are limited, and our prices will go up as more of HaulQ
+            launches. <strong className="text-ink">Subscribe now and you keep the price you sign up
+            at for as long as your subscription stays active</strong>, even after prices rise for
+            new customers.
+          </p>
+        </div>
+      )}
+
       <div className="grid gap-6 sm:grid-cols-2">
         <div className="flex flex-col border-2 border-ink bg-white p-6">
           <div className="mb-1 flex items-baseline justify-between gap-2">
