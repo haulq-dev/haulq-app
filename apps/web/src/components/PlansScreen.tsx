@@ -75,7 +75,7 @@ export function PlansScreen({ pastDue = false }: { pastDue?: boolean }) {
       <p className="mb-10 max-w-prose text-slate">
         {pastDue
           ? 'The last payment on this account did not go through. Update it to get back in.'
-          : 'The back-office essentials for a single truck. More products unlock here as they launch.'}
+          : 'The back-office essentials for up to 5 trucks. More products unlock here as they launch.'}
       </p>
 
       {awaitingApproval && (
@@ -108,7 +108,7 @@ export function PlansScreen({ pastDue = false }: { pastDue?: boolean }) {
         <div className="flex flex-col border-2 border-ink bg-white p-6">
           <div className="mb-1 flex items-baseline justify-between gap-2">
             <h2 className="text-xl">Core</h2>
-            <span className="field-label text-mute">Single truck</span>
+            <span className="field-label text-mute">Up to 5 trucks</span>
           </div>
           <p className="mb-4 text-3xl">
             <Money cents={4900} />
@@ -135,7 +135,7 @@ export function PlansScreen({ pastDue = false }: { pastDue?: boolean }) {
         <div className="flex flex-col border border-line bg-wash p-6">
           <div className="mb-1 flex items-baseline justify-between gap-2">
             <h2 className="text-xl">Fleet</h2>
-            <span className="field-label text-mute">Multiple trucks</span>
+            <span className="field-label text-mute">Any number of trucks</span>
           </div>
           <p className="mb-4 text-3xl">
             <Money cents={FLEET_PLATFORM_CENTS + FLEET_PER_TRUCK_CENTS * truckCount} />

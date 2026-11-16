@@ -28,6 +28,7 @@ import {
 import {
   createTruck,
   CursorError,
+  getOrg,
   listTrucks,
   setTruckActive,
   setTruckMotiveVehicleId,
@@ -41,9 +42,24 @@ import { HttpError, requireRole, requireScope } from '../plugins/request-context
 
 const IdParamSchema = z.object({ id: z.string().uuid() });
 
+/**
+ * Trucks in service at once on anything but Fleet. Core is priced for a small
+ * operation; Fleet is priced per truck, so it has no limit. An org with no
+ * plan yet (unpaid, or comped by hand) gets Core's limit too. Only adding a
+ * truck, or bringing one back into service, is refused: a carrier already
+ * over the limit keeps every truck it has.
+ */
+export const CORE_TRUCK_LIMIT = 5;
+
+async function truckLimitFor(s: Parameters<typeof getOrg>[0]): Promise<number | undefined> {
+  const org = await getOrg(s);
+  return org?.plan === 'fleet' ? undefined : CORE_TRUCK_LIMIT;
+}
+
 function rethrow(err: unknown): never {
   if (err instanceof TruckError) {
-    throw new HttpError(err.code === 'not_found' ? 404 : 409, err.code, err.explanation);
+    const status = err.code === 'not_found' ? 404 : err.code === 'truck_limit_reached' ? 403 : 409;
+    throw new HttpError(status, err.code, err.explanation);
   }
   if (err instanceof CursorError) {
     throw new HttpError(400, err.code, err.explanation);
@@ -74,8 +90,12 @@ export async function truckRoutes(app: FastifyInstance) {
     async (request, reply) => {
       const s = await requireScope(request);
       requireRole(request, 'owner', 'dispatcher');
-      const truck = await createTruck(s, request.body);
-      return reply.code(201).send(truck);
+      try {
+        const truck = await createTruck(s, request.body, { maxActive: await truckLimitFor(s) });
+        return reply.code(201).send(truck);
+      } catch (err) {
+        rethrow(err);
+      }
     },
   );
 
@@ -144,7 +164,9 @@ export async function truckRoutes(app: FastifyInstance) {
       requireRole(request, 'owner', 'dispatcher');
       const { id } = request.params;
       try {
-        return await setTruckActive(s, id, request.body.active, request.body.reason);
+        return await setTruckActive(s, id, request.body.active, request.body.reason, {
+          maxActive: request.body.active ? await truckLimitFor(s) : undefined,
+        });
       } catch (err) {
         rethrow(err);
       }

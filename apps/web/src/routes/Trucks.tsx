@@ -38,6 +38,7 @@ import {
 import { useState } from 'react';
 import { useOrgs, useSession } from '../components/AuthGate.tsx';
 import { Card, Empty, ErrorNote, Field, LoadMore, Num, Pill, useDocumentTitle, useToast } from '../components/ui.tsx';
+import { ApiRequestError } from '../lib/api.ts';
 
 /**
  * The Motive vehicle match, editable inline. With a fetched vehicle list this
@@ -176,6 +177,7 @@ function UnmatchedMotiveVehicles({ vehicles }: { vehicles: MotiveVehicle[] }) {
         ))}
       </ul>
       <ErrorNote error={create.error} />
+      <TruckLimitHint error={create.error} />
     </Card>
   );
 }
@@ -255,6 +257,25 @@ function InvalidNote({ values, mode }: { values: TruckFormValues; mode: 'create'
   return 'invalid' in result && values.label.trim() ? <p className="mt-3 text-sm text-bad">{result.invalid} needs a whole number.</p> : null;
 }
 
+/**
+ * Under the API's own sentence when Core's truck limit is hit. Web only: the
+ * iPhone app gets the API's sentence alone, which names no plan or price
+ * (App Review 3.1.1). Fleet changes go through hello@haulq.ai, same as the
+ * pricing page says.
+ */
+function TruckLimitHint({ error }: { error: unknown }) {
+  if (!(error instanceof ApiRequestError) || error.code !== 'truck_limit_reached') return null;
+  return (
+    <p className="mt-2 text-sm text-slate">
+      Running more trucks than Core covers? HaulQ Fleet has no truck limit.{' '}
+      <a className="text-brand underline" href="mailto:hello@haulq.ai?subject=Move to HaulQ Fleet">
+        Email hello@haulq.ai to move to Fleet
+      </a>
+      .
+    </p>
+  );
+}
+
 function AddTruck({ onDone }: { onDone: () => void }) {
   const [values, setValues] = useState<TruckFormValues>(EMPTY_TRUCK_FORM);
   const create = useCreateTruck();
@@ -277,6 +298,7 @@ function AddTruck({ onDone }: { onDone: () => void }) {
         </button>
       </div>
       <ErrorNote error={create.error} />
+      <TruckLimitHint error={create.error} />
     </Card>
   );
 }
@@ -356,6 +378,7 @@ function TruckActiveControl({ truck }: { truck: Truck }) {
           Cancel
         </button>
         <ErrorNote error={setActive.error} />
+        <TruckLimitHint error={setActive.error} />
       </div>
     );
   }

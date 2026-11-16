@@ -18,12 +18,13 @@
  * function exists, using it is not optional.
  */
 
-import { and, asc, eq, gt, isNotNull, isNull, or } from 'drizzle-orm';
+import { and, asc, eq, gt, isNotNull, isNull, or, sql } from 'drizzle-orm';
 import type { Database } from '../client.ts';
 import type { Scope } from '../context.ts';
 import { recordEvent } from '../events/record.ts';
 import { decodeCursor, toCursorPage, type CursorPage } from '../pagination.ts';
 import { trucks } from '../schema/fleet.ts';
+import { orgs } from '../schema/tenancy.ts';
 import { withTransaction } from '../transaction.ts';
 
 export type Truck = typeof trucks.$inferSelect;
@@ -106,6 +107,29 @@ export async function trucksByMotiveVehicleId(db: Database, orgId: string): Prom
     .from(trucks)
     .where(and(eq(trucks.orgId, orgId), isNotNull(trucks.motiveVehicleId)));
   return new Map(rows.map((r) => [r.motiveVehicleId!, r.id]));
+}
+
+/**
+ * Hold the line on how many trucks can be in service at once (Core's limit;
+ * `routes/trucks.ts` decides who has one). Locks the org row first so two
+ * trucks added at the same moment can't both see room for one. The
+ * explanation is shown in the iPhone app too, so it states the limit and
+ * stops: no plan names, prices or upgrade pitch (App Review 3.1.1).
+ */
+async function assertRoomForActiveTruck(tx: Scope, maxActive: number | undefined): Promise<void> {
+  if (maxActive === undefined) return;
+  await tx.db.execute(sql`select 1 from ${orgs} where ${orgs.id} = ${tx.ctx.orgId} for update`);
+  const [row] = await tx.db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(trucks)
+    .where(and(eq(trucks.orgId, tx.ctx.orgId), eq(trucks.active, true)));
+  if ((row?.n ?? 0) >= maxActive) {
+    throw new TruckError(
+      'truck_limit_reached',
+      `org ${tx.ctx.orgId} already has ${row?.n} active trucks (limit ${maxActive})`,
+      `This account can have up to ${maxActive} trucks in service at once. Take one out of service to add another.`,
+    );
+  }
 }
 
 export class TruckError extends Error {
@@ -275,6 +299,7 @@ export async function setTruckActive(
   id: string,
   active: boolean,
   reason?: string,
+  opts: { maxActive?: number | undefined } = {},
 ): Promise<Truck> {
   return withTransaction(s, async (tx) => {
     const current = await getTruck(tx, id);
@@ -282,6 +307,7 @@ export async function setTruckActive(
       throw new TruckError('not_found', `truck ${id} not found`, 'That truck is not on this account.');
     }
     if (current.active === active) return current;
+    if (active) await assertRoomForActiveTruck(tx, opts.maxActive);
 
     const [row] = await tx.db
       .update(trucks)
@@ -306,8 +332,10 @@ export async function setTruckActive(
 export async function createTruck(
   s: Scope,
   input: CreateTruckInput,
+  opts: { maxActive?: number | undefined } = {},
 ): Promise<Truck> {
   return withTransaction(s, async (tx) => {
+    await assertRoomForActiveTruck(tx, opts.maxActive);
     const [row] = await tx.db
       .insert(trucks)
       .values({
