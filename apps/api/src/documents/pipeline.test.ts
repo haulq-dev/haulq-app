@@ -105,6 +105,16 @@ const PACKET = pdf([
   'Received in good order and condition',
 ]);
 
+/** A second packet, different bytes — so the same org can have two without the upload deduplicating them. */
+const PACKET_2 = pdf([
+  'RATE CONFIRMATION',
+  'Total Rate: $1,950.00',
+  'STRAIGHT BILL OF LADING',
+  'B/L Number: 77410',
+  'PROOF OF DELIVERY',
+  'Received in good order and condition',
+]);
+
 /** A scan: no text layer at all, just an image the reader cannot open. */
 const SCAN = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(256, 7)]);
 
@@ -146,7 +156,7 @@ async function upload(orgId: string, bytes: Buffer, filename: string, type = 'ap
 }
 
 /** Drain the outbox the way the runner would, and report what it did. */
-async function drain(modelReader?: ModelDocumentReader) {
+async function drain(modelReader?: ModelDocumentReader, opts: { documentReadingsPerDay?: number } = {}) {
   const logged: Array<{ o: Record<string, unknown>; msg: string }> = [];
   const handlers = buildOutboxHandlers({
     mailer: { send: async () => {} } as never,
@@ -155,6 +165,7 @@ async function drain(modelReader?: ModelDocumentReader) {
     storage: app.storage,
     reader: new LocalDocumentReader(),
     modelReader,
+    documentReadingsPerDay: opts.documentReadingsPerDay,
     log: {
       info: (o, msg) => logged.push({ o: o as Record<string, unknown>, msg }),
       warn: (o, msg) => logged.push({ o: o as Record<string, unknown>, msg }),
@@ -482,6 +493,60 @@ suite('document classification and extraction', () => {
 
       assert.deepEqual(second.extractedAt, first.extractedAt);
       assert.ok(logged.some((l) => l.o['why'] === 'already_read'));
+    });
+  });
+  describe('the daily cap on paid reading', () => {
+    it('stops calling the model for a carrier past its allowance, and leaves the document for a person', async () => {
+      const orgId = await newOrg('Capped Co');
+      const first = await upload(orgId, PACKET, 'packet.pdf');
+      const second = await upload(orgId, PACKET_2, 'packet-2.pdf');
+
+      const model = new FakeModelReader();
+      model.script({ kind: 'rate_confirmation', confidence: 0.88, fields: {} });
+
+      const { logged } = await drain(model, { documentReadingsPerDay: 1 });
+
+      assert.equal(model.calls.length, 1, 'only the first document of the day is read at a cost');
+      assert.equal((await fetchDoc(orgId, first.id)).status, 'extracted');
+      assert.equal((await fetchDoc(orgId, second.id)).status, 'received', 'still in the inbox, not rejected');
+
+      const capped = logged.find((l) => l.o['documentId'] === second.id);
+      assert.ok(capped, JSON.stringify(logged.map((l) => l.msg)));
+      assert.equal(capped!.o['capped'], true);
+      assert.equal(capped!.o['needs'], 'model');
+    });
+
+    it('stays on the same side of the cap when a message is redelivered', async () => {
+      const orgId = await newOrg('Capped Redelivery Co');
+      await upload(orgId, PACKET, 'packet.pdf');
+      const second = await upload(orgId, PACKET_2, 'packet-2.pdf');
+
+      const model = new FakeModelReader();
+      model.script(null);
+      await drain(model, { documentReadingsPerDay: 1 });
+      assert.equal(model.calls.length, 1);
+
+      await requeueOutboxForTest(app.db, { orgId, topic: 'document.received' });
+      const { logged } = await drain(model, { documentReadingsPerDay: 1 });
+
+      // The first document is under the cap both times (one call each time,
+      // since the model declined and left it unread); the second never is.
+      assert.equal(model.calls.length, 2);
+      const again = logged.find((l) => l.o['documentId'] === second.id);
+      assert.equal(again?.o['capped'], true);
+    });
+
+    it('still reads a digital PDF for free past the cap', async () => {
+      const orgId = await newOrg('Capped Free Co');
+      const doc = await upload(orgId, RATECON, 'ratecon.pdf');
+
+      const model = new FakeModelReader();
+      await drain(model, { documentReadingsPerDay: 0 });
+
+      const after = await fetchDoc(orgId, doc.id);
+      assert.equal(after.status, 'extracted');
+      assert.equal(after.extracted.rateAmount.value, 240000);
+      assert.equal(model.calls.length, 0);
     });
   });
 });

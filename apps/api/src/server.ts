@@ -294,6 +294,7 @@ export async function buildServer(
       reader,
       modelReader,
       loadProposalsPerDay: env.LOAD_PROPOSALS_PER_DAY,
+      documentReadingsPerDay: env.DOCUMENT_READINGS_PER_DAY,
       log: {
         info: (o, msg) => app.log.info(o, msg),
         warn: (o, msg) => app.log.warn(o, msg),

@@ -54,6 +54,8 @@ export interface HandlerDeps {
   modelReader?: ModelDocumentReader | undefined;
   /** Rate confirmations one carrier may have read as a possible load per day. 0 or unset: none are. */
   loadProposalsPerDay?: number | undefined;
+  /** Documents one carrier may have read at a cost (OCR, model) per day — `PipelineDeps.paidReadingsPerDay`. Unset: no cap. */
+  documentReadingsPerDay?: number | undefined;
   log: {
     info: (o: unknown, msg: string) => void;
     warn: (o: unknown, msg: string) => void;
@@ -209,6 +211,7 @@ function documentHandler(deps: HandlerDeps): OutboxHandler {
               ),
           }
         : undefined,
+      paidReadingsPerDay: deps.documentReadingsPerDay,
     });
 
     const base = { seq: message.seq.toString(), documentId, reader: deps.reader.name };
@@ -227,8 +230,11 @@ function documentHandler(deps: HandlerDeps): OutboxHandler {
             ...base,
             needs: outcome.needs,
             ...(outcome.needs === 'model' ? { guess: outcome.guess?.kind ?? null } : {}),
+            ...(outcome.capped ? { capped: true } : {}),
           },
-          `document needs ${outcome.needs}`,
+          outcome.capped
+            ? `document needs ${outcome.needs} — not tried, carrier is past its daily allowance of paid readings`
+            : `document needs ${outcome.needs}`,
         );
         return;
 

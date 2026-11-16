@@ -43,6 +43,7 @@ import {
   type ExtractedField,
 } from '@haulq/contracts';
 import {
+  documentArrivalRank,
   getDocument,
   recordClassification,
   recordExtraction,
@@ -53,7 +54,7 @@ import {
 } from '@haulq/db';
 import type { ModelDocumentReader } from './model-reader.ts';
 import { proposeLoad, type ProposeOutcome } from './propose-load.ts';
-import type { DocumentReader } from './reader.ts';
+import { LocalDocumentReader, type DocumentReader } from './reader.ts';
 import { validateDocument, type ValidationAttempt } from './validate.ts';
 
 export interface PipelineDeps {
@@ -69,15 +70,29 @@ export interface PipelineDeps {
    * that must never fail the delivery and make the outbox re-read the document.
    */
   proposals?: { dailyLimit: number; onError: (err: unknown) => void } | undefined;
+  /**
+   * How many documents a day one carrier may have read at a cost — Azure OCR,
+   * the model pass, and the load proposal that follows it. Past that, a
+   * document still gets the free path (its PDF text layer and the phrase
+   * rules) and otherwise waits in the inbox for a person, exactly as it would
+   * with no Azure or model key configured. Counted by when the document
+   * arrived (`documentArrivalRank`), so the same document is always on the
+   * same side of the line. Unset means no cap; 0 means nothing is ever read at
+   * a cost.
+   */
+  paidReadingsPerDay?: number | undefined;
 }
 
 export type PipelineOutcome =
   /** The document is gone. Nothing to do, and not an error. */
   | { status: 'skipped'; why: 'not_found' | 'quarantined' | 'already_read' | 'manually_read' }
-  /** No text could be got off it. An OCR pass is the next thing to try. */
-  | { status: 'needs'; needs: 'ocr'; document: Document }
-  /** Text, but the rules could not say what it is confidently enough to route on. */
-  | { status: 'needs'; needs: 'model'; document: Document; guess: Classification | null }
+  /**
+   * No text could be got off it. An OCR pass is the next thing to try.
+   * `capped`: OCR was not tried, because this carrier is past `paidReadingsPerDay`.
+   */
+  | { status: 'needs'; needs: 'ocr'; document: Document; capped?: true }
+  /** Text, but the rules could not say what it is confidently enough to route on. `capped` as above, for the model pass. */
+  | { status: 'needs'; needs: 'model'; document: Document; guess: Classification | null; capped?: true }
   /** Read and understood, at no cost beyond an inflate. */
   | {
       status: 'read';
@@ -128,11 +143,22 @@ export async function processDocument(
     return { status: 'skipped', why: 'manually_read' };
   }
 
+  // Past the day's allowance, everything that costs money is taken away and
+  // the rest of this function runs unchanged — the same as an environment with
+  // no Azure or model key, which is a path that already exists and is tested.
+  const capped =
+    deps.paidReadingsPerDay !== undefined &&
+    (await documentArrivalRank(s, document.id)) > deps.paidReadingsPerDay;
+  if (capped) {
+    deps = { ...deps, reader: FREE_READER, modelReader: undefined, proposals: undefined };
+  }
+  const cappedFlag = capped ? { capped: true as const } : {};
+
   const bytes = await deps.storage.get(document.storageKey);
   const read = await deps.reader.read(bytes, document.contentType ?? 'application/octet-stream');
 
   if (!read.text) {
-    return { status: 'needs', needs: 'ocr', document };
+    return { status: 'needs', needs: 'ocr', document, ...cappedFlag };
   }
 
   const classification = classifyDeterministically({
@@ -171,7 +197,7 @@ export async function processDocument(
       }
     }
 
-    return { status: 'needs', needs: 'model', document, guess: classification };
+    return { status: 'needs', needs: 'model', document, guess: classification, ...cappedFlag };
   }
 
   const extracted = extractDeterministically({
@@ -210,6 +236,9 @@ export async function processDocument(
     versionSuffix: extracted.version,
   }, { text: read.text, deps });
 }
+
+/** The text layer only: what a document past the daily cap is still read with, at no cost. */
+const FREE_READER = new LocalDocumentReader();
 
 /** A rule-found value always wins over a model-found one for the same field — the rule is reading a label, not estimating. */
 function mergeFields(

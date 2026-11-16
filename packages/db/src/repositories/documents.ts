@@ -265,6 +265,36 @@ export async function countUnattachedDocuments(s: Scope): Promise<number> {
   return row?.count ?? 0;
 }
 
+/**
+ * Where this document falls among the organisation's arrivals in the day
+ * leading up to it: 1 for the first one in that window, counting itself.
+ *
+ * What the document pipeline's daily cap on paid reading compares against
+ * (`processDocument`'s `paidReadingsPerDay`). Measured back from the
+ * document's own `receivedAt` rather than from now, so an outbox redelivery
+ * hours later gets the same answer the first delivery did: a document is
+ * over the cap or not by when it arrived, not by what arrived after it.
+ * Every document counts, quarantined and free-to-read ones included — the
+ * cap is a ceiling on the worst case, and a simpler count is the safer one.
+ */
+export async function documentArrivalRank(s: Scope, documentId: string): Promise<number> {
+  // Compared in SQL against the row's own `received_at`, never a JS Date read
+  // back from it: Postgres keeps microseconds and a Date keeps milliseconds,
+  // so a round-tripped value no longer equals the row it came from.
+  const self = sql`(select ${documents.receivedAt} from ${documents} where ${documents.id} = ${documentId})`;
+  const [row] = await s.db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(documents)
+    .where(
+      and(
+        inOrg(s),
+        sql`${documents.receivedAt} > ${self} - interval '24 hours'`,
+        sql`(${documents.receivedAt}, ${documents.id}) <= (${self}, ${documentId}::uuid)`,
+      ),
+    );
+  return row?.count ?? 0;
+}
+
 export async function documentCounts(s: Scope): Promise<Record<string, number>> {
   const rows = await s.db
     .select({ status: documents.status, count: sql<number>`count(*)::int` })

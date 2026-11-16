@@ -312,6 +312,17 @@ const EnvSchema = z.object({
    * proposing loads off.
    */
   LOAD_PROPOSALS_PER_DAY: z.coerce.number().int().min(0).default(30),
+  /**
+   * How many documents one carrier may have read at a cost per day — Azure OCR
+   * and the model pass (`documents/pipeline.ts`, `paidReadingsPerDay`). Every
+   * document counts toward it, by when it arrived; past it a document is still
+   * read for free where it can be (a digital PDF's own text) and otherwise
+   * waits in the inbox for a person. Nothing is rejected. Uploads, forwarded
+   * mail and a connected mailbox all feed this pipeline with no other limit,
+   * so this is what bounds one carrier forwarding months of paperwork at once.
+   * 0 means nothing is ever read at a cost.
+   */
+  DOCUMENT_READINGS_PER_DAY: z.coerce.number().int().min(0).default(20),
 
   /**
    * Unipile, for `FEATURE_REQUESTS_PLAN.md` section 1's mailbox-ingest
