@@ -60,7 +60,7 @@ Dispatch and Track.
 |---|---|---|
 | Product | `prod_VGXXuh4MjR4JMQ` | `prod_VGXY3nW8Z3uvtu` |
 | Platform price ($199/mo flat) | `price_1UG0SHEW0ODCVdCOTCKZnzlk` | `price_1UG0TlIhbSoMF1VwnmirBhFM` |
-| Per-truck price ($49/mo, quantity = truck count) | `price_1UG0SHEW0ODCVdCOE2dvEDnj` | `price_1UG0TlIhbSoMF1VwNyRukr0s` |
+| Per-truck price ($49/mo, quantity = trucks after the first, which the platform fee includes; line omitted for one truck) | `price_1UG0SHEW0ODCVdCOE2dvEDnj` | `price_1UG0TlIhbSoMF1VwNyRukr0s` |
 
 ## Autopilot — add-on, not sold yet (Phase 5 release gate)
 

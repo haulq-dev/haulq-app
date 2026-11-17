@@ -44,6 +44,7 @@ import { ModelReaderError } from '../documents/model-reader.ts';
 import { proposeLoad } from '../documents/propose-load.ts';
 import { validateDocument } from '../documents/validate.ts';
 import { HttpError, requireRole, requireScope } from '../plugins/request-context.ts';
+import { dailyCapForScope } from '../plan-limits.ts';
 import { rethrow as rethrowLoadError } from './loads.ts';
 
 const IdParamSchema = z.object({ id: z.string().uuid() });
@@ -165,17 +166,18 @@ export async function loadProposalRoutes(app: FastifyInstance) {
         throw new HttpError(422, 'unreadable_document', 'HaulQ could not get any text off that document to read.');
       }
 
+      const dailyLimit = await dailyCapForScope(s, app.env.LOAD_PROPOSALS_PER_DAY, app.env.FLEET_DAILY_CAP_MULTIPLIER);
       try {
         const outcome = await proposeLoad(s, id, read.text, {
           modelReader: app.modelReader,
-          dailyLimit: app.env.LOAD_PROPOSALS_PER_DAY,
+          dailyLimit,
         });
         if (outcome.status === 'skipped') {
           if (outcome.why === 'daily_limit') {
             throw new HttpError(
               429,
               'daily_limit_reached',
-              `This carrier has already had ${app.env.LOAD_PROPOSALS_PER_DAY} rate confirmations read as loads today. It starts over tomorrow; meanwhile the load can be created by hand.`,
+              `This carrier has already had ${dailyLimit} rate confirmations read as loads today. It starts over tomorrow; meanwhile the load can be created by hand.`,
             );
           }
           throw new HttpError(409, outcome.why, 'That rate confirmation cannot be read as a load right now.');

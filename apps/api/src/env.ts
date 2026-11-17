@@ -347,6 +347,13 @@ const EnvSchema = z.object({
    * 0 means nothing is ever read at a cost.
    */
   DOCUMENT_READINGS_PER_DAY: z.coerce.number().int().min(0).default(20),
+  /**
+   * Fleet carriers get this many times each per-carrier daily cap above
+   * (`MECHANIC_SEARCH_ORG_DAILY_LIMIT`, `LOAD_PROPOSALS_PER_DAY`,
+   * `DOCUMENT_READINGS_PER_DAY`). Fleet pays enough to cover the higher worst
+   * case. 1 gives Fleet the same caps as Core. See `plan-limits.ts`.
+   */
+  FLEET_DAILY_CAP_MULTIPLIER: z.coerce.number().int().min(1).default(5),
 
   /**
    * Unipile, for `FEATURE_REQUESTS_PLAN.md` section 1's mailbox-ingest

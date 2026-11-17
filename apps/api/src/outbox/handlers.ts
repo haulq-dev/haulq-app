@@ -32,6 +32,7 @@ import { inviteEmail, type InvitePayload } from '../email/invite-email.ts';
 import { MailerError, type Mailer } from '../email/postmark.ts';
 import { verifyWatchlistEmail } from '../email/verify-watchlist-email.ts';
 import { processDocument } from '../documents/pipeline.ts';
+import { dailyCapForScope } from '../plan-limits.ts';
 import type { ModelDocumentReader } from '../documents/model-reader.ts';
 import type { DocumentReader } from '../documents/reader.ts';
 import { pushToUsers } from '../push/notify.ts';
@@ -57,6 +58,8 @@ export interface HandlerDeps {
   loadProposalsPerDay?: number | undefined;
   /** Documents one carrier may have read at a cost (OCR, model) per day — `PipelineDeps.paidReadingsPerDay`. Unset: no cap. */
   documentReadingsPerDay?: number | undefined;
+  /** Fleet's caps are the two above times this (`FLEET_DAILY_CAP_MULTIPLIER`). Unset: 1. */
+  fleetDailyCapMultiplier?: number | undefined;
   /** Where a new carrier's sign-up is announced. Unset: nobody is told. */
   signupAlertEmail?: string | undefined;
   /** Whether a new carrier waits on pilot approval — only changes what the sign-up email says. */
@@ -199,13 +202,19 @@ function documentHandler(deps: HandlerDeps): OutboxHandler {
       correlationId: event.correlationId ?? randomUUID(),
     });
 
+    // Fleet gets higher caps than Core, so the plan is looked up per document.
+    const capFor = (base: number | undefined) =>
+      base === undefined || base === 0 ? Promise.resolve(base) : dailyCapForScope(s, base, deps.fleetDailyCapMultiplier ?? 1);
+    const proposalsPerDay = await capFor(deps.loadProposalsPerDay);
+    const paidReadingsPerDay = await capFor(deps.documentReadingsPerDay);
+
     const outcome = await processDocument(s, documentId, {
       reader: deps.reader,
       storage: deps.storage,
       modelReader: deps.modelReader,
-      proposals: deps.loadProposalsPerDay
+      proposals: proposalsPerDay
         ? {
-            dailyLimit: deps.loadProposalsPerDay,
+            dailyLimit: proposalsPerDay,
             // A proposal is a convenience. The document is already read and safe,
             // so a model that is down is logged and not retried: failing here would
             // make the outbox re-read the whole document to try again.
@@ -216,7 +225,7 @@ function documentHandler(deps: HandlerDeps): OutboxHandler {
               ),
           }
         : undefined,
-      paidReadingsPerDay: deps.documentReadingsPerDay,
+      paidReadingsPerDay,
     });
 
     const base = { seq: message.seq.toString(), documentId, reader: deps.reader.name };

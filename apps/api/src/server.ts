@@ -295,6 +295,7 @@ export async function buildServer(
       modelReader,
       loadProposalsPerDay: env.LOAD_PROPOSALS_PER_DAY,
       documentReadingsPerDay: env.DOCUMENT_READINGS_PER_DAY,
+      fleetDailyCapMultiplier: env.FLEET_DAILY_CAP_MULTIPLIER,
       signupAlertEmail: env.SIGNUP_ALERT_EMAIL,
       requirePilotApproval: env.REQUIRE_PILOT_APPROVAL,
       log: {

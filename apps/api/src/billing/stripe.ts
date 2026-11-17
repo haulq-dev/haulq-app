@@ -63,6 +63,9 @@ export interface CreateCheckoutSessionInput {
 /** Thrown by `createCheckoutSession` when `plan: 'fleet'` is requested but Fleet's prices aren't configured. */
 export class FleetNotConfiguredError extends Error {}
 
+/** Trucks Fleet's platform fee covers before the per-truck price applies. */
+export const FLEET_INCLUDED_TRUCKS = 1;
+
 function lineItemsFor(
   billing: BillingClient,
   input: CreateCheckoutSessionInput,
@@ -82,10 +85,13 @@ function lineItemsFor(
   }
   // Two line items on one subscription, not one Price with `quantity`
   // covering both — the platform fee is flat regardless of fleet size, the
-  // per-truck fee is not. See docs/stripe-catalog.md.
+  // per-truck fee is not. See docs/stripe-catalog.md. The platform fee
+  // includes the first truck, so the per-truck line counts the trucks after
+  // it, and a one-truck fleet has no per-truck line at all.
+  const additionalTrucks = input.truckCount - FLEET_INCLUDED_TRUCKS;
   return [
     { price: billing.priceIds.fleetPlatform, quantity: 1 },
-    { price: billing.priceIds.fleetPerTruck, quantity: input.truckCount },
+    ...(additionalTrucks > 0 ? [{ price: billing.priceIds.fleetPerTruck, quantity: additionalTrucks }] : []),
   ];
 }
 

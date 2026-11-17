@@ -19,6 +19,7 @@ import {
   MemoryObjectStore,
   pendingOutboxTopics,
   requeueOutboxForTest,
+  setTestOrgPlan,
 } from '@haulq/db';
 import type { FastifyInstance } from 'fastify';
 import { loadEnv } from '../env.ts';
@@ -156,7 +157,10 @@ async function upload(orgId: string, bytes: Buffer, filename: string, type = 'ap
 }
 
 /** Drain the outbox the way the runner would, and report what it did. */
-async function drain(modelReader?: ModelDocumentReader, opts: { documentReadingsPerDay?: number } = {}) {
+async function drain(
+  modelReader?: ModelDocumentReader,
+  opts: { documentReadingsPerDay?: number; fleetDailyCapMultiplier?: number } = {},
+) {
   const logged: Array<{ o: Record<string, unknown>; msg: string }> = [];
   const handlers = buildOutboxHandlers({
     mailer: { send: async () => {} } as never,
@@ -166,6 +170,7 @@ async function drain(modelReader?: ModelDocumentReader, opts: { documentReadings
     reader: new LocalDocumentReader(),
     modelReader,
     documentReadingsPerDay: opts.documentReadingsPerDay,
+    fleetDailyCapMultiplier: opts.fleetDailyCapMultiplier,
     log: {
       info: (o, msg) => logged.push({ o: o as Record<string, unknown>, msg }),
       warn: (o, msg) => logged.push({ o: o as Record<string, unknown>, msg }),
@@ -537,6 +542,22 @@ suite('document classification and extraction', () => {
       assert.equal(model.calls.length, 2);
       const again = logged.find((l) => l.o['documentId'] === second.id);
       assert.equal(again?.o['capped'], true);
+    });
+
+    it('gives a Fleet carrier the multiplied cap', async () => {
+      const orgId = await newOrg('Capped Fleet Co');
+      await setTestOrgPlan(app.db, { orgId, plan: 'fleet' });
+      await upload(orgId, PACKET, 'packet.pdf');
+      await upload(orgId, PACKET_2, 'packet-2.pdf');
+
+      const model = new FakeModelReader();
+      model.script({ kind: 'rate_confirmation', confidence: 0.88, fields: {} });
+      model.script({ kind: 'rate_confirmation', confidence: 0.88, fields: {} });
+
+      const { logged } = await drain(model, { documentReadingsPerDay: 1, fleetDailyCapMultiplier: 2 });
+
+      assert.equal(model.calls.length, 2, 'both documents are under a Fleet cap of 2');
+      assert.ok(!logged.some((l) => l.o['capped'] === true));
     });
 
     it('still reads a digital PDF for free past the cap', async () => {

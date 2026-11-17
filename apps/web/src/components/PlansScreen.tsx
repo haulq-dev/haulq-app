@@ -39,6 +39,8 @@ const CORE_INCLUDES = [
 
 const FLEET_PLATFORM_CENTS = 19900;
 const FLEET_PER_TRUCK_CENTS = 4900;
+/** The platform fee covers the first truck; must match `FLEET_INCLUDED_TRUCKS` in the API. */
+const FLEET_INCLUDED_TRUCKS = 1;
 
 export function PlansScreen({ pastDue = false }: { pastDue?: boolean }) {
   const [truckCount, setTruckCount] = useState(2);
@@ -138,13 +140,14 @@ export function PlansScreen({ pastDue = false }: { pastDue?: boolean }) {
             <span className="field-label text-mute">Any number of trucks</span>
           </div>
           <p className="mb-4 text-3xl">
-            <Money cents={FLEET_PLATFORM_CENTS + FLEET_PER_TRUCK_CENTS * truckCount} />
+            <Money cents={FLEET_PLATFORM_CENTS + FLEET_PER_TRUCK_CENTS * Math.max(0, truckCount - FLEET_INCLUDED_TRUCKS)} />
             <span className="text-base text-mute"> / month</span>
           </p>
           <p className="mb-4 flex-1 text-sm text-slate">
             Everything in Core, plus Dispatch, Track, roles, and settlements across
-            your fleet. <Money cents={FLEET_PLATFORM_CENTS} className="text-ink" /> platform
-            fee plus <Money cents={FLEET_PER_TRUCK_CENTS} className="text-ink" /> per truck.
+            your fleet. <Money cents={FLEET_PLATFORM_CENTS} className="text-ink" /> a month
+            includes your first truck, then <Money cents={FLEET_PER_TRUCK_CENTS} className="text-ink" /> for
+            each truck after that.
           </p>
 
           <label className="mb-4 block">

@@ -26,6 +26,7 @@ import { z } from 'zod';
 import { HereApiError } from '../integrations/here.ts';
 import type { Mechanic } from '../integrations/here-mechanics.ts';
 import { HttpError, requireScope } from '../plugins/request-context.ts';
+import { dailyCapForScope } from '../plan-limits.ts';
 
 const METERS_PER_MILE = 1609.344;
 /** A shop farther than this is not "nearby" for a truck that has to get there. */
@@ -71,11 +72,11 @@ export async function mechanicsRoutes(app: FastifyInstance) {
   // exists and why it lives in memory. Yesterday's counts are dropped as they
   // are seen, so the map cannot grow without bound.
   const searchesToday = new Map<string, { day: string; count: number }>();
-  const spend = (orgId: string): boolean => {
+  const spend = (orgId: string, limit: number): boolean => {
     const today = utcDay(new Date());
     const seen = searchesToday.get(orgId);
     const count = seen && seen.day === today ? seen.count : 0;
-    if (count >= app.env.MECHANIC_SEARCH_ORG_DAILY_LIMIT) return false;
+    if (count >= limit) return false;
     searchesToday.set(orgId, { day: today, count: count + 1 });
     for (const [id, s] of searchesToday) if (s.day !== today) searchesToday.delete(id);
     return true;
@@ -105,11 +106,12 @@ export async function mechanicsRoutes(app: FastifyInstance) {
       // Checked after "is it configured" so an unconfigured deployment does not
       // count searches it never made, and before the call, since the call is
       // the thing being rationed.
-      if (!spend(s.ctx.orgId)) {
+      const limit = await dailyCapForScope(s, app.env.MECHANIC_SEARCH_ORG_DAILY_LIMIT, app.env.FLEET_DAILY_CAP_MULTIPLIER);
+      if (!spend(s.ctx.orgId, limit)) {
         throw new HttpError(
           429,
           'org_search_limit_reached',
-          `Your carrier has used its ${app.env.MECHANIC_SEARCH_ORG_DAILY_LIMIT} repair-shop searches for today. The count starts over at midnight UTC (7 pm Central).`,
+          `Your carrier has used its ${limit} repair-shop searches for today. The count starts over at midnight UTC (7 pm Central).`,
         );
       }
 
